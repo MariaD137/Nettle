@@ -1,0 +1,14 @@
+{
+  "name": "petpal-ai",
+  "version": "0.3.0",
+  "description": "AI-generated pet-care companion app, built with a weekend of vibe coding",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js"
+  },
+  "dependencies": {
+    "express": "4.17.1",
+    "lodash": "4.17.4",
+    "jsonwebtoken": "8.5.1"
+  }
+}
