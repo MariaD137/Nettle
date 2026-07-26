@@ -111,6 +111,49 @@ now installs Python + pip + Semgrep in the runtime image) — no Docker daemon
 in this sandbox, same limitation noted in `infra/README.md`'s validation
 table. Build it yourself once before deploying.
 
+## Accounts, billing, and the trust badge
+
+Real accounts now gate project creation — `POST /api/projects` requires a
+session, and a project is only visible to the user who owns it (see
+`test/auth.test.ts`, `test/projects.routes.ts` ownership checks).
+
+```bash
+# sign up, get a bearer token
+curl -X POST http://localhost:8080/api/auth/signup \
+  -H "Content-Type: application/json" \
+  -d '{"email":"you@example.com","password":"at least 8 characters"}'
+# -> { "token": "...", "user": {...} }
+```
+
+Passwords are hashed with Node's built-in `scrypt` (no bcrypt/argon2
+dependency needed) — see `src/auth/passwords.ts`. Sessions are opaque
+random tokens in a `sessions` table (30-day expiry), not JWTs — simpler to
+revoke (`POST /api/auth/logout` just deletes the row) and nothing to get
+wrong cryptographically.
+
+**Billing** (`src/routes/billing.routes.ts`) is real Stripe integration code
+— `POST /api/billing/checkout-session` creates a real Checkout Session,
+`POST /api/billing/webhook` verifies Stripe's signature and activates the
+plan on `checkout.session.completed`. **Not validated against a live Stripe
+account** — no test-mode keys available in this sandbox — but the signature
+verification itself is tested for real: `test/billing.test.ts` constructs a
+genuinely, correctly HMAC-signed webhook payload using Stripe's actual
+signing scheme (not a mock) and confirms the handler updates the user's
+plan. Set `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_PRICE_TIER1`,
+`STRIPE_PRICE_TIER2` to actually use this. Note in `src/index.ts`: the
+webhook route is mounted *before* `express.json()` — Stripe signs the exact
+raw request bytes, and parsing the body first would break every real
+signature check.
+
+**Trust badge** (`src/routes/badge.routes.ts`, public, no auth by design —
+it's embedded with a plain `<img>` tag on a customer's own site, which can't
+send an Authorization header): `GET /api/projects/:id/badge.svg` and
+`/badge.json` reflect a real read of project state, not a static image —
+the latest Tier 1 scan's score plus whether Tier 2 has caught anything
+critical in the last 48 hours. Either one being bad makes the badge bad; see
+`src/patrol/badge.ts` and `test/badge.test.ts` for all four states
+(protected/caution/critical/unknown).
+
 ## Tier 2 — "Open Water" continuous monitoring
 
 Real and tested, not a mockup either. A customer creates a project, gets an
@@ -118,9 +161,10 @@ API key, drops one middleware line into their own app, and Nettle watches
 their live traffic for attack patterns.
 
 ```bash
-# 1. create a project (no auth on this yet — see "known gaps" below)
+# 1. create a project (requires the bearer token from signup/login above)
 curl -X POST http://localhost:8080/api/projects \
-  -H "Content-Type: application/json" -d '{"name":"My App"}'
+  -H "Content-Type: application/json" -H "Authorization: Bearer <token>" \
+  -d '{"name":"My App"}'
 # -> { "id": "...", "apiKey": "nettle_...", ... }
 
 # 2. in the customer's own Express app — today this means copying
@@ -160,9 +204,12 @@ not just asserted in a comment — see "the middleware never blocks or breaks
 the customer's response when the ingestion endpoint is unreachable" in
 `test/nettleMonitor.test.ts`.
 
-**Storage**: `node:sqlite` (built into Node 22, experimental). Real
-persistence with zero extra infrastructure — the right tradeoff until there's
-actual concurrent multi-tenant write volume to justify running RDS.
+**Storage**: `node:sqlite` (built into Node 22, experimental) — `users`,
+`sessions`, `projects`, `events`, `alerts`, and now `scans` (Tier 1 results
+persisted when a scan includes a project's API key, so the badge and
+dashboard have real history to show). Real persistence with zero extra
+infrastructure — the right tradeoff until there's actual concurrent
+multi-tenant write volume to justify running RDS.
 
 ## Architecture
 
@@ -183,11 +230,18 @@ isolated, network-less sandbox (see the AWS architecture notes: ECS Fargate
 tasks with no NAT/egress, or a service like e2b/Modal purpose-built for
 executing untrusted code).
 
-**Tier 2 has no auth on project creation.** `POST /api/projects` is wide
-open right now — anyone can create a project and get an API key. Fine for
-early testing, not fine once this is reachable by the public internet;
-needs real accounts/billing gating it, same as the rest of the platform
-core that doesn't exist yet.
+**Billing is untested against a live Stripe account.** The webhook's
+signature verification is genuinely tested (see above), but the actual
+Checkout Session creation flow, real webhook delivery, and plan-gating
+behavior have never run against real Stripe test-mode keys — there are
+none in this sandbox. Get a Stripe test account, set the four env vars
+above, and run through a real checkout once before trusting this in
+production.
+
+**No password reset flow, and no rate limiting on the auth endpoints.**
+Sign up and log in only — worth closing both gaps before this is reachable
+by real, hostile internet traffic (an unrate-limited login endpoint is a
+brute-force target in its own right).
 
 **Tier 2 processes events synchronously, in-process, with no queue.**
 The architecture diagram shows an event queue between intake and detection;

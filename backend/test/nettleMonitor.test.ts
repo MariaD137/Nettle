@@ -9,6 +9,7 @@ import { nettleMonitor } from "../src/middleware/nettleMonitor";
 import { eventsRouter } from "../src/routes/events.routes";
 import { createProject } from "../src/patrol/projects";
 import { listAlerts } from "../src/patrol/alerts";
+import { createUser } from "../src/auth/users";
 
 function listen(app: express.Express): Promise<{ server: Server; port: number }> {
   return new Promise((resolve) => {
@@ -29,7 +30,8 @@ async function poll<T>(fn: () => T, predicate: (v: T) => boolean, timeoutMs = 20
 }
 
 test("a customer app using the middleware actually reports events that trigger a real alert", async () => {
-  const project = createProject("Middleware Test App");
+  const user = await createUser("nettle-monitor-tests@example.com", "correct horse battery staple");
+  const project = createProject(user.id, "Middleware Test App");
 
   const ingestionApp = express();
   ingestionApp.use(express.json());

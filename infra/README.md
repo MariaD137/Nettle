@@ -7,9 +7,12 @@ a copy of a bigger app's infrastructure:
   internet gateway at all. The API executes code from strangers; the network
   should make outbound calls impossible by construction, not by convention.
 - **Nettle-Api** — an ECR repo + a single App Runner service running the
-  Tier 1 API, with its egress routed through the isolated VPC (so: no
-  internet access) via a VPC connector. No RDS, no Cognito — there's no
-  persistent data model yet, so there's nothing for a database to hold.
+  API, with its egress routed through the isolated VPC (so: no internet
+  access) via a VPC connector. Still no RDS/Cognito — accounts, sessions,
+  projects, scans, and alerts are all real now, but persisted with
+  `node:sqlite` on the single container App Runner runs, not a managed
+  database. That's the actual trigger to add RDS: the day this needs to run
+  as more than one container.
 - **Nettle-CI** — a GitHub OIDC provider + a deploy role scoped to exactly
   one permission set: push images to this one ECR repo. No AWS access keys
   are ever stored in GitHub.
@@ -70,11 +73,22 @@ Tier 2 infrastructure gets added.
 
 ## What's deliberately not here yet
 
-- **RDS / a database** — add it when there's an actual reason (accounts,
-  saved scan history), not before.
-- **Cognito / user accounts** — same reasoning.
-- **Tier 2 infrastructure** (Kinesis, the detection worker, alerting) — add
-  it when Tier 2 development starts, not speculatively now.
+- **RDS / a database.** Accounts, projects, scans, and alerts are real and
+  persisted, just on `node:sqlite` inside the one App Runner container —
+  add RDS/Aurora the day this needs to run as more than one instance, not
+  before.
+- **Cognito.** Auth is real (email/password, scrypt-hashed, opaque session
+  tokens) but hand-rolled rather than Cognito-backed — revisit if there's a
+  concrete reason (social login, SSO for enterprise customers) to want a
+  managed identity provider instead.
+- **A queue between Tier 2 intake and detection** (Kinesis, per the earlier
+  architecture notes) — `POST /api/events` runs detection inline on the
+  request today. Fine at low volume; add the queue when there's real
+  traffic to justify it.
+- **A frontend deployment.** `frontend/` is real and browser-tested, but
+  isn't part of this CDK app yet — needs its own static hosting
+  (S3+CloudFront, or similar) and a `VITE_API_BASE_URL` pointed at wherever
+  the API ends up deployed.
 - **True per-scan sandboxing** — today the whole API service is network-
   isolated, which is real but coarse-grained: one large or malicious upload
   still runs in the same process as everything else. Per-job ephemeral

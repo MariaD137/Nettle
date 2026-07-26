@@ -10,12 +10,34 @@ const DB_PATH = process.env.NETTLE_DB_PATH || path.join(process.cwd(), "nettle.d
 export const db = new DatabaseSync(DB_PATH);
 
 db.exec(`
-  CREATE TABLE IF NOT EXISTS projects (
+  CREATE TABLE IF NOT EXISTS users (
     id TEXT PRIMARY KEY,
-    name TEXT NOT NULL,
-    api_key TEXT NOT NULL UNIQUE,
+    email TEXT NOT NULL UNIQUE,
+    password_hash TEXT NOT NULL,
+    plan TEXT NOT NULL DEFAULT 'free',
+    stripe_customer_id TEXT,
+    subscription_status TEXT NOT NULL DEFAULT 'none',
     created_at TEXT NOT NULL
   );
+
+  CREATE TABLE IF NOT EXISTS sessions (
+    token TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    expires_at TEXT NOT NULL,
+    FOREIGN KEY (user_id) REFERENCES users(id)
+  );
+  CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
+
+  CREATE TABLE IF NOT EXISTS projects (
+    id TEXT PRIMARY KEY,
+    user_id TEXT,
+    name TEXT NOT NULL,
+    api_key TEXT NOT NULL UNIQUE,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (user_id) REFERENCES users(id)
+  );
+  CREATE INDEX IF NOT EXISTS idx_projects_user ON projects(user_id);
 
   CREATE TABLE IF NOT EXISTS events (
     id TEXT PRIMARY KEY,
@@ -40,6 +62,19 @@ db.exec(`
     FOREIGN KEY (project_id) REFERENCES projects(id)
   );
   CREATE INDEX IF NOT EXISTS idx_alerts_project_time ON alerts(project_id, occurred_at);
+
+  CREATE TABLE IF NOT EXISTS scans (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL,
+    scanned_at TEXT NOT NULL,
+    score INTEGER NOT NULL,
+    critical_count INTEGER NOT NULL,
+    caution_count INTEGER NOT NULL,
+    clear_count INTEGER NOT NULL,
+    report_json TEXT NOT NULL,
+    FOREIGN KEY (project_id) REFERENCES projects(id)
+  );
+  CREATE INDEX IF NOT EXISTS idx_scans_project_time ON scans(project_id, scanned_at);
 `);
 
 export function newId(): string {
@@ -48,4 +83,8 @@ export function newId(): string {
 
 export function newApiKey(): string {
   return "nettle_" + crypto.randomBytes(24).toString("hex");
+}
+
+export function newSessionToken(): string {
+  return crypto.randomBytes(32).toString("hex");
 }

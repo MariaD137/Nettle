@@ -6,6 +6,8 @@ import path from "path";
 import multer from "multer";
 import { runScan } from "../scanner";
 import { resolveScanRoot } from "../scanner/resolveScanRoot";
+import { findProjectByApiKey } from "../patrol/projects";
+import { recordScan } from "../patrol/scans";
 
 export const scansRouter = Router();
 
@@ -28,6 +30,17 @@ scansRouter.post("/api/scans", upload.single("codebase"), (req: Request, res: Re
     execFileSync("unzip", ["-q", "-o", req.file.path, "-d", extractDir]);
     const scanRoot = resolveScanRoot(extractDir);
     const report = runScan(scanRoot);
+
+    // Optional: if the request identifies a project (same API key the
+    // monitoring middleware uses), persist the scan against it so the badge
+    // and dashboard have real history. Scanning without a project is still
+    // fully supported — a quick one-off check needs no account at all.
+    const apiKey = req.header("x-nettle-api-key");
+    if (apiKey) {
+      const project = findProjectByApiKey(apiKey);
+      if (project) recordScan(project.id, report);
+    }
+
     res.json(report);
   } catch (err) {
     res.status(422).json({ error: "Couldn't extract or scan the uploaded file", detail: (err as Error).message });
