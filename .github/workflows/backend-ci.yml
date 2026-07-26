@@ -22,6 +22,12 @@ jobs:
           node-version: "22"
           cache: "npm"
           cache-dependency-path: backend/package-lock.json
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      # Semgrep is what the scanner shells out to for real static analysis
+      # (src/scanner/semgrepScanner.ts) — tests exercise it for real, not mocked.
+      - run: pip install semgrep
       - run: npm ci
       - run: npm run lint
       - run: npm test

@@ -1,0 +1,71 @@
+rules:
+  - id: nettle-eval-usage
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: >-
+      eval() executes arbitrary strings as code. If any part of that string
+      is influenced by user input, this is a remote code execution risk.
+    patterns:
+      - pattern: eval(...)
+
+  - id: nettle-child-process-exec-template
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: >-
+      Building a shell command with a template literal / string concatenation
+      and passing it to exec() risks command injection if any interpolated
+      value comes from user input. Prefer execFile()/spawn() with an argument
+      array instead of a single interpolated command string.
+    patterns:
+      - pattern-either:
+          - pattern: child_process.exec(`...${$X}...`, ...)
+          - pattern: exec(`...${$X}...`, ...)
+
+  - id: nettle-sql-string-concat
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: >-
+      Building a SQL query with string concatenation or a template literal
+      is a SQL-injection risk if any interpolated value comes from user
+      input. Use parameterized queries / prepared statements instead.
+    patterns:
+      - pattern-either:
+          - pattern: $DB.query(`...${$X}...`, ...)
+          - pattern: $DB.query("..." + $X + "...")
+
+  - id: nettle-hardcoded-jwt-secret
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: >-
+      A JWT is being signed or verified with a string literal secret instead
+      of a value read from configuration/environment. Anyone with source
+      access can then forge valid tokens.
+    patterns:
+      - pattern-either:
+          - pattern: jwt.sign($PAYLOAD, "...")
+          - pattern: jwt.verify($TOKEN, "...")
+
+  - id: nettle-disabled-tls-verification
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: >-
+      TLS certificate verification is being explicitly disabled. This makes
+      the app vulnerable to man-in-the-middle attacks on every request it
+      makes.
+    patterns:
+      - pattern-either:
+          - pattern: process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0"
+          - pattern: "new https.Agent({ rejectUnauthorized: false, ... })"
+
+  - id: nettle-wildcard-cors
+    languages: [javascript, typescript]
+    severity: WARNING
+    message: >-
+      CORS is configured to allow any origin ("*"). Fine for a fully public
+      read-only API; risky if any endpoint relies on cookies/session auth,
+      since it allows any website to make authenticated requests on a
+      logged-in user's behalf.
+    patterns:
+      - pattern-either:
+          - pattern: 'cors({ origin: "*", ... })'
+          - pattern: res.setHeader("Access-Control-Allow-Origin", "*")

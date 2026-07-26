@@ -1,66 +1,81 @@
-import { test } from "node:test";
+import { test, before } from "node:test";
 import assert from "node:assert/strict";
 import path from "path";
 import { runScan } from "../src/scanner";
+import type { ScanReport } from "../src/scanner/types";
 
 const FLAWED_APP = path.join(__dirname, "fixtures", "sample-app");
 const CLEAN_APP = path.join(__dirname, "fixtures", "clean-app");
 
+// Semgrep has real subprocess startup cost — run each fixture exactly once
+// and share the report across assertions, rather than re-scanning per test.
+let flawedReport: ScanReport;
+let cleanReport: ScanReport;
+
+before(() => {
+  flawedReport = runScan(FLAWED_APP);
+  cleanReport = runScan(CLEAN_APP);
+});
+
 test("flags a hardcoded AWS access key", () => {
-  const report = runScan(FLAWED_APP);
-  const found = report.findings.some((f) => f.title.includes("AWS Access Key ID"));
-  assert.equal(found, true);
+  assert.ok(flawedReport.findings.some((f) => f.title.includes("AWS Access Key ID")));
 });
 
 test("flags a hardcoded Stripe live secret key", () => {
-  const report = runScan(FLAWED_APP);
-  const found = report.findings.some((f) => f.title.includes("Stripe live secret key"));
-  assert.equal(found, true);
+  assert.ok(flawedReport.findings.some((f) => f.title.includes("Stripe live secret key")));
 });
 
 test("flags the known-vulnerable lodash version", () => {
-  const report = runScan(FLAWED_APP);
-  const found = report.findings.some((f) => f.title.includes("lodash@4.17.4"));
-  assert.equal(found, true);
+  assert.ok(flawedReport.findings.some((f) => f.title.includes("lodash@4.17.4")));
 });
 
 test("flags a missing privacy policy", () => {
-  const report = runScan(FLAWED_APP);
-  const found = report.findings.some((f) => f.title === "No privacy policy found");
-  assert.equal(found, true);
+  assert.ok(flawedReport.findings.some((f) => f.title === "No privacy policy found"));
 });
 
 test("flags undisclosed AI-generated content", () => {
-  const report = runScan(FLAWED_APP);
-  const found = report.findings.some((f) => f.category === "AI Disclosure");
-  assert.equal(found, true);
+  assert.ok(flawedReport.findings.some((f) => f.category === "AI Disclosure"));
 });
 
 test("flags routes with no visible auth check", () => {
-  const report = runScan(FLAWED_APP);
-  const found = report.findings.some((f) => f.title.includes("no authentication check"));
-  assert.equal(found, true);
+  assert.ok(flawedReport.findings.some((f) => f.title.includes("no authentication check")));
+});
+
+test("Semgrep catches the SQL-injection-shaped query", () => {
+  assert.ok(flawedReport.findings.some((f) => f.title === "Sql string concat"), JSON.stringify(flawedReport.findings, null, 2));
+});
+
+test("Semgrep catches the command-injection-shaped exec call", () => {
+  assert.ok(flawedReport.findings.some((f) => f.title === "Child process exec template"));
+});
+
+test("Semgrep catches the inline hardcoded JWT secret", () => {
+  assert.ok(flawedReport.findings.some((f) => f.title === "Hardcoded jwt secret"));
+});
+
+test("Semgrep catches TLS verification being disabled", () => {
+  assert.ok(flawedReport.findings.some((f) => f.title === "Disabled tls verification"));
+});
+
+test("Semgrep catches wildcard CORS", () => {
+  assert.ok(flawedReport.findings.some((f) => f.title === "Wildcard cors"));
 });
 
 test("flawed app scores low and has only critical/caution findings, no clears", () => {
-  const report = runScan(FLAWED_APP);
-  assert.ok(report.score < 50, `expected a low score, got ${report.score}`);
-  assert.ok(report.summary.critical > 0);
+  assert.ok(flawedReport.score < 50, `expected a low score, got ${flawedReport.score}`);
+  assert.ok(flawedReport.summary.critical > 0);
 });
 
 test("a clean app with a privacy policy, terms, safe deps, and auth checks scores well", () => {
-  const report = runScan(CLEAN_APP);
-  assert.equal(report.summary.critical, 0, JSON.stringify(report.findings, null, 2));
-  assert.ok(report.score >= 90, `expected a high score, got ${report.score}`);
+  assert.equal(cleanReport.summary.critical, 0, JSON.stringify(cleanReport.findings, null, 2));
+  assert.ok(cleanReport.score >= 90, `expected a high score, got ${cleanReport.score}`);
 });
 
 test("clean app is recognized as having a privacy policy and terms", () => {
-  const report = runScan(CLEAN_APP);
-  assert.ok(report.passed.some((p) => p.title === "Privacy policy file present"));
-  assert.ok(report.passed.some((p) => p.title === "Terms of service file present"));
+  assert.ok(cleanReport.passed.some((p) => p.title === "Privacy policy file present"));
+  assert.ok(cleanReport.passed.some((p) => p.title === "Terms of service file present"));
 });
 
 test("score never drops below 0", () => {
-  const report = runScan(FLAWED_APP);
-  assert.ok(report.score >= 0);
+  assert.ok(flawedReport.score >= 0);
 });

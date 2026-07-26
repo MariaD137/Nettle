@@ -5,6 +5,7 @@ import { scanDependencies } from "./dependencies";
 import { scanLegalPolicy } from "./legalPolicy";
 import { scanAIDisclosure } from "./aiDisclosure";
 import { scanAuthHeuristic } from "./authHeuristic";
+import { scanWithSemgrep } from "./semgrepScanner";
 import type { ScanReport } from "./types";
 
 const SCANNED_EXTENSIONS = [".js", ".ts", ".jsx", ".tsx", ".env", ".json"];
@@ -19,6 +20,7 @@ export function runScan(targetPath: string): ScanReport {
     scanLegalPolicy(targetRoot),
     scanAIDisclosure(files),
     scanAuthHeuristic(files, targetRoot),
+    scanWithSemgrep(targetRoot),
   ];
 
   const findings = results.flatMap((r) => r.findings);

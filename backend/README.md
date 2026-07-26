@@ -43,12 +43,48 @@ npm run lint    # tsc --noEmit
 | Missing privacy policy / terms | Looks for a root-level file matching the name |
 | Undisclosed AI-generated content | Heuristic: content-generation-shaped code with no disclosure/C2PA marker nearby |
 | Missing auth check | Heuristic: a file defining Express routes with no reference to a JWT/auth-middleware/passport call anywhere in it |
+| Semgrep static analysis | Real, industry-standard static analysis (not hand-rolled regex) — see below |
 
-Every one of these is intentionally simple and will have false positives —
-the point right now is a real, working, testable pipeline end to end, not
-completeness. Next real gaps to close: wrap an actual OSS scanner (Semgrep,
-gitleaks) instead of hand-rolled regex, and pull dependency vulnerabilities
-from a live OSV feed instead of the hardcoded seed list.
+Every hand-rolled check above is intentionally simple and will have false
+positives — the point is a real, working, testable pipeline end to end, not
+completeness. Remaining real gap: pull dependency vulnerabilities from a
+live OSV feed instead of the hardcoded seed list.
+
+### Semgrep integration
+
+The scanner shells out to [Semgrep](https://semgrep.dev) — real static
+analysis, not more regex — against our own bundled, offline ruleset
+(`src/scanner/semgrep-rules/nettle-js-rules.yaml`), covering patterns the
+hand-rolled checks above don't: command injection (`exec` built from a
+template literal), SQL injection (query built from a template literal),
+inline hardcoded JWT secrets, disabled TLS certificate verification, and
+wildcard CORS.
+
+**Deliberately offline, not just for this sandbox.** Semgrep's `--config=auto`
+mode fetches rules from Semgrep's registry over the network — but the
+production API has zero internet egress by design (see `infra/README.md`).
+Relying on a network-fetched ruleset would mean shipping a check that
+silently can't run at all once deployed. Bundling our own rules file and
+running fully offline works the same way in development, CI, and production.
+
+**A real bug caught building this, worth knowing about**: Semgrep's version
+check (`--enable-version-check`, on by default) also phones home on every
+single invocation — and with the proxy/network blocked, that call doesn't
+fail fast, it hangs for roughly 90 seconds before giving up. Left as
+default, every single scan request would silently take an extra ~90s (or
+outright time out) in production, for a check that has nothing to do with
+the actual analysis. Fixed with `--disable-version-check --metrics=off`;
+real invocations now take ~1-2s. If you ever see Semgrep scans mysteriously
+slow again, this is the first thing to check.
+
+If Semgrep isn't installed or fails to run for any reason, this degrades to
+a caution finding rather than crashing the whole scan request — see
+`src/scanner/semgrepScanner.ts`.
+
+**Not yet run**: an actual `docker build` of the updated Dockerfile (which
+now installs Python + pip + Semgrep in the runtime image) — no Docker daemon
+in this sandbox, same limitation noted in `infra/README.md`'s validation
+table. Build it yourself once before deploying.
 
 ## Tier 2 — "Open Water" continuous monitoring
 
