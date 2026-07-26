@@ -6,6 +6,7 @@ import { scanLegalPolicy } from "./legalPolicy";
 import { scanAIDisclosure } from "./aiDisclosure";
 import { scanAuthHeuristic } from "./authHeuristic";
 import { scanWithSemgrep } from "./semgrepScanner";
+import { scanOSVVulnerabilities } from "./osvVulnerabilities";
 import type { ScanReport } from "./types";
 
 const SCANNED_EXTENSIONS = [".js", ".ts", ".jsx", ".tsx", ".env", ".json"];
@@ -21,6 +22,7 @@ export function runScan(targetPath: string): ScanReport {
     scanAIDisclosure(files),
     scanAuthHeuristic(files, targetRoot),
     scanWithSemgrep(targetRoot),
+    scanOSVVulnerabilities(targetRoot),
   ];
 
   const findings = results.flatMap((r) => r.findings);

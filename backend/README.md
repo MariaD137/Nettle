@@ -38,7 +38,7 @@ npm run lint    # tsc --noEmit
 | Check | How |
 |---|---|
 | Hardcoded secrets | Regex patterns for AWS keys, Stripe live keys, GitHub tokens, Slack tokens, JWT/signing secrets, private key blocks |
-| Vulnerable dependencies | `package.json` versions checked against a small hand-curated known-CVE list (seed data — production version should call a real OSV/CVE feed) |
+| Vulnerable dependencies | `package.json` versions checked against a real, bundled snapshot of OSV's npm vulnerability database (215k+ known vulnerability ranges) — see below |
 | Missing lockfile | Checks for `package-lock.json` / `yarn.lock` / `pnpm-lock.yaml` |
 | Missing privacy policy / terms | Looks for a root-level file matching the name |
 | Undisclosed AI-generated content | Heuristic: content-generation-shaped code with no disclosure/C2PA marker nearby |
@@ -47,8 +47,33 @@ npm run lint    # tsc --noEmit
 
 Every hand-rolled check above is intentionally simple and will have false
 positives — the point is a real, working, testable pipeline end to end, not
-completeness. Remaining real gap: pull dependency vulnerabilities from a
-live OSV feed instead of the hardcoded seed list.
+completeness.
+
+### OSV vulnerability database
+
+`osvVulnerabilities.ts` checks every dependency in `package.json` against a
+real, bundled snapshot of [OSV](https://osv.dev)'s npm vulnerability data —
+215,156 known vulnerability ranges across the npm ecosystem, not a
+hand-picked list of 2-4 examples. It correctly flags real severities (e.g.
+`lodash@4.17.4` → 10 known vulnerabilities, worst CRITICAL) and, in testing,
+caught a real vulnerability in `express@4.19.2` — a version our old
+hardcoded list would have called clean.
+
+**Snapshot, not live — and deliberately so.** OSV's live query API
+(`api.osv.dev`) needs network access the production API doesn't have (zero
+egress by design, same reasoning as the Semgrep integration above). OSV also
+publishes a bulk data export specifically for offline use, which is what
+this is built from: `scripts/build-osv-db.js` processes an extracted copy of
+[OSV's npm bulk export](https://osv-vulnerabilities.storage.googleapis.com/npm/all.zip)
+into a compact, indexed SQLite database (`src/scanner/osv-data/npm-vulnerabilities.db`,
+~29MB, checked into the repo like the Semgrep ruleset) queried locally at
+scan time. Real known gap: this is frozen at whatever date it was last
+built — there's no refresh mechanism yet. Re-run the build script
+periodically (or wire it into a scheduled job) to pick up new
+vulnerabilities; there's no fixed cadence decided yet.
+
+If the bundled database is missing, this degrades to a caution finding
+rather than crashing the scan, same pattern as the Semgrep integration.
 
 ### Semgrep integration
 
