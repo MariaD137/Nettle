@@ -1,12 +1,17 @@
 import express, { type NextFunction, type Request, type Response } from "express";
 import { healthRouter } from "./routes/health.routes";
 import { scansRouter } from "./routes/scans.routes";
+import { projectsRouter } from "./routes/projects.routes";
+import { eventsRouter } from "./routes/events.routes";
 
 const app = express();
 const PORT = process.env.PORT || 8080;
 
+app.use(express.json());
 app.use(healthRouter);
 app.use(scansRouter);
+app.use(projectsRouter);
+app.use(eventsRouter);
 
 app.use((_req: Request, res: Response) => {
   res.status(404).json({ error: "Not found" });

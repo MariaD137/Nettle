@@ -10,7 +10,7 @@
     "build": "tsc",
     "dev": "tsx watch src/index.ts",
     "start": "node dist/index.js",
-    "test": "node --import tsx --test test/*.test.ts",
+    "test": "NETTLE_DB_PATH=:memory: node --import tsx --test test/*.test.ts",
     "lint": "tsc --noEmit"
   },
   "dependencies": {
