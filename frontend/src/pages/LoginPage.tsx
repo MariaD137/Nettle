@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Link, Navigate, useNavigate } from "react-router-dom";
 import { useAuth } from "../AuthContext";
 import { ApiError } from "../api";
+import NettleLogo from "../components/NettleLogo";
 
 export default function LoginPage() {
   const { user, login, signup } = useAuth();
@@ -30,11 +31,14 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="shell" style={{ maxWidth: 400 }}>
-      <h1>nettle</h1>
-      <p className="muted" style={{ marginBottom: 24 }}>
-        Scans AI-built apps for launch-readiness gaps, then keeps watching after they ship.
-      </p>
+    <div className="auth-landing">
+      <div className="auth-header">
+        <NettleLogo size={92} />
+        <h1 className="auth-wordmark">nettle</h1>
+        <p className="muted auth-tagline">
+          Scans AI-built apps for launch-readiness gaps, then keeps watching after they ship.
+        </p>
+      </div>
 
       <div className="tabs">
         <button className={`tab ${mode === "signup" ? "active" : ""}`} onClick={() => setMode("signup")} type="button">

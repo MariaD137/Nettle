@@ -1,13 +1,17 @@
 :root {
-  --bg: #f1ecdd;
-  --surface: #fbf8ee;
-  --surface-2: #f5f0e1;
-  --ink: #20242b;
-  --muted: #6b6455;
-  --line: #cdc4aa;
-  --line-strong: #a99e7e;
-  --accent: #2c4a5c;
-  --accent-soft: #dce6e9;
+  /* Champagne ground with a warm-neutral card stack above it. The neutrals
+     carry a faint gold bias so they read as chosen alongside the champagne
+     rather than as flat grey dropped on top of it. */
+  --bg: #f7e7ce;
+  --surface: #fefaf3;
+  --surface-2: #f9f0e0;
+  --ink: #1f2430;
+  --muted: #6d6555;
+  --line: #e3d3b4;
+  --line-strong: #c4ad86;
+  --accent: #1d4ed8;
+  --accent-soft: #dce5fb;
+  --brand-mark: #2563eb;
   --sev-critical: #b23a2e;
   --sev-high: #c45a2f;
   --sev-warning: #b9822a;
@@ -27,8 +31,9 @@
     --muted: #9c9484;
     --line: #333b44;
     --line-strong: #4a5561;
-    --accent: #79b0d1;
-    --accent-soft: #233642;
+    --accent: #7ba6f5;
+    --accent-soft: #1e2c47;
+    --brand-mark: #7ba6f5;
     --sev-critical: #e17667;
     --sev-high: #e89060;
     --sev-warning: #e3ad5c;
@@ -63,11 +68,45 @@ a {
   margin-bottom: 32px;
 }
 .brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
   font-family: var(--serif);
   font-weight: 600;
   font-size: 20px;
   text-decoration: none;
   color: var(--ink);
+}
+.nettle-logo {
+  color: var(--brand-mark);
+  display: block;
+}
+
+/* Signed-out landing: the mark leads, the form sits under it. */
+.auth-landing {
+  max-width: 400px;
+  margin: 0 auto;
+  padding: 56px 20px 80px;
+}
+.auth-header {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 14px;
+  margin-bottom: 28px;
+}
+.auth-wordmark {
+  font-family: var(--serif);
+  font-size: 34px;
+  font-weight: 600;
+  margin: 0;
+  letter-spacing: -0.01em;
+}
+.auth-tagline {
+  margin: 0;
+  max-width: 34ch;
+  line-height: 1.55;
 }
 .topbar-right {
   display: flex;

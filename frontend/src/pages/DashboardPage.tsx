@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { api, ApiError, type OverviewData } from "../api";
 import { useAuth } from "../AuthContext";
 import BadgePill from "../components/BadgePill";
+import NettleLogo from "../components/NettleLogo";
 
 function scoreLabel(score: number): string {
   if (score >= 90) return "READY";
@@ -57,7 +58,7 @@ export default function DashboardPage() {
   return (
     <div className="shell">
       <div className="topbar">
-        <span className="brand">nettle</span>
+        <span className="brand"><NettleLogo size={22} title="" />nettle</span>
         <div className="topbar-right">
           <Link to="/settings" className="settings-link">Settings</Link>
           <span>{user?.email}</span>

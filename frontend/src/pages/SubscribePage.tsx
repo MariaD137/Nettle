@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useAuth } from "../AuthContext";
 import { api, ApiError } from "../api";
 import { PLANS } from "../plans";
+import NettleLogo from "../components/NettleLogo";
 
 /**
  * The paywall. Every account lands here after signing up and stays here until
@@ -39,7 +40,7 @@ export default function SubscribePage() {
   return (
     <div className="shell">
       <div className="topbar">
-        <span className="brand">nettle</span>
+        <span className="brand"><NettleLogo size={22} title="" />nettle</span>
         <div className="topbar-right">
           {user && <span>{user.email}</span>}
           <button className="link-btn" onClick={() => logout()}>Log out</button>

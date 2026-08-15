@@ -7,6 +7,7 @@ import {
   type ScanReport, type StoredFindingStatus, type StoredScan,
 } from "../api";
 import BadgePill from "../components/BadgePill";
+import NettleLogo from "../components/NettleLogo";
 
 type Tab = "overview" | "scan" | "findings" | "alerts" | "history" | "settings";
 
@@ -43,7 +44,7 @@ export default function ProjectPage() {
   return (
     <div className="shell">
       <div className="topbar">
-        <Link to="/" className="brand">nettle</Link>
+        <Link to="/" className="brand"><NettleLogo size={22} title="" />nettle</Link>
         <BadgePill state={badge} />
       </div>
 

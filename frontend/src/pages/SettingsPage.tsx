@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { useAuth } from "../AuthContext";
 import { api, ApiError, setToken, type SessionInfo } from "../api";
+import NettleLogo from "../components/NettleLogo";
 
 export default function SettingsPage() {
   const { user, logout, refreshUser } = useAuth();
@@ -9,7 +10,7 @@ export default function SettingsPage() {
   return (
     <div className="shell">
       <div className="topbar">
-        <Link to="/" className="brand">nettle</Link>
+        <Link to="/" className="brand"><NettleLogo size={22} title="" />nettle</Link>
         <span className="muted">{user?.email}</span>
       </div>
 
