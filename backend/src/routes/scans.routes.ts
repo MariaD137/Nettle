@@ -9,6 +9,7 @@ import { resolveScanRoot } from "../scanner/resolveScanRoot";
 import { findProjectByApiKey } from "../patrol/projects";
 import { recordScan } from "../patrol/scans";
 import { requireAuth, optionalAuth } from "../auth/middleware";
+import { requireSubscription } from "../billing/subscription";
 import { getUserById } from "../auth/users";
 import { applyScanAccess } from "../billing/scanAccess";
 import type { Request as ExpressRequest } from "express";
@@ -79,7 +80,7 @@ scansRouter.post("/api/scans", optionalAuth, upload.single("codebase"), (req: Re
 const ALLOWED_HOSTS = ["github.com", "gitlab.com", "bitbucket.org"];
 const REPO_URL_PATTERN = /^https:\/\/(github\.com|gitlab\.com|bitbucket\.org)\/[\w.\-]+\/[\w.\-]+(\.git)?$/;
 
-scansRouter.post("/api/scans/repo", requireAuth, (req: Request, res: Response) => {
+scansRouter.post("/api/scans/repo", requireAuth, requireSubscription, (req: Request, res: Response) => {
   const repoUrl = typeof req.body?.repoUrl === "string" ? req.body.repoUrl.trim() : "";
   const branch = typeof req.body?.branch === "string" ? req.body.branch.trim() : "";
   const apiKey = typeof req.body?.apiKey === "string" ? req.body.apiKey.trim() : "";

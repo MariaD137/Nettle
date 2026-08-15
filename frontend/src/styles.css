@@ -573,33 +573,88 @@ button.destructive {
   color: var(--surface);
 }
 
-/* Locked / upgrade prompt */
-.upgrade-notice {
-  margin-top: 16px;
-  padding: 14px 16px;
-  border: 1px dashed var(--line-strong);
-  border-radius: 8px;
-  background: var(--surface-2);
+/* Paywall */
+.paywall-intro {
+  text-align: center;
+  max-width: 520px;
+  margin: 12px auto 28px;
 }
-.upgrade-notice-body {
+.paywall-intro h1 {
+  margin-bottom: 10px;
+}
+.paywall-intro p {
+  line-height: 1.6;
+}
+.plan-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 16px;
+  align-items: start;
+}
+.plan-card {
+  position: relative;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 24px 22px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.plan-card-highlight {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+.plan-card h2 {
+  margin: 0;
+}
+.plan-flag {
+  position: absolute;
+  top: -10px;
+  right: 18px;
+  background: var(--accent);
+  color: var(--surface);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 3px 10px;
+  border-radius: 10px;
+}
+.plan-tagline {
+  margin: -6px 0 0;
+  font-size: 13.5px;
+  color: var(--muted);
+  line-height: 1.5;
+}
+.plan-price {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--line);
+}
+.plan-price-amount {
+  font-family: var(--serif);
+  font-weight: 700;
+  font-size: 38px;
+  line-height: 1;
+}
+.plan-features {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  flex: 1;
+}
+.plan-features li {
   display: flex;
   align-items: flex-start;
-  gap: 10px;
-}
-.upgrade-notice-body p {
-  margin: 0;
-  font-size: 13px;
-  line-height: 1.5;
-  color: var(--ink);
-}
-.upgrade-lock {
-  font-size: 15px;
-  line-height: 1.3;
-}
-.upgrade-actions {
-  display: flex;
-  gap: 8px;
-  margin-top: 12px;
+  gap: 9px;
+  font-size: 13.5px;
+  line-height: 1.45;
 }
 
 /* Responsive */

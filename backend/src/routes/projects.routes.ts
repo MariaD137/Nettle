@@ -5,14 +5,23 @@ import { listScans, getLatestScan } from "../patrol/scans";
 import { computeBadgeState } from "../patrol/badge";
 import { hashFinding, upsertFindingStatus, listFindingStatuses } from "../patrol/findingStatuses";
 import { requireAuth } from "../auth/middleware";
-import { applyScanAccess, limitFindings, hasFullScanAccess } from "../billing/scanAccess";
+import { requireSubscription } from "../billing/subscription";
 import type { AlertStatus, FindingStatus } from "../patrol/types";
 
 export const projectsRouter = Router();
 
+// The paywall runs per-route rather than as router-level middleware. Two
+// reasons it has to: this router is mounted at the app root, so a bare
+// .use() would intercept every request in the app (signup included), and the
+// public badge endpoints in badge.routes.ts share the /api/projects prefix,
+// so even a path-scoped .use() would lock those embeds behind the paywall.
+// Every route below therefore states the gate explicitly — new routes must
+// too.
+const paywalled = [requireAuth, requireSubscription];
+
 const PLAN_LIMITS: Record<string, number> = { free: 3, tier1: 10, tier2: 50 };
 
-projectsRouter.post("/api/projects", requireAuth, (req, res) => {
+projectsRouter.post("/api/projects", ...paywalled, (req, res) => {
   const name = typeof req.body?.name === "string" ? req.body.name.trim() : "";
   if (!name) {
     return res.status(400).json({ error: "Provide a project 'name'" });
@@ -33,7 +42,7 @@ projectsRouter.post("/api/projects", requireAuth, (req, res) => {
   res.status(201).json(project);
 });
 
-projectsRouter.get("/api/projects", requireAuth, (req, res) => {
+projectsRouter.get("/api/projects", ...paywalled, (req, res) => {
   const includeArchived = req.query.includeArchived === "true";
   res.json({ projects: listProjectsByUser(req.userId!, includeArchived) });
 });
@@ -47,23 +56,16 @@ function ownedProjectOr404(req: import("express").Request, res: import("express"
   return project;
 }
 
-projectsRouter.get("/api/projects/:id", requireAuth, (req, res) => {
+projectsRouter.get("/api/projects/:id", ...paywalled, (req, res) => {
   const project = ownedProjectOr404(req, res);
   if (!project) return;
   const badge = computeBadgeState(project.id);
   const latestScan = getLatestScan(project.id);
   const alertCounts = countAlertsByStatus(project.id);
-  res.json({
-    project,
-    badge,
-    latestScan: latestScan
-      ? { ...latestScan, report: applyScanAccess(latestScan.report, req.userPlan) }
-      : null,
-    alertCounts,
-  });
+  res.json({ project, badge, latestScan, alertCounts });
 });
 
-projectsRouter.patch("/api/projects/:id", requireAuth, (req, res) => {
+projectsRouter.patch("/api/projects/:id", ...paywalled, (req, res) => {
   const project = ownedProjectOr404(req, res);
   if (!project) return;
   const updates: Record<string, string | undefined> = {};
@@ -75,41 +77,41 @@ projectsRouter.patch("/api/projects/:id", requireAuth, (req, res) => {
   res.json(updated);
 });
 
-projectsRouter.delete("/api/projects/:id", requireAuth, (req, res) => {
+projectsRouter.delete("/api/projects/:id", ...paywalled, (req, res) => {
   const project = ownedProjectOr404(req, res);
   if (!project) return;
   deleteProject(project.id);
   res.status(204).end();
 });
 
-projectsRouter.post("/api/projects/:id/archive", requireAuth, (req, res) => {
+projectsRouter.post("/api/projects/:id/archive", ...paywalled, (req, res) => {
   const project = ownedProjectOr404(req, res);
   if (!project) return;
   const archived = archiveProject(project.id);
   res.json(archived);
 });
 
-projectsRouter.post("/api/projects/:id/restore", requireAuth, (req, res) => {
+projectsRouter.post("/api/projects/:id/restore", ...paywalled, (req, res) => {
   const project = ownedProjectOr404(req, res);
   if (!project) return;
   const restored = restoreProject(project.id);
   res.json(restored);
 });
 
-projectsRouter.post("/api/projects/:id/rotate-key", requireAuth, (req, res) => {
+projectsRouter.post("/api/projects/:id/rotate-key", ...paywalled, (req, res) => {
   const project = ownedProjectOr404(req, res);
   if (!project) return;
   const updated = rotateApiKey(project.id);
   res.json(updated);
 });
 
-projectsRouter.get("/api/projects/:id/alerts", requireAuth, (req, res) => {
+projectsRouter.get("/api/projects/:id/alerts", ...paywalled, (req, res) => {
   const project = ownedProjectOr404(req, res);
   if (!project) return;
   res.json({ project: { id: project.id, name: project.name }, alerts: listAlerts(project.id) });
 });
 
-projectsRouter.patch("/api/projects/:id/alerts/:alertId", requireAuth, (req, res) => {
+projectsRouter.patch("/api/projects/:id/alerts/:alertId", ...paywalled, (req, res) => {
   const project = ownedProjectOr404(req, res);
   if (!project) return;
 
@@ -127,17 +129,13 @@ projectsRouter.patch("/api/projects/:id/alerts/:alertId", requireAuth, (req, res
   res.json({ alert: updated });
 });
 
-projectsRouter.get("/api/projects/:id/scans", requireAuth, (req, res) => {
+projectsRouter.get("/api/projects/:id/scans", ...paywalled, (req, res) => {
   const project = ownedProjectOr404(req, res);
   if (!project) return;
-  const scans = listScans(project.id).map((s) => ({
-    ...s,
-    report: applyScanAccess(s.report, req.userPlan),
-  }));
-  res.json({ project: { id: project.id, name: project.name }, scans });
+  res.json({ project: { id: project.id, name: project.name }, scans: listScans(project.id) });
 });
 
-projectsRouter.get("/api/projects/:id/scans/compare", requireAuth, (req, res) => {
+projectsRouter.get("/api/projects/:id/scans/compare", ...paywalled, (req, res) => {
   const project = ownedProjectOr404(req, res);
   if (!project) return;
   const scans = listScans(project.id);
@@ -158,11 +156,6 @@ projectsRouter.get("/api/projects/:id/scans/compare", requireAuth, (req, res) =>
   const newFindings = newer.findings.filter((f) => !olderSet.has(`${f.category}::${f.title}::${f.file}`));
   const remaining = newer.findings.filter((f) => olderSet.has(`${f.category}::${f.title}::${f.file}`));
 
-  // Counts stay exact on every plan — knowing 12 issues were fixed and 3
-  // appeared is the point of a comparison. It's the finding detail behind
-  // those counts that the paid tiers unlock.
-  const fullAccess = hasFullScanAccess(req.userPlan);
-
   res.json({
     from: { id: scans[fromIdx].id, score: scans[fromIdx].score, scannedAt: scans[fromIdx].scannedAt },
     to: { id: scans[toIdx].id, score: scans[toIdx].score, scannedAt: scans[toIdx].scannedAt },
@@ -170,20 +163,19 @@ projectsRouter.get("/api/projects/:id/scans/compare", requireAuth, (req, res) =>
     fixed: fixed.length,
     new: newFindings.length,
     remaining: remaining.length,
-    fixedFindings: limitFindings(fixed, req.userPlan),
-    newFindings: limitFindings(newFindings, req.userPlan),
-    fullReport: fullAccess,
+    fixedFindings: fixed,
+    newFindings,
   });
 });
 
-projectsRouter.get("/api/projects/:id/findings", requireAuth, (req, res) => {
+projectsRouter.get("/api/projects/:id/findings", ...paywalled, (req, res) => {
   const project = ownedProjectOr404(req, res);
   if (!project) return;
   const statuses = listFindingStatuses(project.id);
   res.json({ findingStatuses: statuses });
 });
 
-projectsRouter.patch("/api/projects/:id/findings/:findingHash", requireAuth, (req, res) => {
+projectsRouter.patch("/api/projects/:id/findings/:findingHash", ...paywalled, (req, res) => {
   const project = ownedProjectOr404(req, res);
   if (!project) return;
   const status = req.body?.status as FindingStatus;
@@ -196,29 +188,19 @@ projectsRouter.patch("/api/projects/:id/findings/:findingHash", requireAuth, (re
   res.json({ findingStatus: result });
 });
 
-projectsRouter.get("/api/projects/:id/scans/:scanId/export", requireAuth, (req, res) => {
+projectsRouter.get("/api/projects/:id/scans/:scanId/export", ...paywalled, (req, res) => {
   const project = ownedProjectOr404(req, res);
   if (!project) return;
   const scans = listScans(project.id);
   const scan = scans.find((s) => s.id === req.params.scanId);
   if (!scan) return res.status(404).json({ error: "Scan not found" });
 
-  // Export exists to hand over the complete report — there's no meaningful
-  // preview of a downloadable artifact, so this is gated outright rather
-  // than trimmed.
-  if (!hasFullScanAccess(req.userPlan)) {
-    return res.status(402).json({
-      error: "Exporting a full report requires a Tier 1 or Tier 2 plan",
-      upgradeRequired: true,
-    });
-  }
-
   res.setHeader("Content-Type", "application/json");
   res.setHeader("Content-Disposition", `attachment; filename="nettle-report-${scan.id}.json"`);
   res.json(scan.report);
 });
 
-projectsRouter.get("/api/overview", requireAuth, (req, res) => {
+projectsRouter.get("/api/overview", ...paywalled, (req, res) => {
   const projects = listProjectsByUser(req.userId!);
 
   let totalCritical = 0;

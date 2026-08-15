@@ -6,11 +6,27 @@ import ProjectPage from "./pages/ProjectPage";
 import BillingResultPage from "./pages/BillingResultPage";
 import SettingsPage from "./pages/SettingsPage";
 import ResetPasswordPage from "./pages/ResetPasswordPage";
+import SubscribePage from "./pages/SubscribePage";
+import { hasActiveSubscription } from "./subscription";
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { user, loading } = useAuth();
   if (loading) return <div className="shell muted">Loading…</div>;
   if (!user) return <Navigate to="/login" replace />;
+  return <>{children}</>;
+}
+
+/**
+ * The paywall guard. Signed in but unpaid accounts get the plan picker
+ * instead of the dashboard — there is no partial dashboard to fall back to.
+ * The API enforces the same rule independently, so this is the UX half of
+ * the gate, not the security half.
+ */
+function PaidRoute({ children }: { children: React.ReactNode }) {
+  const { user, loading } = useAuth();
+  if (loading) return <div className="shell muted">Loading…</div>;
+  if (!user) return <Navigate to="/login" replace />;
+  if (!hasActiveSubscription(user)) return <Navigate to="/subscribe" replace />;
   return <>{children}</>;
 }
 
@@ -20,21 +36,31 @@ export default function App() {
       <Route path="/login" element={<LoginPage />} />
       <Route path="/reset-password" element={<ResetPasswordPage />} />
       <Route
-        path="/"
+        path="/subscribe"
         element={
           <ProtectedRoute>
-            <DashboardPage />
+            <SubscribePage />
           </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/"
+        element={
+          <PaidRoute>
+            <DashboardPage />
+          </PaidRoute>
         }
       />
       <Route
         path="/projects/:id"
         element={
-          <ProtectedRoute>
+          <PaidRoute>
             <ProjectPage />
-          </ProtectedRoute>
+          </PaidRoute>
         }
       />
+      {/* Account settings stay reachable unpaid, so a lapsed customer can
+          still change their password or close their account. */}
       <Route
         path="/settings"
         element={

@@ -174,6 +174,12 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const body = isJson ? await res.json() : null;
 
   if (!res.ok) {
+    // The API is the real paywall; this keeps a client that's holding stale
+    // user data (subscription cancelled in another tab, webhook landed after
+    // load) from sitting on a dashboard it can no longer fetch.
+    if (res.status === 402 && body?.subscriptionRequired && window.location.pathname !== "/subscribe") {
+      window.location.assign("/subscribe");
+    }
     throw new ApiError(res.status, body?.error ?? `Request failed with status ${res.status}`);
   }
   return body as T;
