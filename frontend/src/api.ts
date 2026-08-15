@@ -301,6 +301,12 @@ export const api = {
     return request<ScanReport>("/api/scans", { method: "POST", body: form, headers });
   },
 
+  scanRepo: (repoUrl: string, opts?: { branch?: string; apiKey?: string }) =>
+    request<ScanReport>("/api/scans/repo", {
+      method: "POST",
+      body: JSON.stringify({ repoUrl, branch: opts?.branch, apiKey: opts?.apiKey }),
+    }),
+
   // Billing
   createCheckoutSession: (plan: "tier1" | "tier2") =>
     request<{ url: string }>("/api/billing/checkout-session", {

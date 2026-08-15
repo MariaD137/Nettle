@@ -331,6 +331,56 @@ export function run() {
     });
 
   // -----------------------------------------------------------------------
+  // nettle scan-repo <url>
+  // -----------------------------------------------------------------------
+  program
+    .command("scan-repo <url>")
+    .description("Scan a public Git repository by URL")
+    .option("--branch <branch>", "Branch to scan (defaults to the repo's default branch)")
+    .option("--api-key <key>", "API key to associate scan with a project")
+    .option("--json", "Output raw JSON report")
+    .option(
+      "--fail-on <severity>",
+      "Exit with code 1 if findings at this severity or above (critical, high, medium, low)"
+    )
+    .action(async (url, opts, cmd) => {
+      const apiUrl = cmd.optsWithGlobals().apiUrl;
+      requireLoggedIn();
+
+      try {
+        console.log(chalk.dim(`\nCloning and scanning ${url}${opts.branch ? ` (branch: ${opts.branch})` : ""} ...\n`));
+
+        const { data: report } = await request("POST", "/api/scans/repo", {
+          body: { repoUrl: url, branch: opts.branch, apiKey: opts.apiKey },
+          apiUrl,
+        });
+
+        if (opts.json) {
+          console.log(JSON.stringify(report, null, 2));
+        } else {
+          console.log(formatScore(report.score));
+          console.log(formatSummary(report.summary));
+          console.log(formatFindings(report.findings));
+        }
+
+        if (opts.failOn) {
+          const threshold = opts.failOn.toLowerCase();
+          if (!["critical", "high", "medium", "low"].includes(threshold)) {
+            die(`Invalid --fail-on value: ${opts.failOn}. Use: critical, high, medium, low`);
+          }
+          if (meetsThreshold(report.summary, threshold)) {
+            console.log(
+              chalk.red.bold(`\nFailed: findings at ${threshold} severity or above detected.\n`)
+            );
+            process.exit(1);
+          }
+        }
+      } catch (err) {
+        die(err.message || `Scan failed: ${err}`);
+      }
+    });
+
+  // -----------------------------------------------------------------------
   // nettle history <project-id>
   // -----------------------------------------------------------------------
   program

@@ -135,19 +135,30 @@ function OverviewTab({ project, latestScan }: { project: Project; latestScan: St
   );
 }
 
+type ScanMethod = "upload" | "repo";
+
 function ScanTab({ project, onScanned }: { project: Project; onScanned: (badge: BadgeState) => void }) {
+  const [method, setMethod] = useState<ScanMethod>("upload");
   const [file, setFile] = useState<File | null>(null);
+  const [repoUrl, setRepoUrl] = useState("");
+  const [branch, setBranch] = useState("");
   const [report, setReport] = useState<ScanReport | null>(null);
   const [scanning, setScanning] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   async function handleScan() {
-    if (!file) return;
     setError(null);
     setScanning(true);
     try {
-      const report = await api.scanCodebase(file, project.apiKey);
-      setReport(report);
+      let result: ScanReport;
+      if (method === "repo") {
+        if (!repoUrl) { setError("Enter a repository URL"); setScanning(false); return; }
+        result = await api.scanRepo(repoUrl, { branch: branch || undefined, apiKey: project.apiKey });
+      } else {
+        if (!file) { setError("Select a file"); setScanning(false); return; }
+        result = await api.scanCodebase(file, project.apiKey);
+      }
+      setReport(result);
       onScanned(await api.getBadge(project.id));
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Scan failed");
@@ -159,14 +170,64 @@ function ScanTab({ project, onScanned }: { project: Project; onScanned: (badge: 
   return (
     <div className="card">
       <h2>Launch readiness scan</h2>
-      <p className="muted">Upload a .zip of your codebase.</p>
-      {error && <div className="error-banner">{error}</div>}
-      <div style={{ display: "flex", gap: 10, marginBottom: 16 }}>
-        <input type="file" accept=".zip" onChange={(e) => setFile(e.target.files?.[0] ?? null)} />
-        <button onClick={handleScan} disabled={!file || scanning}>
-          {scanning ? "Scanning…" : "Scan"}
+
+      <div className="scan-method-tabs">
+        <button
+          type="button"
+          className={`scan-method-tab ${method === "upload" ? "active" : ""}`}
+          onClick={() => setMethod("upload")}
+        >
+          Upload zip
+        </button>
+        <button
+          type="button"
+          className={`scan-method-tab ${method === "repo" ? "active" : ""}`}
+          onClick={() => setMethod("repo")}
+        >
+          Scan repo
         </button>
       </div>
+
+      {error && <div className="error-banner">{error}</div>}
+
+      {method === "upload" && (
+        <div>
+          <p className="muted">Upload a .zip of your codebase.</p>
+          <div style={{ display: "flex", gap: 10, marginBottom: 16 }}>
+            <input type="file" accept=".zip" onChange={(e) => setFile(e.target.files?.[0] ?? null)} />
+            <button onClick={handleScan} disabled={!file || scanning}>
+              {scanning ? "Scanning…" : "Scan"}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {method === "repo" && (
+        <div>
+          <p className="muted">Enter a public GitHub, GitLab, or Bitbucket repo URL.</p>
+          <div className="field">
+            <label htmlFor="repo-url">Repository URL</label>
+            <input
+              id="repo-url"
+              value={repoUrl}
+              onChange={(e) => setRepoUrl(e.target.value)}
+              placeholder="https://github.com/owner/repo"
+            />
+          </div>
+          <div className="field">
+            <label htmlFor="repo-branch">Branch (optional)</label>
+            <input
+              id="repo-branch"
+              value={branch}
+              onChange={(e) => setBranch(e.target.value)}
+              placeholder="main"
+            />
+          </div>
+          <button onClick={handleScan} disabled={!repoUrl || scanning}>
+            {scanning ? "Cloning & scanning…" : "Scan repository"}
+          </button>
+        </div>
+      )}
 
       {report && <ReportView report={report} />}
     </div>

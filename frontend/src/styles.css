@@ -548,6 +548,31 @@ button.destructive {
   color: var(--accent);
 }
 
+/* Scan method toggle */
+.scan-method-tabs {
+  display: flex;
+  gap: 0;
+  margin-bottom: 16px;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  overflow: hidden;
+  width: fit-content;
+}
+.scan-method-tab {
+  padding: 7px 16px;
+  font-size: 13px;
+  font-weight: 600;
+  background: transparent;
+  color: var(--muted);
+  border: none;
+  border-radius: 0;
+  cursor: pointer;
+}
+.scan-method-tab.active {
+  background: var(--accent);
+  color: var(--surface);
+}
+
 /* Responsive */
 @media (max-width: 600px) {
   .stats-grid {
