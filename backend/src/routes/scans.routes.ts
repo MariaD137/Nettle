@@ -12,9 +12,31 @@ import { requireAuth, optionalAuth } from "../auth/middleware";
 import { requireSubscription } from "../billing/subscription";
 import { getUserById } from "../auth/users";
 import { applyScanAccess } from "../billing/scanAccess";
+import { getQuotaState, recordScanUsage } from "../billing/scanQuota";
 import type { Request as ExpressRequest } from "express";
 
 export const scansRouter = Router();
+
+/**
+ * Refuses the scan when the billing account has used its monthly allowance.
+ * Returns true when the caller should stop. Anonymous, unauthenticated scans
+ * have no account to meter and are preview-only, so they pass through.
+ */
+function quotaExceeded(userId: string | undefined, res: Response): boolean {
+  if (!userId) return false;
+  const quota = getQuotaState(userId);
+  if (!quota || !quota.exhausted) return false;
+
+  res.status(402).json({
+    error: `You have used all ${quota.limit} scans in this billing period. Your allowance resets on ${new Date(quota.periodEnd).toLocaleDateString("en-GB")}.`,
+    quotaExceeded: true,
+    limit: quota.limit,
+    used: quota.used,
+    remaining: 0,
+    periodEnd: quota.periodEnd,
+  });
+  return true;
+}
 
 /**
  * Which plan governs this scan's report. A bearer token wins; failing that,
@@ -45,6 +67,16 @@ scansRouter.post("/api/scans", optionalAuth, upload.single("codebase"), (req: Re
     return res.status(400).json({ error: "Only .zip uploads are supported right now" });
   }
 
+  // Resolve the billing account before doing any work — an over-quota
+  // caller shouldn't get a scan run on their behalf and then be refused.
+  const upfrontKey = req.header("x-nettle-api-key");
+  const upfrontProject = upfrontKey ? findProjectByApiKey(upfrontKey) : null;
+  const billedUserId = req.userId ?? upfrontProject?.userId;
+  if (quotaExceeded(billedUserId, res)) {
+    fs.unlinkSync(req.file.path);
+    return;
+  }
+
   const extractDir = fs.mkdtempSync(path.join(os.tmpdir(), "nettle-scan-"));
   try {
     execFileSync("unzip", ["-q", "-o", req.file.path, "-d", extractDir]);
@@ -58,15 +90,13 @@ scansRouter.post("/api/scans", optionalAuth, upload.single("codebase"), (req: Re
     //
     // Note the full report is what gets stored; only the response is trimmed
     // to the caller's plan, so upgrading later unlocks this scan in place.
-    const apiKey = req.header("x-nettle-api-key");
     let ownerUserId: string | undefined;
-    if (apiKey) {
-      const project = findProjectByApiKey(apiKey);
-      if (project) {
-        recordScan(project.id, report);
-        ownerUserId = project.userId;
-      }
+    if (upfrontProject) {
+      recordScan(upfrontProject.id, report);
+      ownerUserId = upfrontProject.userId;
     }
+
+    if (billedUserId) recordScanUsage(billedUserId, upfrontProject?.id ?? null, "upload");
 
     res.json(applyScanAccess(report, planForScan(req, ownerUserId)));
   } catch (err) {
@@ -92,6 +122,10 @@ scansRouter.post("/api/scans/repo", requireAuth, requireSubscription, (req: Requ
     return res.status(400).json({ error: "Only public GitHub, GitLab, and Bitbucket HTTPS URLs are supported" });
   }
 
+  const repoProject = apiKey ? findProjectByApiKey(apiKey) : null;
+  const billedUserId = req.userId ?? repoProject?.userId;
+  if (quotaExceeded(billedUserId, res)) return;
+
   const cloneDir = fs.mkdtempSync(path.join(os.tmpdir(), "nettle-repo-"));
   try {
     const args = ["clone", "--depth", "1"];
@@ -103,13 +137,12 @@ scansRouter.post("/api/scans/repo", requireAuth, requireSubscription, (req: Requ
     const report = runScan(cloneDir);
 
     let ownerUserId: string | undefined;
-    if (apiKey) {
-      const project = findProjectByApiKey(apiKey);
-      if (project) {
-        recordScan(project.id, report);
-        ownerUserId = project.userId;
-      }
+    if (repoProject) {
+      recordScan(repoProject.id, report);
+      ownerUserId = repoProject.userId;
     }
+
+    if (billedUserId) recordScanUsage(billedUserId, repoProject?.id ?? null, "repo");
 
     res.json(applyScanAccess(report, planForScan(req, ownerUserId)));
   } catch (err) {

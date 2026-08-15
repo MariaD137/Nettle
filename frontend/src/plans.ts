@@ -25,7 +25,7 @@ export const PLANS: PlanCopy[] = [
     price: "$49",
     cadence: "per month",
     features: [
-      "Unlimited launch-readiness scans",
+      "30 scans per month",
       "Full findings with file, line, and how to fix",
       "Up to 10 projects",
       "Scan by zip upload or public repo URL",
@@ -42,6 +42,7 @@ export const PLANS: PlanCopy[] = [
     cadence: "per month",
     highlight: true,
     features: [
+      "100 scans per month",
       "Everything in Tier 1",
       "Up to 50 projects",
       "Continuous runtime monitoring",

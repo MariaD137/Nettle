@@ -97,7 +97,17 @@ export interface ProjectDetail {
   alertCounts: AlertCounts;
 }
 
+export interface QuotaState {
+  limit: number;
+  used: number;
+  remaining: number;
+  periodStart: string;
+  periodEnd: string;
+  exhausted: boolean;
+}
+
 export interface OverviewData {
+  quota: QuotaState | null;
   totalProjects: number;
   totalCriticalFindings: number;
   totalHighFindings: number;

@@ -8,6 +8,7 @@ export interface User {
   plan: string;
   stripeCustomerId: string | null;
   subscriptionStatus: string;
+  billingAnchor: string | null;
   createdAt: string;
 }
 
@@ -18,6 +19,7 @@ interface UserRow {
   plan: string;
   stripe_customer_id: string | null;
   subscription_status: string;
+  billing_anchor: string | null;
   created_at: string;
 }
 
@@ -28,6 +30,7 @@ function toUser(row: UserRow): User {
     plan: row.plan,
     stripeCustomerId: row.stripe_customer_id,
     subscriptionStatus: row.subscription_status,
+    billingAnchor: row.billing_anchor,
     createdAt: row.created_at,
   };
 }
@@ -47,7 +50,7 @@ export async function createUser(email: string, password: string): Promise<User>
     passwordHash,
     createdAt
   );
-  return { id, email, plan: "free", stripeCustomerId: null, subscriptionStatus: "none", createdAt };
+  return { id, email, plan: "free", stripeCustomerId: null, subscriptionStatus: "none", billingAnchor: null, createdAt };
 }
 
 export async function verifyCredentials(email: string, password: string): Promise<User | null> {
@@ -73,6 +76,16 @@ export function setStripeCustomerId(userId: string, stripeCustomerId: string): v
 
 export function setSubscriptionStatus(userId: string, plan: string, status: string): void {
   db.prepare("UPDATE users SET plan = ?, subscription_status = ? WHERE id = ?").run(plan, status, userId);
+
+  // Stamp the billing anchor the first time this account becomes active. It
+  // is deliberately never overwritten: the monthly scan period is derived by
+  // rolling this date forward, so moving it would silently reset someone's
+  // usage mid-cycle.
+  if (status === "active" || status === "trialing") {
+    db.prepare(
+      "UPDATE users SET billing_anchor = ? WHERE id = ? AND billing_anchor IS NULL"
+    ).run(new Date().toISOString(), userId);
+  }
 }
 
 export function getUserByStripeCustomerId(stripeCustomerId: string): User | null {

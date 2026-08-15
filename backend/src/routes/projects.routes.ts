@@ -6,6 +6,7 @@ import { computeBadgeState } from "../patrol/badge";
 import { hashFinding, upsertFindingStatus, listFindingStatuses } from "../patrol/findingStatuses";
 import { requireAuth } from "../auth/middleware";
 import { requireSubscription } from "../billing/subscription";
+import { getQuotaState } from "../billing/scanQuota";
 import type { AlertStatus, FindingStatus } from "../patrol/types";
 
 export const projectsRouter = Router();
@@ -236,6 +237,7 @@ projectsRouter.get("/api/overview", ...paywalled, (req, res) => {
   });
 
   res.json({
+    quota: getQuotaState(req.userId!),
     totalProjects: projects.length,
     totalCriticalFindings: totalCritical,
     totalHighFindings: totalHigh,

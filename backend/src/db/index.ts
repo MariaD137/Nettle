@@ -130,6 +130,31 @@ if (!columnExists("projects", "archived_at")) {
 if (!columnExists("scans", "scanner_version")) {
   db.exec("ALTER TABLE scans ADD COLUMN scanner_version TEXT");
 }
+// Billable scans are recorded here rather than counted off the `scans`
+// table. A scan run without a project API key never lands in `scans` at
+// all, so counting stored reports would let a subscriber take unlimited
+// full-price scans simply by omitting the key. The ledger tracks usage
+// independently of whether a report was persisted against a project.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS scan_usage (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    project_id TEXT,
+    source TEXT NOT NULL,
+    occurred_at TEXT NOT NULL,
+    FOREIGN KEY (user_id) REFERENCES users(id)
+  );
+  CREATE INDEX IF NOT EXISTS idx_scan_usage_user_time
+    ON scan_usage(user_id, occurred_at);
+`);
+
+// Anchor for the monthly scan allowance. Set when a subscription first goes
+// active and then left alone — the current period is derived by rolling this
+// date forward a month at a time, which is how Stripe's own billing cycle
+// behaves, so the two line up once Stripe is wired in.
+if (!columnExists("users", "billing_anchor")) {
+  db.exec("ALTER TABLE users ADD COLUMN billing_anchor TEXT");
+}
 
 export function newId(): string {
   return crypto.randomUUID();

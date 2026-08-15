@@ -84,8 +84,10 @@ export default function DashboardPage() {
           {overview && (
             <div className="m-statstrip">
               <div className="m-stat">
-                <span className="m-stat-value">{overview.latestScore ?? "—"}</span>
-                <span className="m-stat-label">Score</span>
+                <span className={`m-stat-value ${overview.quota?.exhausted ? "stat-critical" : ""}`}>
+                  {overview.quota ? overview.quota.remaining : "—"}
+                </span>
+                <span className="m-stat-label">Scans left</span>
               </div>
               <div className="m-stat">
                 <span className="m-stat-value stat-critical">{overview.totalCriticalFindings}</span>
@@ -215,6 +217,18 @@ export default function DashboardPage() {
                 : "No scans yet"}
             </span>
           </div>
+          {overview.quota && (
+            <div className="stat-card">
+              <span className={`stat-value ${overview.quota.exhausted ? "stat-critical" : ""}`}>
+                {overview.quota.remaining}
+              </span>
+              <span className="stat-label">Scans remaining</span>
+              <span className="stat-sublabel">
+                {overview.quota.used} of {overview.quota.limit} used · resets{" "}
+                {new Date(overview.quota.periodEnd).toLocaleDateString()}
+              </span>
+            </div>
+          )}
         </div>
       )}
 
