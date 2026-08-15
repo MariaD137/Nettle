@@ -1,6 +1,19 @@
 export type Severity = "critical" | "high" | "medium" | "low" | "info";
 
-export type FindingCategory = "Security" | "Dependencies" | "Authentication" | "Legal & Policy" | "AI Disclosure" | "Configuration";
+export type FindingCategory =
+  | "Security"
+  | "Dependencies"
+  | "Authentication"
+  | "Legal & Policy"
+  | "AI Disclosure"
+  | "Configuration"
+  | "Cryptography"
+  | "Database"
+  | "API Security"
+  | "Frontend Security"
+  | "Code Quality"
+  | "Supply Chain"
+  | "Session Management";
 
 export interface Finding {
   severity: Severity;

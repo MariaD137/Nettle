@@ -7,6 +7,14 @@ import { scanAIDisclosure } from "./aiDisclosure";
 import { scanAuthHeuristic } from "./authHeuristic";
 import { scanWithSemgrep } from "./semgrepScanner";
 import { scanOSVVulnerabilities } from "./osvVulnerabilities";
+import { scanSecurityHeaders } from "./securityHeaders";
+import { scanCodeQuality } from "./codeQuality";
+import { scanCrypto } from "./cryptoSecurity";
+import { scanDatabaseSecurity } from "./databaseSecurity";
+import { scanApiSecurity } from "./apiSecurity";
+import { scanFrontendSecurity } from "./frontendSecurity";
+import { scanAiSecurity } from "./aiSecurity";
+import { scanSessionJwt } from "./sessionJwt";
 import type { ScanReport } from "./types";
 
 const SCANNED_EXTENSIONS = [".js", ".ts", ".jsx", ".tsx", ".env", ".json"];
@@ -31,6 +39,14 @@ export function runScan(targetPath: string): ScanReport {
     scanAuthHeuristic(files, targetRoot),
     scanWithSemgrep(targetRoot),
     scanOSVVulnerabilities(targetRoot),
+    scanSecurityHeaders(files, targetRoot),
+    scanCodeQuality(files, targetRoot),
+    scanCrypto(files, targetRoot),
+    scanDatabaseSecurity(files, targetRoot),
+    scanApiSecurity(files, targetRoot),
+    scanFrontendSecurity(files, targetRoot),
+    scanAiSecurity(files, targetRoot),
+    scanSessionJwt(files, targetRoot),
   ];
 
   const findings = results.flatMap((r) => r.findings);
