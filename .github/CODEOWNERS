@@ -1,22 +1,21 @@
 # Code Owners
-# Replace placeholders with actual GitHub usernames or teams.
 # Each line defines who must review changes to those paths.
 
 # Backend
-# backend/src/auth/          @your-team
-# backend/src/billing/       @your-team
-# backend/src/scanner/       @your-team
-# backend/src/patrol/        @your-team
-# backend/src/routes/        @your-team
+backend/src/auth/          @MariaD137
+backend/src/billing/       @MariaD137
+backend/src/scanner/       @MariaD137
+backend/src/patrol/        @MariaD137
+backend/src/routes/        @MariaD137
 
 # Frontend
-# frontend/                  @your-team
+frontend/                  @MariaD137
 
 # Infrastructure
-# infra/                     @your-team
+infra/                     @MariaD137
 
 # CI/CD
-# .github/                   @your-team
+.github/                   @MariaD137
 
 # Documentation
-# docs/                      @your-team
+docs/                      @MariaD137
