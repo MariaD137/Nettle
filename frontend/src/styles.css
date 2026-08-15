@@ -591,6 +591,29 @@ button.destructive {
   color: var(--accent);
 }
 
+.scan-upload-row {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  margin-bottom: 16px;
+}
+/* A file input carries an intrinsic width that won't shrink, so on a phone
+   the row becomes a column rather than pushing the Scan button off-screen. */
+@media (max-width: 700px) {
+  .scan-upload-row {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 12px;
+  }
+  .scan-upload-row input[type="file"] {
+    max-width: 100%;
+  }
+  .project-row {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+}
+
 /* Scan method toggle */
 .scan-method-tabs {
   display: flex;
@@ -700,16 +723,133 @@ button.destructive {
   line-height: 1.45;
 }
 
-/* Responsive */
-@media (max-width: 600px) {
+/* Responsive
+   ---------------------------------------------------------------------------
+   Two separate concerns, deliberately keyed off different things:
+
+   - max-width handles layout that runs out of room. The project tab strip is
+     the load-bearing case: six tabs measure ~485px, so on a phone the last
+     two used to sit off-screen entirely, unreachable rather than merely ugly.
+     They wrap instead of scrolling horizontally, because a scroll strip hides
+     tabs that a customer has no reason to suspect exist.
+
+   - pointer: coarse handles touch targets, and only fires on touch devices,
+     so a narrow desktop window keeps its compact controls. */
+
+@media (max-width: 700px) {
+  .shell,
+  .auth-landing {
+    padding: 20px 14px 60px;
+  }
+  h1 {
+    font-size: 23px;
+  }
+  h2 {
+    font-size: 16px;
+  }
+  .card {
+    padding: 16px 15px;
+  }
+
+  .topbar {
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-bottom: 22px;
+  }
+  .topbar-right {
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+
+  /* The fix for the unreachable tabs. */
+  .tabs {
+    flex-wrap: wrap;
+    gap: 2px;
+  }
+  .tab {
+    padding: 8px 11px;
+    font-size: 12.5px;
+  }
+
   .stats-grid {
     grid-template-columns: 1fr 1fr;
+    gap: 10px;
+  }
+  .stat-card {
+    padding: 14px 15px;
+  }
+  .stat-value {
+    font-size: 26px;
+  }
+
+  .report-header,
+  .score-counts,
+  .alert-actions,
+  .finding-top {
+    flex-wrap: wrap;
   }
   .report-header {
     flex-direction: column;
     align-items: flex-start;
   }
-  .score-counts {
-    flex-wrap: wrap;
+
+  /* Label-and-control rows read as two stacked blocks rather than a squeezed
+     pair once there's no horizontal room to separate them. */
+  .settings-row {
+    flex-direction: column;
+    align-items: flex-start !important;
+    gap: 10px;
+  }
+
+  /* Long unbroken strings — API keys, session tokens, emails — must not push
+     the page sideways. */
+  .settings-row,
+  .finding-detail,
+  .stat-label,
+  .topbar-right {
+    overflow-wrap: anywhere;
+  }
+
+  .auth-wordmark {
+    font-size: 28px;
+  }
+  .plan-card {
+    padding: 20px 17px;
+  }
+  .plan-price-amount {
+    font-size: 32px;
+  }
+}
+
+@media (pointer: coarse) {
+  button,
+  .button,
+  select,
+  .filter-select,
+  .field input,
+  .field select {
+    min-height: 42px;
+  }
+  button.small,
+  .button.small {
+    min-height: 36px;
+    padding: 7px 12px;
+  }
+  .tab {
+    min-height: 40px;
+  }
+  /* Inline text buttons stay inline — a 42px box around them would break the
+     sentence they sit in — but still get a usable strip to hit. */
+  .link-btn {
+    min-height: 32px;
+  }
+  .scan-method-tab {
+    min-height: 40px;
+  }
+  /* The wordmark doubles as the "back to dashboard" link on every signed-in
+     page, so it needs a thumb-sized strip rather than the 23px the type
+     alone gives it. */
+  .brand {
+    min-height: 40px;
   }
 }

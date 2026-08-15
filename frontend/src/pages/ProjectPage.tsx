@@ -200,7 +200,7 @@ function ScanTab({ project, onScanned }: { project: Project; onScanned: (badge: 
       {method === "upload" && (
         <div>
           <p className="muted">Upload a .zip of your codebase.</p>
-          <div style={{ display: "flex", gap: 10, marginBottom: 16 }}>
+          <div className="scan-upload-row">
             <input type="file" accept=".zip" onChange={(e) => setFile(e.target.files?.[0] ?? null)} />
             <button onClick={handleScan} disabled={!file || scanning}>
               {scanning ? "Scanning…" : "Scan"}
