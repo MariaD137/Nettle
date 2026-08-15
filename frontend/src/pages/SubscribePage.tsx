@@ -38,7 +38,7 @@ export default function SubscribePage() {
   const lapsed = user?.subscriptionStatus === "past_due" || user?.subscriptionStatus === "canceled";
 
   return (
-    <div className="shell">
+    <div className="shell paywall-shell">
       <div className="topbar">
         <span className="brand"><NettleLogo size={22} title="" />nettle</span>
         <div className="topbar-right">

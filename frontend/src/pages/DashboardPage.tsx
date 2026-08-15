@@ -4,6 +4,9 @@ import { api, ApiError, type OverviewData } from "../api";
 import { useAuth } from "../AuthContext";
 import BadgePill from "../components/BadgePill";
 import NettleLogo from "../components/NettleLogo";
+import { AppBar, BottomNav, Icons, type TabItem } from "../components/MobileChrome";
+import { useIsMobile } from "../useIsMobile";
+import { useNavigate } from "react-router-dom";
 
 function scoreLabel(score: number): string {
   if (score >= 90) return "READY";
@@ -14,6 +17,9 @@ function scoreLabel(score: number): string {
 
 export default function DashboardPage() {
   const { user, logout } = useAuth();
+  const isMobile = useIsMobile();
+  const navigate = useNavigate();
+  const [showNew, setShowNew] = useState(false);
   const [overview, setOverview] = useState<OverviewData | null>(null);
   const [newName, setNewName] = useState("");
   const [newUrl, setNewUrl] = useState("");
@@ -47,12 +53,117 @@ export default function DashboardPage() {
       setNewDesc("");
       setNewEnv("");
       setShowAdvanced(false);
+      setShowNew(false);
       await refresh();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Couldn't create project");
     } finally {
       setCreating(false);
     }
+  }
+
+  // --- Mobile: app bar, stat strip, grouped project list, bottom tab bar ---
+  if (isMobile) {
+    const navItems: TabItem[] = [
+      { key: "projects", label: "Projects", icon: Icons.projects },
+      { key: "account", label: "Account", icon: Icons.account },
+    ];
+    return (
+      <>
+        <AppBar
+          title="Projects"
+          action={
+            <button className="link-btn" onClick={() => setShowNew(!showNew)} aria-label="New project">
+              {showNew ? "Close" : "New"}
+            </button>
+          }
+        />
+        <div className="shell m-has-bottomnav">
+          {error && <div className="error-banner" style={{ margin: "12px 12px 0" }}>{error}</div>}
+
+          {overview && (
+            <div className="m-statstrip">
+              <div className="m-stat">
+                <span className="m-stat-value">{overview.latestScore ?? "—"}</span>
+                <span className="m-stat-label">Score</span>
+              </div>
+              <div className="m-stat">
+                <span className="m-stat-value stat-critical">{overview.totalCriticalFindings}</span>
+                <span className="m-stat-label">Critical</span>
+              </div>
+              <div className="m-stat">
+                <span className="m-stat-value stat-warning">{overview.totalNewAlerts}</span>
+                <span className="m-stat-label">Alerts</span>
+              </div>
+              <div className="m-stat">
+                <span className="m-stat-value">{overview.totalProjects}</span>
+                <span className="m-stat-label">Projects</span>
+              </div>
+            </div>
+          )}
+
+          {showNew && (
+            <>
+              <div className="m-section-title">New project</div>
+              <div className="card">
+                <form onSubmit={handleCreate}>
+                  <div className="field">
+                    <label htmlFor="m-name">Name</label>
+                    <input id="m-name" required value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="My App" />
+                  </div>
+                  <div className="field">
+                    <label htmlFor="m-url">URL (optional)</label>
+                    <input id="m-url" value={newUrl} onChange={(e) => setNewUrl(e.target.value)} placeholder="https://myapp.com" />
+                  </div>
+                  <div className="field">
+                    <label htmlFor="m-env">Environment (optional)</label>
+                    <select id="m-env" value={newEnv} onChange={(e) => setNewEnv(e.target.value)}>
+                      <option value="">Select…</option>
+                      <option value="development">Development</option>
+                      <option value="staging">Staging</option>
+                      <option value="production">Production</option>
+                    </select>
+                  </div>
+                  <button type="submit" className="m-fullwidth" disabled={creating}>
+                    {creating ? "Creating…" : "Create project"}
+                  </button>
+                </form>
+              </div>
+            </>
+          )}
+
+          <div className="m-section-title">
+            {overview ? `${overview.projects.length} project${overview.projects.length === 1 ? "" : "s"}` : "Projects"}
+          </div>
+          {overview === null && <p className="muted" style={{ margin: "0 26px" }}>Loading…</p>}
+          {overview?.projects.length === 0 && (
+            <p className="muted" style={{ margin: "0 26px" }}>No projects yet — tap New to add one.</p>
+          )}
+          {overview && overview.projects.length > 0 && (
+            <div className="m-list">
+              {overview.projects.map((p) => (
+                <Link key={p.id} to={`/projects/${p.id}`} className="m-row">
+                  <div className="m-row-main">
+                    <span className="m-row-title">{p.name}</span>
+                    <span className="m-row-sub">
+                      {p.latestScore !== null ? `${p.latestScore}/100` : "Not yet scanned"}
+                      {p.newAlerts > 0 && ` · ${p.newAlerts} alert${p.newAlerts > 1 ? "s" : ""}`}
+                    </span>
+                  </div>
+                  <BadgePill state={p.badge} />
+                  <span className="m-chevron">{Icons.chevron}</span>
+                </Link>
+              ))}
+            </div>
+          )}
+        </div>
+        <BottomNav
+          items={navItems}
+          active="projects"
+          onSelect={(k) => { if (k === "account") navigate("/settings"); }}
+        />
+      </>
+    );
   }
 
   return (

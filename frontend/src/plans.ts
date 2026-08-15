@@ -52,3 +52,11 @@ export const PLANS: PlanCopy[] = [
     ],
   },
 ];
+
+// Human-readable plan names. The database stores "free" / "tier1" / "tier2";
+// nothing customer-facing should ever show those raw values.
+export const PLAN_LABELS: Record<string, string> = {
+  free: "Free",
+  tier1: "Tier 1 — Dry Dock",
+  tier2: "Tier 2 — Open Water",
+};

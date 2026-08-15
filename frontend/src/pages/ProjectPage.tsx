@@ -8,12 +8,15 @@ import {
 } from "../api";
 import BadgePill from "../components/BadgePill";
 import NettleLogo from "../components/NettleLogo";
+import { AppBar, BottomNav, Icons, type TabItem } from "../components/MobileChrome";
+import { useIsMobile } from "../useIsMobile";
 
 type Tab = "overview" | "scan" | "findings" | "alerts" | "history" | "settings";
 
 export default function ProjectPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const isMobile = useIsMobile();
   const [tab, setTab] = useState<Tab>("overview");
   const [project, setProject] = useState<Project | null>(null);
   const [badge, setBadge] = useState<BadgeState | null>(null);
@@ -41,6 +44,45 @@ export default function ProjectPage() {
 
   const tabs: Tab[] = ["overview", "scan", "findings", "alerts", "history", "settings"];
 
+  const content = (
+    <>
+      {tab === "overview" && <OverviewTab project={project} latestScan={latestScan} />}
+      {tab === "scan" && <ScanTab project={project} onScanned={(b) => { setBadge(b); refresh(); }} />}
+      {tab === "findings" && <FindingsTab projectId={project.id} latestScan={latestScan} />}
+      {tab === "alerts" && <AlertsTab projectId={project.id} onUpdate={(c) => setAlertCounts(c)} />}
+      {tab === "history" && <HistoryTab projectId={project.id} />}
+      {tab === "settings" && (
+        <ProjectSettingsTab
+          project={project}
+          onUpdated={(p) => setProject(p)}
+          onDeleted={() => navigate("/")}
+        />
+      )}
+    </>
+  );
+
+  if (isMobile) {
+    const navItems: TabItem[] = [
+      { key: "overview", label: "Overview", icon: Icons.overview },
+      { key: "scan", label: "Scan", icon: Icons.scan },
+      { key: "findings", label: "Findings", icon: Icons.findings },
+      { key: "alerts", label: "Alerts", icon: Icons.alerts, badge: alertCounts?.new },
+      { key: "history", label: "History", icon: Icons.history },
+      { key: "settings", label: "Settings", icon: Icons.settings },
+    ];
+    return (
+      <>
+        <AppBar
+          title={project.name}
+          subtitle={badge.label}
+          onBack={() => navigate("/")}
+        />
+        <div className="shell m-has-bottomnav">{content}</div>
+        <BottomNav items={navItems} active={tab} onSelect={(k) => setTab(k as Tab)} />
+      </>
+    );
+  }
+
   return (
     <div className="shell">
       <div className="topbar">
@@ -67,18 +109,7 @@ export default function ProjectPage() {
         ))}
       </div>
 
-      {tab === "overview" && <OverviewTab project={project} latestScan={latestScan} />}
-      {tab === "scan" && <ScanTab project={project} onScanned={(b) => { setBadge(b); refresh(); }} />}
-      {tab === "findings" && <FindingsTab projectId={project.id} latestScan={latestScan} />}
-      {tab === "alerts" && <AlertsTab projectId={project.id} onUpdate={(c) => setAlertCounts(c)} />}
-      {tab === "history" && <HistoryTab projectId={project.id} />}
-      {tab === "settings" && (
-        <ProjectSettingsTab
-          project={project}
-          onUpdated={(p) => setProject(p)}
-          onDeleted={() => navigate("/")}
-        />
-      )}
+      {content}
     </div>
   );
 }

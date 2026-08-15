@@ -723,6 +723,326 @@ button.destructive {
   line-height: 1.45;
 }
 
+/* ===========================================================================
+   MOBILE APP SHELL
+   ---------------------------------------------------------------------------
+   On a phone the app stops presenting as a document and starts presenting as
+   an app: a grouped-list ground (grey page, white sections) instead of
+   bordered cards floating on white, a pinned app bar, and a tab bar in the
+   thumb zone instead of a row of underlined text links at the top.
+   =========================================================================== */
+
+:root {
+  --m-page: #f2f3f7;
+  --m-chrome: rgba(255, 255, 255, 0.86);
+  --m-sep: #e6e8ee;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --m-page: #0d1015;
+    --m-chrome: rgba(20, 25, 32, 0.88);
+    --m-sep: #262d36;
+  }
+}
+
+@media (max-width: 700px) {
+  body {
+    background: var(--m-page);
+    /* Momentum scrolling, and no grey flash on every tap. */
+    -webkit-tap-highlight-color: transparent;
+    overscroll-behavior-y: contain;
+  }
+
+  /* --- App bar ---------------------------------------------------------- */
+  .m-appbar {
+    position: sticky;
+    top: 0;
+    z-index: 50;
+    background: var(--m-chrome);
+    backdrop-filter: saturate(180%) blur(14px);
+    -webkit-backdrop-filter: saturate(180%) blur(14px);
+    border-bottom: 1px solid var(--m-sep);
+    padding-top: env(safe-area-inset-top);
+  }
+  .m-appbar-inner {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    height: 52px;
+    padding: 0 8px;
+  }
+  .m-back {
+    background: none;
+    border: none;
+    color: var(--accent);
+    padding: 8px;
+    min-width: 40px;
+    min-height: 40px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 10px;
+  }
+  .m-appbar-spacer,
+  .m-appbar-action {
+    min-width: 40px;
+    display: flex;
+    justify-content: flex-end;
+  }
+  .m-appbar-titles {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    line-height: 1.15;
+  }
+  .m-appbar-title {
+    font-family: var(--sans);
+    font-size: 16px;
+    font-weight: 650;
+    color: var(--ink);
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .m-appbar-subtitle {
+    font-size: 11.5px;
+    color: var(--muted);
+    margin-top: 1px;
+  }
+
+  /* --- Bottom tab bar --------------------------------------------------- */
+  .m-bottomnav {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 50;
+    display: flex;
+    background: var(--m-chrome);
+    backdrop-filter: saturate(180%) blur(14px);
+    -webkit-backdrop-filter: saturate(180%) blur(14px);
+    border-top: 1px solid var(--m-sep);
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+  .m-navitem {
+    flex: 1;
+    background: none;
+    border: none;
+    border-radius: 0;
+    padding: 7px 2px 6px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 3px;
+    color: var(--muted);
+    font-weight: 500;
+    min-height: 52px;
+  }
+  .m-navitem.active {
+    color: var(--accent);
+  }
+  .m-navicon {
+    position: relative;
+    display: flex;
+  }
+  .m-navlabel {
+    font-size: 10.5px;
+    letter-spacing: -0.01em;
+  }
+  .m-navbadge {
+    position: absolute;
+    top: -4px;
+    right: -8px;
+    background: var(--sev-critical);
+    color: #fff;
+    font-size: 9.5px;
+    font-weight: 700;
+    line-height: 1;
+    padding: 2.5px 5px;
+    border-radius: 9px;
+  }
+
+  /* Screens that carry a bottom bar need room so the last row isn't buried. */
+  .m-has-bottomnav {
+    padding-bottom: calc(70px + env(safe-area-inset-bottom));
+  }
+
+  /* --- Grouped sections ------------------------------------------------- */
+  .shell {
+    padding: 0 0 40px;
+    max-width: none;
+  }
+  .card {
+    border-radius: 14px;
+    border: none;
+    background: var(--surface);
+    margin: 0 12px 14px;
+    padding: 16px 16px;
+  }
+  .m-section-title {
+    font-family: var(--sans);
+    font-size: 12px;
+    font-weight: 650;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin: 22px 26px 8px;
+  }
+
+  /* Tappable list rows read as rows, with a chevron and a full-width press
+     target, rather than as links floating inside a box. */
+  .m-list {
+    background: var(--surface);
+    border-radius: 14px;
+    margin: 0 12px 14px;
+    overflow: hidden;
+  }
+  .m-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    width: 100%;
+    padding: 14px 16px;
+    background: none;
+    border: none;
+    border-radius: 0;
+    text-align: left;
+    text-decoration: none;
+    color: var(--ink);
+    font-size: 15px;
+    min-height: 56px;
+    position: relative;
+  }
+  .m-row + .m-row::before {
+    content: "";
+    position: absolute;
+    top: 0;
+    left: 16px;
+    right: 0;
+    height: 1px;
+    background: var(--m-sep);
+  }
+  .m-row:active {
+    background: var(--surface-2);
+  }
+  .m-row-main {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+  }
+  .m-row-title {
+    font-weight: 600;
+    font-size: 15.5px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .m-row-sub {
+    font-size: 12.5px;
+    color: var(--muted);
+  }
+  .m-chevron {
+    color: var(--line-strong);
+    flex-shrink: 0;
+    display: flex;
+  }
+
+  /* Headings shed the editorial serif on mobile — a phone app reads as UI,
+     not as a printed page. */
+  .card h2,
+  .m-list h2 {
+    font-family: var(--sans);
+    font-size: 15px;
+    font-weight: 650;
+  }
+
+  /* 16px is the threshold below which iOS Safari zooms the viewport on
+     focus, which then leaves the page stranded mid-zoom. */
+  .field input,
+  .field select,
+  .filter-select,
+  input,
+  select,
+  textarea {
+    font-size: 16px;
+  }
+
+  /* Full-width primary actions, the way app forms behave. */
+  .card form > button[type="submit"],
+  .m-fullwidth {
+    width: 100%;
+  }
+
+  /* --- Compact stat strip ----------------------------------------------- */
+  /* Four numbers across one row rather than four desktop cards stacked into
+     a tall wall the customer has to scroll past to reach their projects. */
+  .m-statstrip {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    background: var(--surface);
+    border-radius: 14px;
+    margin: 14px 12px 4px;
+    padding: 14px 4px;
+  }
+  .m-stat {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 3px;
+    position: relative;
+  }
+  .m-stat + .m-stat::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    top: 12%;
+    height: 76%;
+    width: 1px;
+    background: var(--m-sep);
+  }
+  .m-stat-value {
+    font-family: var(--serif);
+    font-weight: 700;
+    font-size: 25px;
+    line-height: 1;
+  }
+  .m-stat-label {
+    font-size: 11px;
+    color: var(--muted);
+  }
+
+  /* --- Signed-out + paywall --------------------------------------------- */
+  .auth-landing {
+    padding: 34px 20px 60px;
+  }
+  .paywall-intro {
+    margin: 18px 16px 20px;
+  }
+  .paywall-intro h1 {
+    font-size: 22px;
+  }
+  .plan-grid {
+    grid-template-columns: 1fr;
+    gap: 14px;
+    margin: 0 12px;
+  }
+  .plan-card {
+    border-radius: 14px;
+  }
+  /* The paywall keeps the desktop topbar (it has no bottom nav), so it needs
+     its own breathing room rather than the shell's zeroed padding. */
+  .paywall-shell {
+    padding: 14px 0 40px;
+  }
+  .paywall-shell .topbar {
+    padding: 0 16px;
+  }
+}
+
 /* Responsive
    ---------------------------------------------------------------------------
    Two separate concerns, deliberately keyed off different things:

@@ -3,9 +3,61 @@ import { Link } from "react-router-dom";
 import { useAuth } from "../AuthContext";
 import { api, ApiError, setToken, type SessionInfo } from "../api";
 import NettleLogo from "../components/NettleLogo";
+import { AppBar, BottomNav, Icons, type TabItem } from "../components/MobileChrome";
+import { useIsMobile } from "../useIsMobile";
+import { useNavigate } from "react-router-dom";
+import { PLAN_LABELS } from "../plans";
 
 export default function SettingsPage() {
   const { user, logout, refreshUser } = useAuth();
+  const isMobile = useIsMobile();
+  const navigate = useNavigate();
+
+  const body = (
+    <>
+      <div className="card">
+        <h2>Account</h2>
+        <div className="settings-row">
+          <span className="settings-label">Email</span>
+          <span>{user?.email}</span>
+        </div>
+        <div className="settings-row">
+          <span className="settings-label">Plan</span>
+          <span className="plan-badge">{PLAN_LABELS[user?.plan ?? "free"] ?? user?.plan}</span>
+        </div>
+        <div className="settings-row">
+          <span className="settings-label">Member since</span>
+          <span>{user?.createdAt ? new Date(user.createdAt).toLocaleDateString() : "—"}</span>
+        </div>
+      </div>
+      <ChangeEmailCard onUpdated={refreshUser} />
+      <ChangePasswordCard />
+      <SessionsCard />
+      <DangerZoneCard />
+    </>
+  );
+
+  if (isMobile) {
+    const navItems: TabItem[] = [
+      { key: "projects", label: "Projects", icon: Icons.projects },
+      { key: "account", label: "Account", icon: Icons.account },
+    ];
+    return (
+      <>
+        <AppBar
+          title="Account"
+          subtitle={user?.email}
+          action={<button className="link-btn" onClick={() => logout()}>Log out</button>}
+        />
+        <div className="shell m-has-bottomnav">{body}</div>
+        <BottomNav
+          items={navItems}
+          active="account"
+          onSelect={(k) => { if (k === "projects") navigate("/"); }}
+        />
+      </>
+    );
+  }
 
   return (
     <div className="shell">
@@ -16,26 +68,7 @@ export default function SettingsPage() {
 
       <h1>Settings</h1>
 
-      <div className="card">
-        <h2>Account</h2>
-        <div className="settings-row">
-          <span className="settings-label">Email</span>
-          <span>{user?.email}</span>
-        </div>
-        <div className="settings-row">
-          <span className="settings-label">Plan</span>
-          <span className="plan-badge">{user?.plan === "free" ? "Free" : user?.plan}</span>
-        </div>
-        <div className="settings-row">
-          <span className="settings-label">Member since</span>
-          <span>{user?.createdAt ? new Date(user.createdAt).toLocaleDateString() : "—"}</span>
-        </div>
-      </div>
-
-      <ChangeEmailCard onUpdated={refreshUser} />
-      <ChangePasswordCard />
-      <SessionsCard />
-      <DangerZoneCard />
+      {body}
     </div>
   );
 }
