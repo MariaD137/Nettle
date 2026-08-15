@@ -37,13 +37,15 @@ function toScan(row: ScanRow): StoredScan {
 }
 
 export function recordScan(projectId: string, report: ScanReport): StoredScan {
+  const criticalCount = report.summary.critical + report.summary.high;
+  const cautionCount = report.summary.medium + report.summary.low + report.summary.info;
   const stored: StoredScan = {
     id: newId(),
     projectId,
     scannedAt: report.scannedAt,
     score: report.score,
-    criticalCount: report.summary.critical,
-    cautionCount: report.summary.caution,
+    criticalCount,
+    cautionCount,
     clearCount: report.summary.clear,
     report,
   };

@@ -11,6 +11,14 @@ import type { ScanReport } from "./types";
 
 const SCANNED_EXTENSIONS = [".js", ".ts", ".jsx", ".tsx", ".env", ".json"];
 
+const SEVERITY_PENALTY: Record<string, number> = {
+  critical: 16,
+  high: 10,
+  medium: 5,
+  low: 2,
+  info: 0,
+};
+
 export function runScan(targetPath: string): ScanReport {
   const targetRoot = path.resolve(targetPath);
   const files = walk(targetRoot, SCANNED_EXTENSIONS);
@@ -29,7 +37,7 @@ export function runScan(targetPath: string): ScanReport {
   const passed = results.flatMap((r) => r.passed);
 
   let score = 100;
-  for (const f of findings) score -= f.severity === "critical" ? 16 : 7;
+  for (const f of findings) score -= SEVERITY_PENALTY[f.severity] ?? 7;
   score = Math.max(0, Math.min(100, score));
 
   return {
@@ -40,7 +48,10 @@ export function runScan(targetPath: string): ScanReport {
     passed,
     summary: {
       critical: findings.filter((f) => f.severity === "critical").length,
-      caution: findings.filter((f) => f.severity === "caution").length,
+      high: findings.filter((f) => f.severity === "high").length,
+      medium: findings.filter((f) => f.severity === "medium").length,
+      low: findings.filter((f) => f.severity === "low").length,
+      info: findings.filter((f) => f.severity === "info").length,
       clear: passed.length,
     },
   };

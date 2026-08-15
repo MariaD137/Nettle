@@ -37,7 +37,8 @@ export function computeBadgeState(projectId: string): BadgeState {
     };
   }
 
-  if (latestScan.cautionCount > 0) {
+  const mediumOrAbove = latestScan.report.summary.medium + latestScan.report.summary.high;
+  if (mediumOrAbove > 0) {
     return {
       status: "caution",
       label: "Minor issues",

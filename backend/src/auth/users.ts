@@ -1,5 +1,6 @@
 import { db, newId } from "../db";
 import { hashPassword, verifyPassword } from "./passwords";
+import crypto from "crypto";
 
 export interface User {
   id: string;
@@ -61,6 +62,11 @@ export function getUserById(id: string): User | null {
   return row ? toUser(row) : null;
 }
 
+export function getUserByEmail(email: string): User | null {
+  const row = db.prepare("SELECT * FROM users WHERE email = ?").get(email) as UserRow | undefined;
+  return row ? toUser(row) : null;
+}
+
 export function setStripeCustomerId(userId: string, stripeCustomerId: string): void {
   db.prepare("UPDATE users SET stripe_customer_id = ? WHERE id = ?").run(stripeCustomerId, userId);
 }
@@ -74,4 +80,36 @@ export function getUserByStripeCustomerId(stripeCustomerId: string): User | null
     | UserRow
     | undefined;
   return row ? toUser(row) : null;
+}
+
+export async function updatePassword(userId: string, newPassword: string): Promise<void> {
+  const passwordHash = await hashPassword(newPassword);
+  db.prepare("UPDATE users SET password_hash = ? WHERE id = ?").run(passwordHash, userId);
+}
+
+const RESET_TOKEN_LIFETIME_MS = 60 * 60 * 1000; // 1 hour
+
+export function createPasswordResetToken(userId: string): string {
+  const token = crypto.randomBytes(32).toString("hex");
+  const expiresAt = new Date(Date.now() + RESET_TOKEN_LIFETIME_MS).toISOString();
+  db.prepare(
+    "INSERT OR REPLACE INTO password_resets (token, user_id, expires_at) VALUES (?, ?, ?)"
+  ).run(token, userId, expiresAt);
+  return token;
+}
+
+export function resolvePasswordResetToken(token: string): { userId: string } | null {
+  const row = db.prepare("SELECT user_id, expires_at FROM password_resets WHERE token = ?").get(token) as
+    | { user_id: string; expires_at: string }
+    | undefined;
+  if (!row) return null;
+  if (new Date(row.expires_at).getTime() < Date.now()) {
+    db.prepare("DELETE FROM password_resets WHERE token = ?").run(token);
+    return null;
+  }
+  return { userId: row.user_id };
+}
+
+export function consumePasswordResetToken(token: string): void {
+  db.prepare("DELETE FROM password_resets WHERE token = ?").run(token);
 }

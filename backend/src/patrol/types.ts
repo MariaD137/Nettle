@@ -20,7 +20,9 @@ export interface StoredEvent extends IncomingEvent {
   occurredAt: string;
 }
 
-export type AlertSeverity = "critical" | "caution";
+export type AlertSeverity = "critical" | "high" | "medium" | "low";
+
+export type AlertStatus = "new" | "acknowledged" | "resolved" | "false_positive";
 
 export interface Alert {
   id: string;
@@ -29,4 +31,5 @@ export interface Alert {
   severity: AlertSeverity;
   rule: string;
   message: string;
+  status: AlertStatus;
 }

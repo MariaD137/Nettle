@@ -1,15 +1,18 @@
-export type Severity = "critical" | "caution";
+export type Severity = "critical" | "high" | "medium" | "low" | "info";
+
+export type FindingCategory = "Security" | "Dependencies" | "Authentication" | "Legal & Policy" | "AI Disclosure" | "Configuration";
 
 export interface Finding {
   severity: Severity;
-  category: "Security" | "Legal & Policy" | "AI Disclosure";
+  category: FindingCategory;
   title: string;
   detail: string;
   file: string | null;
+  remediation: string | null;
 }
 
 export interface Pass {
-  category: Finding["category"];
+  category: FindingCategory;
   title: string;
 }
 
@@ -21,7 +24,10 @@ export interface ScanReport {
   passed: Pass[];
   summary: {
     critical: number;
-    caution: number;
+    high: number;
+    medium: number;
+    low: number;
+    info: number;
     clear: number;
   };
 }

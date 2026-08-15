@@ -16,6 +16,7 @@ export function scanLegalPolicy(targetRoot: string): { findings: Finding[]; pass
       title: "No privacy policy found",
       detail: "Required for App Store / Play Store submission and for GDPR/CCPA compliance if the app collects any user data.",
       file: null,
+      remediation: "Create a PRIVACY_POLICY.md (or host one at /privacy) covering what data you collect, how it's used, and how users can request deletion.",
     });
   } else {
     passed.push({ category: "Legal & Policy", title: "Privacy policy file present" });
@@ -23,11 +24,12 @@ export function scanLegalPolicy(targetRoot: string): { findings: Finding[]; pass
 
   if (!hasTerms) {
     findings.push({
-      severity: "caution",
+      severity: "medium",
       category: "Legal & Policy",
       title: "No terms of service found",
       detail: "Not always legally required, but standard for apps handling accounts or payments, and reduces dispute risk.",
       file: null,
+      remediation: "Create a TERMS.md (or host at /terms) outlining acceptable use, liability limitations, and dispute resolution.",
     });
   } else {
     passed.push({ category: "Legal & Policy", title: "Terms of service file present" });

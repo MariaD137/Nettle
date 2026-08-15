@@ -59,9 +59,17 @@ db.exec(`
     severity TEXT NOT NULL,
     rule TEXT NOT NULL,
     message TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'new',
     FOREIGN KEY (project_id) REFERENCES projects(id)
   );
   CREATE INDEX IF NOT EXISTS idx_alerts_project_time ON alerts(project_id, occurred_at);
+
+  CREATE TABLE IF NOT EXISTS password_resets (
+    token TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    expires_at TEXT NOT NULL,
+    FOREIGN KEY (user_id) REFERENCES users(id)
+  );
 
   CREATE TABLE IF NOT EXISTS scans (
     id TEXT PRIMARY KEY,

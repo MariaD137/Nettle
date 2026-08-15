@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Navigate, useNavigate } from "react-router-dom";
+import { Link, Navigate, useNavigate } from "react-router-dom";
 import { useAuth } from "../AuthContext";
 import { ApiError } from "../api";
 
@@ -67,6 +67,12 @@ export default function LoginPage() {
           {submitting ? "Please wait…" : mode === "signup" ? "Create account" : "Log in"}
         </button>
       </form>
+
+      {mode === "login" && (
+        <p style={{ marginTop: 16, textAlign: "center" }}>
+          <Link to="/reset-password">Forgot password?</Link>
+        </p>
+      )}
     </div>
   );
 }

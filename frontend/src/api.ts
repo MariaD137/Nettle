@@ -17,12 +17,15 @@ export interface Project {
   createdAt: string;
 }
 
+export type Severity = "critical" | "high" | "medium" | "low" | "info";
+
 export interface Finding {
-  severity: "critical" | "caution";
+  severity: Severity;
   category: string;
   title: string;
   detail: string;
   file: string | null;
+  remediation: string | null;
 }
 
 export interface ScanReport {
@@ -31,7 +34,7 @@ export interface ScanReport {
   score: number;
   findings: Finding[];
   passed: { category: string; title: string }[];
-  summary: { critical: number; caution: number; clear: number };
+  summary: { critical: number; high: number; medium: number; low: number; info: number; clear: number };
 }
 
 export interface StoredScan {
@@ -45,13 +48,16 @@ export interface StoredScan {
   report: ScanReport;
 }
 
+export type AlertStatus = "new" | "acknowledged" | "resolved" | "false_positive";
+
 export interface Alert {
   id: string;
   projectId: string;
   occurredAt: string;
-  severity: "critical" | "caution";
+  severity: "critical" | "high" | "medium" | "low";
   rule: string;
   message: string;
+  status: AlertStatus;
 }
 
 export interface BadgeState {
@@ -59,6 +65,37 @@ export interface BadgeState {
   label: string;
   lastScannedAt: string | null;
   score: number | null;
+}
+
+export interface AlertCounts {
+  new: number;
+  acknowledged: number;
+  resolved: number;
+  false_positive: number;
+}
+
+export interface ProjectDetail {
+  project: Project;
+  badge: BadgeState;
+  latestScan: StoredScan | null;
+  alertCounts: AlertCounts;
+}
+
+export interface OverviewData {
+  totalProjects: number;
+  totalCriticalFindings: number;
+  totalHighFindings: number;
+  totalNewAlerts: number;
+  latestScore: number | null;
+  latestScanAt: string | null;
+  projects: {
+    id: string;
+    name: string;
+    badge: BadgeState;
+    latestScore: number | null;
+    lastScannedAt: string | null;
+    newAlerts: number;
+  }[];
 }
 
 class ApiError extends Error {
@@ -112,13 +149,41 @@ export const api = {
 
   me: () => request<{ user: User }>("/api/auth/me"),
 
+  forgotPassword: (email: string) =>
+    request<{ message: string }>("/api/auth/forgot-password", {
+      method: "POST",
+      body: JSON.stringify({ email }),
+    }),
+
+  resetPassword: (token: string, password: string) =>
+    request<{ message: string }>("/api/auth/reset-password", {
+      method: "POST",
+      body: JSON.stringify({ token, password }),
+    }),
+
+  changePassword: (currentPassword: string, newPassword: string) =>
+    request<{ message: string }>("/api/auth/change-password", {
+      method: "POST",
+      body: JSON.stringify({ currentPassword, newPassword }),
+    }),
+
+  overview: () => request<OverviewData>("/api/overview"),
+
   listProjects: () => request<{ projects: Project[] }>("/api/projects"),
 
   createProject: (name: string) =>
     request<Project>("/api/projects", { method: "POST", body: JSON.stringify({ name }) }),
 
+  getProject: (id: string) => request<ProjectDetail>(`/api/projects/${id}`),
+
   getAlerts: (projectId: string) =>
     request<{ project: { id: string; name: string }; alerts: Alert[] }>(`/api/projects/${projectId}/alerts`),
+
+  updateAlertStatus: (projectId: string, alertId: string, status: AlertStatus) =>
+    request<{ alert: Alert }>(`/api/projects/${projectId}/alerts/${alertId}`, {
+      method: "PATCH",
+      body: JSON.stringify({ status }),
+    }),
 
   getScans: (projectId: string) =>
     request<{ project: { id: string; name: string }; scans: StoredScan[] }>(`/api/projects/${projectId}/scans`),
