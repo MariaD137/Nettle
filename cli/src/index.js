@@ -13,6 +13,7 @@ import {
   formatFindings,
   formatProjectsTable,
   formatScanHistory,
+  formatAccessNotice,
   meetsThreshold,
 } from "./format.js";
 
@@ -303,6 +304,7 @@ export function run() {
           console.log(formatScore(report.score));
           console.log(formatSummary(report.summary));
           console.log(formatFindings(report.findings));
+          console.log(formatAccessNotice(report.access));
         }
 
         // CI exit code based on --fail-on threshold
@@ -361,6 +363,7 @@ export function run() {
           console.log(formatScore(report.score));
           console.log(formatSummary(report.summary));
           console.log(formatFindings(report.findings));
+          console.log(formatAccessNotice(report.access));
         }
 
         if (opts.failOn) {

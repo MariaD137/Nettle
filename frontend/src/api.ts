@@ -33,11 +33,21 @@ export interface Finding {
   remediation: string | null;
 }
 
+export interface ScanAccess {
+  tier: "preview" | "full";
+  fullReport: boolean;
+  totalFindings: number;
+  visibleFindings: number;
+  lockedFindings: number;
+  message: string | null;
+}
+
 export interface ScanReport {
   scannedAt: string;
   target: string;
   score: number;
   scannerVersion: string;
+  access?: ScanAccess;
   findings: Finding[];
   passed: { category: string; title: string }[];
   summary: { critical: number; high: number; medium: number; low: number; info: number; clear: number };
@@ -131,6 +141,7 @@ export interface ScanComparison {
   remaining: number;
   fixedFindings: Finding[];
   newFindings: Finding[];
+  fullReport: boolean;
 }
 
 class ApiError extends Error {
@@ -274,8 +285,29 @@ export const api = {
     return request<ScanComparison>(`/api/projects/${projectId}/scans/compare${qs ? `?${qs}` : ""}`);
   },
 
-  exportScanUrl: (projectId: string, scanId: string) =>
-    `${API_BASE}/api/projects/${projectId}/scans/${scanId}/export`,
+  // Fetched rather than linked: the export route is bearer-authenticated, and
+  // a plain <a href> can't carry the Authorization header. Downloading through
+  // fetch also lets a 402 surface as a real upgrade prompt instead of dumping
+  // a JSON error into a new tab.
+  downloadScanReport: async (projectId: string, scanId: string): Promise<void> => {
+    const token = getToken();
+    const res = await fetch(`${API_BASE}/api/projects/${projectId}/scans/${scanId}/export`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => null);
+      throw new ApiError(res.status, body?.error ?? `Export failed with status ${res.status}`);
+    }
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `nettle-report-${scanId}.json`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  },
 
   // Findings
   listFindingStatuses: (projectId: string) =>

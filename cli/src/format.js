@@ -87,6 +87,20 @@ export function formatFindings(findings, limit = 20) {
   return lines.join("\n");
 }
 
+// Rendered when the API trimmed the report to the caller's plan. The counts
+// above it are still exact, so this only explains the missing detail.
+export function formatAccessNotice(access) {
+  if (!access || access.fullReport) return "";
+  const lines = [
+    chalk.yellow.bold("  Preview report"),
+    "",
+    `    ${chalk.dim(access.message || "Upgrade to Tier 1 or Tier 2 for the full report.")}`,
+    `    ${chalk.dim("Upgrade at https://nettle.dev/billing")}`,
+    "",
+  ];
+  return lines.join("\n");
+}
+
 export function formatProjectsTable(projects) {
   if (projects.length === 0) {
     return chalk.dim("\n  No projects found. Create one with: nettle projects create <name>\n");

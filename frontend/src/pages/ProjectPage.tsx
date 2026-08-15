@@ -8,6 +8,47 @@ import {
 } from "../api";
 import BadgePill from "../components/BadgePill";
 
+/**
+ * Shown wherever a free-plan response came back trimmed. Deliberately states
+ * exactly what's being withheld and how many, rather than a vague upsell.
+ */
+function UpgradeNotice({ message, compact }: { message: string; compact?: boolean }) {
+  const [starting, setStarting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function upgrade(plan: "tier1" | "tier2") {
+    setError(null);
+    setStarting(true);
+    try {
+      const { url } = await api.createCheckoutSession(plan);
+      window.location.href = url;
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Couldn't start checkout");
+      setStarting(false);
+    }
+  }
+
+  return (
+    <div className="upgrade-notice">
+      <div className="upgrade-notice-body">
+        <span className="upgrade-lock" aria-hidden="true">&#128274;</span>
+        <p>{message}</p>
+      </div>
+      {error && <div className="error-banner" style={{ marginTop: 10 }}>{error}</div>}
+      {!compact && (
+        <div className="upgrade-actions">
+          <button className="small" onClick={() => upgrade("tier1")} disabled={starting}>
+            {starting ? "Starting…" : "Upgrade to Tier 1"}
+          </button>
+          <button className="small secondary" onClick={() => upgrade("tier2")} disabled={starting}>
+            Tier 2
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 type Tab = "overview" | "scan" | "findings" | "alerts" | "history" | "settings";
 
 export default function ProjectPage() {
@@ -84,6 +125,17 @@ export default function ProjectPage() {
 
 function OverviewTab({ project, latestScan }: { project: Project; latestScan: StoredScan | null }) {
   const badgeUrl = api.badgeSvgUrl(project.id);
+  const [exportError, setExportError] = useState<string | null>(null);
+
+  async function handleExport(scanId: string) {
+    setExportError(null);
+    try {
+      await api.downloadScanReport(project.id, scanId);
+    } catch (err) {
+      setExportError(err instanceof ApiError ? err.message : "Export failed");
+    }
+  }
+
   return (
     <>
       <div className="card">
@@ -111,16 +163,11 @@ function OverviewTab({ project, latestScan }: { project: Project; latestScan: St
         <div className="card">
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
             <h2>Latest scan</h2>
-            <a
-              href={api.exportScanUrl(project.id, latestScan.id)}
-              className="small secondary"
-              style={{ textDecoration: "none" }}
-              target="_blank"
-              rel="noreferrer"
-            >
+            <button className="small secondary" onClick={() => handleExport(latestScan.id)}>
               Download JSON
-            </a>
+            </button>
           </div>
+          {exportError && <div className="error-banner">{exportError}</div>}
           <p className="muted">
             {new Date(latestScan.scannedAt).toLocaleString()} — Score: {latestScan.score}/100
           </p>
@@ -274,6 +321,10 @@ function ReportView({ report }: { report: ScanReport }) {
       {medium.length > 0 && <FindingGroup title="Medium" findings={medium} />}
       {low.length > 0 && <FindingGroup title="Low" findings={low} />}
 
+      {report.access && !report.access.fullReport && report.access.message && (
+        <UpgradeNotice message={report.access.message} />
+      )}
+
       {report.passed.length > 0 && (
         <>
           <h2 style={{ marginTop: 24 }}>Passed checks</h2>
@@ -341,6 +392,10 @@ function FindingsTab({ projectId, latestScan }: { projectId: string; latestScan:
   }, [projectId]);
 
   const findings = latestScan?.report.findings ?? [];
+  const access = latestScan?.report.access;
+  // Show the true total even when only a few are visible — the gap between
+  // the two is exactly what the upgrade notice explains.
+  const total = access?.totalFindings ?? findings.length;
 
   async function updateStatus(findingHash: string, status: FindingStatus) {
     const { findingStatus } = await api.updateFindingStatus(projectId, findingHash, status);
@@ -365,7 +420,12 @@ function FindingsTab({ projectId, latestScan }: { projectId: string; latestScan:
   return (
     <div className="card">
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
-        <h2 style={{ margin: 0 }}>Findings ({findings.length})</h2>
+        <h2 style={{ margin: 0 }}>
+          Findings ({total})
+          {access && !access.fullReport && total > findings.length && (
+            <span className="muted" style={{ fontWeight: 400, fontSize: 13 }}> — showing {findings.length}</span>
+          )}
+        </h2>
         <select className="filter-select" value={filter} onChange={(e) => setFilter(e.target.value as FindingStatus | "all")}>
           <option value="all">All</option>
           <option value="open">Open</option>
@@ -404,6 +464,9 @@ function FindingsTab({ projectId, latestScan }: { projectId: string; latestScan:
           </div>
         );
       })}
+      {access && !access.fullReport && access.message && (
+        <UpgradeNotice message={access.message} />
+      )}
     </div>
   );
 }
@@ -491,6 +554,16 @@ function HistoryTab({ projectId }: { projectId: string }) {
   const [expanded, setExpanded] = useState<string | null>(null);
   const [comparison, setComparison] = useState<ScanComparison | null>(null);
   const [comparing, setComparing] = useState(false);
+  const [exportError, setExportError] = useState<string | null>(null);
+
+  async function handleExport(scanId: string) {
+    setExportError(null);
+    try {
+      await api.downloadScanReport(projectId, scanId);
+    } catch (err) {
+      setExportError(err instanceof ApiError ? err.message : "Export failed");
+    }
+  }
 
   useEffect(() => {
     api.getScans(projectId).then(({ scans }) => setScans(scans));
@@ -547,9 +620,16 @@ function HistoryTab({ projectId }: { projectId: string }) {
               ))}
             </div>
           )}
+          {!comparison.fullReport && (
+            <UpgradeNotice
+              compact
+              message="Counts are complete, but only the most severe findings are listed. Upgrade to Tier 1 or Tier 2 to see every change between scans."
+            />
+          )}
         </div>
       )}
 
+      {exportError && <div className="error-banner">{exportError}</div>}
       {scans === null && <p className="muted">Loading…</p>}
       {scans?.length === 0 && <p className="muted">No scans yet.</p>}
       {scans?.map((s, i) => {
@@ -575,16 +655,12 @@ function HistoryTab({ projectId }: { projectId: string }) {
                 <span className="muted">
                   {s.criticalCount} critical · {s.cautionCount} caution
                 </span>
-                <a
-                  href={api.exportScanUrl(projectId, s.id)}
+                <button
                   className="small secondary"
-                  style={{ textDecoration: "none" }}
-                  target="_blank"
-                  rel="noreferrer"
-                  onClick={(e) => e.stopPropagation()}
+                  onClick={(e) => { e.stopPropagation(); handleExport(s.id); }}
                 >
                   Export
-                </a>
+                </button>
               </div>
             </div>
             {expanded === s.id && <ReportView report={s.report} />}

@@ -5,6 +5,7 @@ import { listScans, getLatestScan } from "../patrol/scans";
 import { computeBadgeState } from "../patrol/badge";
 import { hashFinding, upsertFindingStatus, listFindingStatuses } from "../patrol/findingStatuses";
 import { requireAuth } from "../auth/middleware";
+import { applyScanAccess, limitFindings, hasFullScanAccess } from "../billing/scanAccess";
 import type { AlertStatus, FindingStatus } from "../patrol/types";
 
 export const projectsRouter = Router();
@@ -52,7 +53,14 @@ projectsRouter.get("/api/projects/:id", requireAuth, (req, res) => {
   const badge = computeBadgeState(project.id);
   const latestScan = getLatestScan(project.id);
   const alertCounts = countAlertsByStatus(project.id);
-  res.json({ project, badge, latestScan, alertCounts });
+  res.json({
+    project,
+    badge,
+    latestScan: latestScan
+      ? { ...latestScan, report: applyScanAccess(latestScan.report, req.userPlan) }
+      : null,
+    alertCounts,
+  });
 });
 
 projectsRouter.patch("/api/projects/:id", requireAuth, (req, res) => {
@@ -122,7 +130,11 @@ projectsRouter.patch("/api/projects/:id/alerts/:alertId", requireAuth, (req, res
 projectsRouter.get("/api/projects/:id/scans", requireAuth, (req, res) => {
   const project = ownedProjectOr404(req, res);
   if (!project) return;
-  res.json({ project: { id: project.id, name: project.name }, scans: listScans(project.id) });
+  const scans = listScans(project.id).map((s) => ({
+    ...s,
+    report: applyScanAccess(s.report, req.userPlan),
+  }));
+  res.json({ project: { id: project.id, name: project.name }, scans });
 });
 
 projectsRouter.get("/api/projects/:id/scans/compare", requireAuth, (req, res) => {
@@ -146,6 +158,11 @@ projectsRouter.get("/api/projects/:id/scans/compare", requireAuth, (req, res) =>
   const newFindings = newer.findings.filter((f) => !olderSet.has(`${f.category}::${f.title}::${f.file}`));
   const remaining = newer.findings.filter((f) => olderSet.has(`${f.category}::${f.title}::${f.file}`));
 
+  // Counts stay exact on every plan — knowing 12 issues were fixed and 3
+  // appeared is the point of a comparison. It's the finding detail behind
+  // those counts that the paid tiers unlock.
+  const fullAccess = hasFullScanAccess(req.userPlan);
+
   res.json({
     from: { id: scans[fromIdx].id, score: scans[fromIdx].score, scannedAt: scans[fromIdx].scannedAt },
     to: { id: scans[toIdx].id, score: scans[toIdx].score, scannedAt: scans[toIdx].scannedAt },
@@ -153,8 +170,9 @@ projectsRouter.get("/api/projects/:id/scans/compare", requireAuth, (req, res) =>
     fixed: fixed.length,
     new: newFindings.length,
     remaining: remaining.length,
-    fixedFindings: fixed,
-    newFindings,
+    fixedFindings: limitFindings(fixed, req.userPlan),
+    newFindings: limitFindings(newFindings, req.userPlan),
+    fullReport: fullAccess,
   });
 });
 
@@ -184,6 +202,17 @@ projectsRouter.get("/api/projects/:id/scans/:scanId/export", requireAuth, (req, 
   const scans = listScans(project.id);
   const scan = scans.find((s) => s.id === req.params.scanId);
   if (!scan) return res.status(404).json({ error: "Scan not found" });
+
+  // Export exists to hand over the complete report — there's no meaningful
+  // preview of a downloadable artifact, so this is gated outright rather
+  // than trimmed.
+  if (!hasFullScanAccess(req.userPlan)) {
+    return res.status(402).json({
+      error: "Exporting a full report requires a Tier 1 or Tier 2 plan",
+      upgradeRequired: true,
+    });
+  }
+
   res.setHeader("Content-Type", "application/json");
   res.setHeader("Content-Disposition", `attachment; filename="nettle-report-${scan.id}.json"`);
   res.json(scan.report);

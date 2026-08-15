@@ -8,16 +8,34 @@ import { runScan } from "../scanner";
 import { resolveScanRoot } from "../scanner/resolveScanRoot";
 import { findProjectByApiKey } from "../patrol/projects";
 import { recordScan } from "../patrol/scans";
-import { requireAuth } from "../auth/middleware";
+import { requireAuth, optionalAuth } from "../auth/middleware";
+import { getUserById } from "../auth/users";
+import { applyScanAccess } from "../billing/scanAccess";
+import type { Request as ExpressRequest } from "express";
 
 export const scansRouter = Router();
+
+/**
+ * Which plan governs this scan's report. A bearer token wins; failing that,
+ * an API key identifies the owning project, and that project owner's plan
+ * applies — so CI runs authenticated only by a project key still get the
+ * full report the account pays for.
+ */
+function planForScan(req: ExpressRequest, apiKeyProjectUserId?: string): string {
+  if (req.userPlan) return req.userPlan;
+  if (apiKeyProjectUserId) {
+    const owner = getUserById(apiKeyProjectUserId);
+    if (owner) return owner.plan;
+  }
+  return "free";
+}
 
 const upload = multer({
   dest: os.tmpdir(),
   limits: { fileSize: 25 * 1024 * 1024 }, // 25MB — plenty for source code, not for asset-heavy repos
 });
 
-scansRouter.post("/api/scans", upload.single("codebase"), (req: Request, res: Response) => {
+scansRouter.post("/api/scans", optionalAuth, upload.single("codebase"), (req: Request, res: Response) => {
   if (!req.file) {
     return res.status(400).json({ error: "Upload a zip file under the 'codebase' field" });
   }
@@ -36,13 +54,20 @@ scansRouter.post("/api/scans", upload.single("codebase"), (req: Request, res: Re
     // monitoring middleware uses), persist the scan against it so the badge
     // and dashboard have real history. Scanning without a project is still
     // fully supported — a quick one-off check needs no account at all.
+    //
+    // Note the full report is what gets stored; only the response is trimmed
+    // to the caller's plan, so upgrading later unlocks this scan in place.
     const apiKey = req.header("x-nettle-api-key");
+    let ownerUserId: string | undefined;
     if (apiKey) {
       const project = findProjectByApiKey(apiKey);
-      if (project) recordScan(project.id, report);
+      if (project) {
+        recordScan(project.id, report);
+        ownerUserId = project.userId;
+      }
     }
 
-    res.json(report);
+    res.json(applyScanAccess(report, planForScan(req, ownerUserId)));
   } catch (err) {
     res.status(422).json({ error: "Couldn't extract or scan the uploaded file", detail: (err as Error).message });
   } finally {
@@ -76,12 +101,16 @@ scansRouter.post("/api/scans/repo", requireAuth, (req: Request, res: Response) =
 
     const report = runScan(cloneDir);
 
+    let ownerUserId: string | undefined;
     if (apiKey) {
       const project = findProjectByApiKey(apiKey);
-      if (project) recordScan(project.id, report);
+      if (project) {
+        recordScan(project.id, report);
+        ownerUserId = project.userId;
+      }
     }
 
-    res.json(report);
+    res.json(applyScanAccess(report, planForScan(req, ownerUserId)));
   } catch (err) {
     const msg = (err as Error).message;
     if (msg.includes("not found") || msg.includes("Could not read")) {
