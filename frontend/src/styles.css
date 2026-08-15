@@ -1,18 +1,21 @@
 :root {
-  /* Eggshell-white ground: a white with just enough warm undertone to stay
-     off pure #fff. Cards sit a shade lighter still, so the stack reads as
-     paper on paper and the borders — not a heavy tint — carry the
-     separation. */
-  --bg: #f4f1e8;
-  --surface: #fffdf8;
-  --surface-2: #f8f6ef;
-  --ink: #1f2430;
-  --muted: #6b6559;
-  --line: #e2ddd0;
-  --line-strong: #c2bba8;
-  --accent: #1d4ed8;
-  --accent-soft: #dce5fb;
-  --brand-mark: #2563eb;
+  /* White ground. With the page and the cards both white, the borders do all
+     the separating, so the neutrals are mixed cool — a slight blue bias —
+     to sit under royal blue rather than fight it with leftover warmth. */
+  --bg: #ffffff;
+  --surface: #ffffff;
+  --surface-2: #f5f7fa;
+  --ink: #171a21;
+  --muted: #5c6370;
+  --line: #e3e6ec;
+  --line-strong: #c4cad6;
+  /* Two weights of royal blue. The mark runs at full vividness because it's
+     a large graphic; the UI accent is deepened a step so button and link
+     text clears WCAG AA on white with headroom, which true royal only just
+     manages. */
+  --accent: #3050c8;
+  --accent-soft: #e4e9fb;
+  --brand-mark: #4169e1;
   --sev-critical: #b23a2e;
   --sev-high: #c45a2f;
   --sev-warning: #b9822a;
@@ -32,9 +35,9 @@
     --muted: #9c9484;
     --line: #333b44;
     --line-strong: #4a5561;
-    --accent: #7ba6f5;
-    --accent-soft: #1e2c47;
-    --brand-mark: #7ba6f5;
+    --accent: #8aa4f2;
+    --accent-soft: #1e2748;
+    --brand-mark: #8aa4f2;
     --sev-critical: #e17667;
     --sev-high: #e89060;
     --sev-warning: #e3ad5c;
