@@ -58,6 +58,7 @@ export function scanFrontendSecurity(files: string[], targetRoot: string): { fin
           title: "Sensitive data stored in localStorage/sessionStorage",
           detail: `Found ${matches.length} reference(s) to storing tokens, secrets, or credentials in browser storage. This data is accessible to any JavaScript on the page, including XSS payloads.`,
           file: rel,
+        line: null,
           remediation: "Use HttpOnly cookies for session tokens instead of localStorage. If you must use browser storage, store only non-sensitive identifiers.",
         });
         break;
@@ -74,6 +75,7 @@ export function scanFrontendSecurity(files: string[], targetRoot: string): { fin
           title: "Unescaped HTML injection (dangerouslySetInnerHTML or innerHTML)",
           detail: `Found ${matches.length} use(s) of raw HTML insertion. If the content includes user input, this creates a direct XSS vulnerability.`,
           file: rel,
+        line: null,
           remediation: "Use text content or React's JSX escaping instead. If you must render HTML, sanitize it first with DOMPurify: DOMPurify.sanitize(html).",
         });
         break;
@@ -90,6 +92,7 @@ export function scanFrontendSecurity(files: string[], targetRoot: string): { fin
           title: "Dynamic code execution (eval or Function constructor)",
           detail: `Found ${matches.length} use(s) of eval(), new Function(), or string-based setTimeout/setInterval. These execute arbitrary code and are a primary XSS vector.`,
           file: rel,
+        line: null,
           remediation: "Replace eval with JSON.parse (for data), a proper template engine, or direct function references for setTimeout/setInterval.",
         });
         break;
@@ -105,6 +108,7 @@ export function scanFrontendSecurity(files: string[], targetRoot: string): { fin
           title: "Source maps may be exposed in production",
           detail: "Source maps reveal the original un-minified source code, making it easier for attackers to find vulnerabilities.",
           file: rel,
+        line: null,
           remediation: "Disable source maps in production builds or restrict access to them. In webpack: devtool: false for production.",
         });
         break;

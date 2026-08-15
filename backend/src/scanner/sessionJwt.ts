@@ -76,6 +76,7 @@ export function scanSessionJwt(files: string[], targetRoot: string): { findings:
         title: "JWT algorithm set to 'none'",
         detail: "Using algorithm: 'none' disables signature verification entirely. Anyone can forge valid tokens.",
         file: rel,
+        line: null,
         remediation: "Use a strong signing algorithm like RS256 or ES256. Never allow 'none' as an algorithm.",
       });
     }
@@ -98,6 +99,7 @@ export function scanSessionJwt(files: string[], targetRoot: string): { findings:
         title: "JWT tokens issued without expiration",
         detail: "Tokens without an expiry never become invalid. A leaked token grants permanent access until the signing key is rotated.",
         file: null,
+        line: null,
         remediation: "Set a short expiration on JWTs: jwt.sign(payload, secret, { expiresIn: '15m' }). Use refresh tokens for longer sessions.",
       });
     } else {
@@ -115,6 +117,7 @@ export function scanSessionJwt(files: string[], targetRoot: string): { findings:
         title: "No refresh token rotation detected",
         detail: "Without refresh tokens, either access tokens are long-lived (risky) or users must re-authenticate frequently (poor UX).",
         file: null,
+        line: null,
         remediation: "Implement refresh token rotation: short-lived access tokens (15m) with one-time-use refresh tokens that rotate on each use.",
       });
     } else {
@@ -130,6 +133,7 @@ export function scanSessionJwt(files: string[], targetRoot: string): { findings:
         title: "Express sessions using default in-memory store",
         detail: "The default MemoryStore leaks memory, doesn't scale across processes, and loses all sessions on restart.",
         file: null,
+        line: null,
         remediation: "Use a persistent session store: new RedisStore({ client: redisClient }) or connect-mongo for MongoDB.",
       });
     } else {
@@ -143,6 +147,7 @@ export function scanSessionJwt(files: string[], targetRoot: string): { findings:
         title: "No session expiration (maxAge) configured",
         detail: "Sessions without maxAge persist indefinitely, increasing the window for session hijacking.",
         file: null,
+        line: null,
         remediation: "Set a session maxAge: cookie: { maxAge: 24 * 60 * 60 * 1000 } for a 24-hour session.",
       });
     }
@@ -155,6 +160,7 @@ export function scanSessionJwt(files: string[], targetRoot: string): { findings:
       title: "No token/session invalidation on logout",
       detail: "Without explicit token blacklisting or session destruction on logout, tokens remain valid until they expire naturally.",
       file: null,
+        line: null,
       remediation: "Destroy sessions on logout (req.session.destroy()) or maintain a token blacklist/revocation list for JWTs.",
     });
   } else if (hasLogoutInvalidation) {

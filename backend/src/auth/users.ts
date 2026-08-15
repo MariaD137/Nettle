@@ -113,3 +113,25 @@ export function resolvePasswordResetToken(token: string): { userId: string } | n
 export function consumePasswordResetToken(token: string): void {
   db.prepare("DELETE FROM password_resets WHERE token = ?").run(token);
 }
+
+export function updateEmail(userId: string, newEmail: string): User | null {
+  const existing = db.prepare("SELECT 1 FROM users WHERE email = ? AND id != ?").get(newEmail, userId);
+  if (existing) throw new EmailAlreadyRegisteredError();
+  db.prepare("UPDATE users SET email = ? WHERE id = ?").run(newEmail, userId);
+  return getUserById(userId);
+}
+
+export function deleteUser(userId: string): void {
+  db.prepare("DELETE FROM password_resets WHERE user_id = ?").run(userId);
+  db.prepare("DELETE FROM sessions WHERE user_id = ?").run(userId);
+  const projectIds = db.prepare("SELECT id FROM projects WHERE user_id = ?").all(userId) as unknown as { id: string }[];
+  for (const p of projectIds) {
+    db.prepare("DELETE FROM alerts WHERE project_id = ?").run(p.id);
+    db.prepare("DELETE FROM events WHERE project_id = ?").run(p.id);
+    db.prepare("DELETE FROM scans WHERE project_id = ?").run(p.id);
+    db.prepare("DELETE FROM finding_statuses WHERE project_id = ?").run(p.id);
+  }
+  db.prepare("DELETE FROM projects WHERE user_id = ?").run(userId);
+  db.prepare("DELETE FROM notification_preferences WHERE user_id = ?").run(userId);
+  db.prepare("DELETE FROM users WHERE id = ?").run(userId);
+}

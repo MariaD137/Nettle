@@ -85,6 +85,7 @@ export function scanSecurityHeaders(files: string[], targetRoot: string): { find
     title: "No security headers middleware detected",
     detail: HEADER_CHECKS[0].detail,
     file: null,
+        line: null,
     remediation: HEADER_CHECKS[0].remediation,
   });
 
@@ -99,6 +100,7 @@ export function scanSecurityHeaders(files: string[], targetRoot: string): { find
         title: `Missing ${check.name} header`,
         detail: check.detail,
         file: null,
+        line: null,
         remediation: check.remediation,
       });
     }

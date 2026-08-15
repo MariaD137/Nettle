@@ -14,6 +14,10 @@ export interface Project {
   userId: string;
   name: string;
   apiKey: string;
+  url: string | null;
+  description: string | null;
+  environment: string | null;
+  archivedAt: string | null;
   createdAt: string;
 }
 
@@ -25,6 +29,7 @@ export interface Finding {
   title: string;
   detail: string;
   file: string | null;
+  line: number | null;
   remediation: string | null;
 }
 
@@ -32,6 +37,7 @@ export interface ScanReport {
   scannedAt: string;
   target: string;
   score: number;
+  scannerVersion: string;
   findings: Finding[];
   passed: { category: string; title: string }[];
   summary: { critical: number; high: number; medium: number; low: number; info: number; clear: number };
@@ -98,6 +104,35 @@ export interface OverviewData {
   }[];
 }
 
+export type FindingStatus = "open" | "in_progress" | "resolved" | "false_positive" | "accepted_risk";
+
+export interface StoredFindingStatus {
+  id: string;
+  projectId: string;
+  findingHash: string;
+  status: FindingStatus;
+  notes: string | null;
+  updatedAt: string;
+}
+
+export interface SessionInfo {
+  tokenPrefix: string;
+  createdAt: string;
+  expiresAt: string;
+  current: boolean;
+}
+
+export interface ScanComparison {
+  from: { id: string; score: number; scannedAt: string };
+  to: { id: string; score: number; scannedAt: string };
+  scoreDelta: number;
+  fixed: number;
+  new: number;
+  remaining: number;
+  fixedFindings: Finding[];
+  newFindings: Finding[];
+}
+
 class ApiError extends Error {
   constructor(
     public status: number,
@@ -123,6 +158,7 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   if (options.body && !(options.body instanceof FormData)) headers["Content-Type"] = "application/json";
 
   const res = await fetch(`${API_BASE}${path}`, { ...options, headers });
+  if (res.status === 204) return undefined as T;
   const isJson = res.headers.get("content-type")?.includes("application/json");
   const body = isJson ? await res.json() : null;
 
@@ -133,6 +169,7 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
 }
 
 export const api = {
+  // Auth
   signup: (email: string, password: string) =>
     request<{ token: string; user: User }>("/api/auth/signup", {
       method: "POST",
@@ -167,15 +204,55 @@ export const api = {
       body: JSON.stringify({ currentPassword, newPassword }),
     }),
 
+  changeEmail: (email: string, password: string) =>
+    request<{ user: User }>("/api/auth/email", {
+      method: "PATCH",
+      body: JSON.stringify({ email, password }),
+    }),
+
+  listSessions: () =>
+    request<{ sessions: SessionInfo[] }>("/api/auth/sessions"),
+
+  revokeSession: (tokenPrefix: string) =>
+    request<void>(`/api/auth/sessions/${tokenPrefix}`, { method: "DELETE" }),
+
+  revokeAllSessions: () =>
+    request<{ token: string; message: string }>("/api/auth/sessions/revoke-all", { method: "POST" }),
+
+  deleteAccount: (password: string) =>
+    request<void>("/api/auth/account", {
+      method: "DELETE",
+      body: JSON.stringify({ password }),
+    }),
+
+  // Dashboard
   overview: () => request<OverviewData>("/api/overview"),
 
-  listProjects: () => request<{ projects: Project[] }>("/api/projects"),
+  // Projects
+  listProjects: (includeArchived = false) =>
+    request<{ projects: Project[] }>(`/api/projects${includeArchived ? "?includeArchived=true" : ""}`),
 
-  createProject: (name: string) =>
-    request<Project>("/api/projects", { method: "POST", body: JSON.stringify({ name }) }),
+  createProject: (name: string, opts?: { url?: string; description?: string; environment?: string }) =>
+    request<Project>("/api/projects", { method: "POST", body: JSON.stringify({ name, ...opts }) }),
 
   getProject: (id: string) => request<ProjectDetail>(`/api/projects/${id}`),
 
+  updateProject: (id: string, updates: { name?: string; url?: string; description?: string; environment?: string }) =>
+    request<Project>(`/api/projects/${id}`, { method: "PATCH", body: JSON.stringify(updates) }),
+
+  deleteProject: (id: string) =>
+    request<void>(`/api/projects/${id}`, { method: "DELETE" }),
+
+  archiveProject: (id: string) =>
+    request<Project>(`/api/projects/${id}/archive`, { method: "POST" }),
+
+  restoreProject: (id: string) =>
+    request<Project>(`/api/projects/${id}/restore`, { method: "POST" }),
+
+  rotateApiKey: (id: string) =>
+    request<Project>(`/api/projects/${id}/rotate-key`, { method: "POST" }),
+
+  // Alerts
   getAlerts: (projectId: string) =>
     request<{ project: { id: string; name: string }; alerts: Alert[] }>(`/api/projects/${projectId}/alerts`),
 
@@ -185,13 +262,37 @@ export const api = {
       body: JSON.stringify({ status }),
     }),
 
+  // Scans
   getScans: (projectId: string) =>
     request<{ project: { id: string; name: string }; scans: StoredScan[] }>(`/api/projects/${projectId}/scans`),
 
+  compareScans: (projectId: string, from?: string, to?: string) => {
+    const params = new URLSearchParams();
+    if (from) params.set("from", from);
+    if (to) params.set("to", to);
+    const qs = params.toString();
+    return request<ScanComparison>(`/api/projects/${projectId}/scans/compare${qs ? `?${qs}` : ""}`);
+  },
+
+  exportScanUrl: (projectId: string, scanId: string) =>
+    `${API_BASE}/api/projects/${projectId}/scans/${scanId}/export`,
+
+  // Findings
+  listFindingStatuses: (projectId: string) =>
+    request<{ findingStatuses: StoredFindingStatus[] }>(`/api/projects/${projectId}/findings`),
+
+  updateFindingStatus: (projectId: string, findingHash: string, status: FindingStatus, notes?: string) =>
+    request<{ findingStatus: StoredFindingStatus }>(`/api/projects/${projectId}/findings/${findingHash}`, {
+      method: "PATCH",
+      body: JSON.stringify({ status, notes }),
+    }),
+
+  // Badge
   getBadge: (projectId: string) => request<BadgeState>(`/api/projects/${projectId}/badge.json`),
 
   badgeSvgUrl: (projectId: string) => `${API_BASE}/api/projects/${projectId}/badge.svg`,
 
+  // Scan upload
   scanCodebase: async (file: File, apiKey?: string): Promise<ScanReport> => {
     const form = new FormData();
     form.append("codebase", file);
@@ -200,6 +301,7 @@ export const api = {
     return request<ScanReport>("/api/scans", { method: "POST", body: form, headers });
   },
 
+  // Billing
   createCheckoutSession: (plan: "tier1" | "tier2") =>
     request<{ url: string }>("/api/billing/checkout-session", {
       method: "POST",

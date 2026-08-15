@@ -15,7 +15,7 @@ import { scanApiSecurity } from "./apiSecurity";
 import { scanFrontendSecurity } from "./frontendSecurity";
 import { scanAiSecurity } from "./aiSecurity";
 import { scanSessionJwt } from "./sessionJwt";
-import type { ScanReport } from "./types";
+import { SCANNER_VERSION, type ScanReport } from "./types";
 
 const SCANNED_EXTENSIONS = [".js", ".ts", ".jsx", ".tsx", ".env", ".json"];
 
@@ -59,6 +59,7 @@ export function runScan(targetPath: string): ScanReport {
   return {
     scannedAt: new Date().toISOString(),
     target: path.basename(targetRoot),
+    scannerVersion: SCANNER_VERSION,
     score,
     findings,
     passed,

@@ -14,6 +14,7 @@ export function scanDependencies(targetRoot: string): { findings: Finding[]; pas
       title: "No package.json found",
       detail: "Couldn't run dependency checks.",
       file: null,
+        line: null,
       remediation: "If this is a Node.js project, run npm init to create a package.json.",
     });
     return { findings, passed };
@@ -29,6 +30,7 @@ export function scanDependencies(targetRoot: string): { findings: Finding[]; pas
       title: "No dependency lockfile committed",
       detail: "Without a lockfile, installs can silently pull newer (or compromised) transitive versions. Commit package-lock.json / yarn.lock / pnpm-lock.yaml.",
       file: "package.json",
+        line: null,
       remediation: "Run npm install (or yarn / pnpm install) and commit the generated lockfile to your repository.",
     });
   } else {

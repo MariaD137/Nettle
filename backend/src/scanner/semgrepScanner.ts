@@ -71,6 +71,7 @@ export function scanWithSemgrep(targetRoot: string): { findings: Finding[]; pass
           title: "Semgrep static analysis did not run",
           detail: `Couldn't run the Semgrep-based checks (secrets/injection/TLS/CORS patterns) for this scan: ${(err as Error).message}. The rest of the readiness report is unaffected.`,
           file: null,
+        line: null,
           remediation: "Install Semgrep (pip install semgrep) to enable deeper static analysis checks.",
         },
       ],
@@ -90,6 +91,7 @@ export function scanWithSemgrep(targetRoot: string): { findings: Finding[]; pass
       title: titleFor(r.check_id),
       detail: r.extra.message.trim(),
       file: `${path.relative(targetRoot, r.path)}:${r.start.line}`,
+        line: null,
       remediation: REMEDIATION_BY_RULE[ruleId] ?? null,
     };
   });

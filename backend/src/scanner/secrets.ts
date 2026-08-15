@@ -137,16 +137,24 @@ export function scanSecrets(files: string[], targetRoot: string): { findings: Fi
 
   for (const file of files) {
     const text = fs.readFileSync(file, "utf8");
+    const lines = text.split("\n");
     for (const pattern of SECRET_PATTERNS) {
+      pattern.regex.lastIndex = 0;
       const matches = text.match(pattern.regex);
       if (matches) {
         secretsFound += matches.length;
+        let firstLine: number | null = null;
+        for (let i = 0; i < lines.length; i++) {
+          const fresh = new RegExp(pattern.regex.source, pattern.regex.flags);
+          if (fresh.test(lines[i])) { firstLine = i + 1; break; }
+        }
         findings.push({
           severity: "critical",
           category: "Security",
           title: `${pattern.name} found in source`,
           detail: `Matched ${matches.length} time(s). Secrets committed to source are readable by anyone with repo access and get indexed by any tool/AI assistant that reads the codebase.`,
           file: path.relative(targetRoot, file),
+          line: firstLine,
           remediation: pattern.remediation,
         });
       }

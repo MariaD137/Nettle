@@ -34,6 +34,10 @@ db.exec(`
     user_id TEXT,
     name TEXT NOT NULL,
     api_key TEXT NOT NULL UNIQUE,
+    url TEXT,
+    description TEXT,
+    environment TEXT NOT NULL DEFAULT 'production',
+    archived_at TEXT,
     created_at TEXT NOT NULL,
     FOREIGN KEY (user_id) REFERENCES users(id)
   );
@@ -83,7 +87,49 @@ db.exec(`
     FOREIGN KEY (project_id) REFERENCES projects(id)
   );
   CREATE INDEX IF NOT EXISTS idx_scans_project_time ON scans(project_id, scanned_at);
+
+  CREATE TABLE IF NOT EXISTS finding_statuses (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL,
+    finding_hash TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'open',
+    notes TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY (project_id) REFERENCES projects(id)
+  );
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_finding_statuses_unique ON finding_statuses(project_id, finding_hash);
+
+  CREATE TABLE IF NOT EXISTS notification_preferences (
+    user_id TEXT PRIMARY KEY,
+    email_critical_alerts INTEGER NOT NULL DEFAULT 1,
+    email_scan_complete INTEGER NOT NULL DEFAULT 1,
+    email_weekly_summary INTEGER NOT NULL DEFAULT 0,
+    slack_webhook_url TEXT,
+    FOREIGN KEY (user_id) REFERENCES users(id)
+  );
 `);
+
+function columnExists(table: string, column: string): boolean {
+  const rows = db.prepare(`PRAGMA table_info(${table})`).all() as unknown as { name: string }[];
+  return rows.some((r) => r.name === column);
+}
+
+if (!columnExists("projects", "url")) {
+  db.exec("ALTER TABLE projects ADD COLUMN url TEXT");
+}
+if (!columnExists("projects", "description")) {
+  db.exec("ALTER TABLE projects ADD COLUMN description TEXT");
+}
+if (!columnExists("projects", "environment")) {
+  db.exec("ALTER TABLE projects ADD COLUMN environment TEXT NOT NULL DEFAULT 'production'");
+}
+if (!columnExists("projects", "archived_at")) {
+  db.exec("ALTER TABLE projects ADD COLUMN archived_at TEXT");
+}
+if (!columnExists("scans", "scanner_version")) {
+  db.exec("ALTER TABLE scans ADD COLUMN scanner_version TEXT");
+}
 
 export function newId(): string {
   return crypto.randomUUID();

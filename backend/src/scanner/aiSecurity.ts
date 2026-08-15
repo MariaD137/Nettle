@@ -93,6 +93,7 @@ export function scanAiSecurity(files: string[], targetRoot: string): { findings:
           title: "AI model API key hardcoded in source",
           detail: "An OpenAI, Anthropic, or other AI provider API key is hardcoded. These keys can be used to generate content at your expense or access your account.",
           file: rel,
+        line: null,
           remediation: "Move the API key to an environment variable (process.env.OPENAI_API_KEY) and rotate the exposed key immediately.",
         });
         break;
@@ -107,6 +108,7 @@ export function scanAiSecurity(files: string[], targetRoot: string): { findings:
         title: "User input passed directly to AI prompt without sanitization",
         detail: "User-supplied content is concatenated into AI prompts without visible input filtering. This enables prompt injection attacks that can override system instructions.",
         file: rel,
+        line: null,
         remediation: "Validate and sanitize user input before including it in prompts. Use structured message formats (separate system/user roles) and consider input/output guardrails.",
       });
     }
@@ -121,6 +123,7 @@ export function scanAiSecurity(files: string[], targetRoot: string): { findings:
       title: "No token limits configured for AI API calls",
       detail: "Without max_tokens limits, a single request could consume a large number of tokens, leading to unexpected costs (denial-of-wallet attacks).",
       file: null,
+        line: null,
       remediation: "Set max_tokens on every AI API call to cap costs: { max_tokens: 1024 }. Also set per-user rate limits.",
     });
   } else {
@@ -134,6 +137,7 @@ export function scanAiSecurity(files: string[], targetRoot: string): { findings:
       title: "AI model has tool/function execution capability",
       detail: "The app gives the AI model access to tools or functions. Without an allowlist and approval flow, a prompt injection could cause the model to execute unintended actions.",
       file: null,
+        line: null,
       remediation: "Implement a tool allowlist, sandbox tool execution, and require human approval for destructive actions (delete, send, pay).",
     });
   }
@@ -145,6 +149,7 @@ export function scanAiSecurity(files: string[], targetRoot: string): { findings:
       title: "No output validation for AI responses",
       detail: "AI model output is used without schema validation. Hallucinated or malformed responses can cause downstream errors or security issues.",
       file: null,
+        line: null,
       remediation: "Validate AI output against a schema (e.g. with Zod) before using it: const result = responseSchema.parse(aiOutput).",
     });
   } else {

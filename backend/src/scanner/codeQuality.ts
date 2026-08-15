@@ -83,6 +83,7 @@ export function scanCodeQuality(files: string[], targetRoot: string): { findings
         title: "Environment file committed to source",
         detail: "Environment files often contain secrets (API keys, database URLs, signing keys) that should never be in version control.",
         file: rel,
+        line: null,
         remediation: "Add .env* to .gitignore, remove the file from git history (git filter-branch or BFG), and rotate any secrets it contained.",
       });
       continue;
@@ -100,6 +101,7 @@ export function scanCodeQuality(files: string[], targetRoot: string): { findings
           title: check.name,
           detail: `${check.detail} Found ${matches.length} occurrence(s).`,
           file: rel,
+        line: null,
           remediation: check.remediation,
         });
       }

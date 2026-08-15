@@ -19,6 +19,7 @@ export function scanAIDisclosure(files: string[]): { findings: Finding[]; passed
       title: "AI-generated content returned to users with no disclosure label",
       detail: "Found an endpoint that appears to return AI-generated content (e.g. a generated image) with no accompanying disclosure or C2PA provenance metadata. California SB 942 requires this kind of content to be labeled.",
       file: null,
+        line: null,
       remediation: "Add visible AI-generated content labels to your UI and consider embedding C2PA provenance metadata in generated images/media.",
     });
   } else if (looksLikeAIGeneratedContent) {

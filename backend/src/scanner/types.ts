@@ -21,6 +21,7 @@ export interface Finding {
   title: string;
   detail: string;
   file: string | null;
+  line: number | null;
   remediation: string | null;
 }
 
@@ -29,9 +30,12 @@ export interface Pass {
   title: string;
 }
 
+export const SCANNER_VERSION = "1.3.0";
+
 export interface ScanReport {
   scannedAt: string;
   target: string;
+  scannerVersion: string;
   score: number;
   findings: Finding[];
   passed: Pass[];

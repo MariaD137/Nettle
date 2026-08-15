@@ -19,6 +19,7 @@ export function scanAuthHeuristic(files: string[], targetRoot: string): { findin
         title: `${routes.length} route(s) in this file show no authentication check`,
         detail: "No reference to a JWT verification, auth middleware, or passport call was found in this file. If any of these routes return user-specific data, confirm access control is enforced elsewhere.",
         file: path.relative(targetRoot, file),
+        line: null,
         remediation: "Add authentication middleware (e.g. requireAuth) to routes that serve user-specific data. If auth is applied globally or in a parent router, this finding may be safe to dismiss.",
       });
     }

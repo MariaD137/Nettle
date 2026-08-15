@@ -71,6 +71,7 @@ export function scanDatabaseSecurity(files: string[], targetRoot: string): { fin
           title: "SQL query built with string concatenation or interpolation",
           detail: `Found ${matches.length} SQL statement(s) that embed variables directly into the query string. This is the #1 cause of SQL injection vulnerabilities.`,
           file: rel,
+        line: null,
           remediation: "Use parameterized queries with placeholders: db.prepare('SELECT * FROM users WHERE id = ?').get(userId).",
         });
         break;
@@ -86,6 +87,7 @@ export function scanDatabaseSecurity(files: string[], targetRoot: string): { fin
         title: "Database connection string hardcoded in source",
         detail: "Hardcoded database URLs typically include credentials (username:password@host). Anyone with repo access can connect to the database directly.",
         file: rel,
+        line: null,
         remediation: "Move the connection string to an environment variable (e.g. process.env.DATABASE_URL) and never commit it to source control.",
       });
     }

@@ -451,6 +451,39 @@ button.destructive {
   color: var(--ink);
   font-size: 13px;
 }
+.field select {
+  padding: 9px 11px;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 14px;
+}
+.link-btn {
+  background: none;
+  border: none;
+  color: var(--accent);
+  font-size: 13px;
+  cursor: pointer;
+  padding: 0;
+  font-weight: 600;
+}
+.status-open {
+  background: color-mix(in srgb, var(--sev-critical) 15%, transparent);
+  color: var(--sev-critical);
+}
+.status-in_progress {
+  background: color-mix(in srgb, var(--sev-warning) 15%, transparent);
+  color: var(--sev-warning);
+}
+.status-accepted_risk {
+  background: var(--surface-2);
+  color: var(--muted);
+}
+.a.small.secondary {
+  padding: 5px 10px;
+  font-size: 12px;
+}
 
 /* Stats grid (overview dashboard) */
 .stats-grid {

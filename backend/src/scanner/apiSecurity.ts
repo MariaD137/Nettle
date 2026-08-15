@@ -97,6 +97,7 @@ export function scanApiSecurity(files: string[], targetRoot: string): { findings
         title: "No rate limiting detected",
         detail: "Without rate limiting, the API is vulnerable to brute-force attacks, credential stuffing, denial of service, and resource exhaustion.",
         file: null,
+        line: null,
         remediation: "Add rate limiting middleware: npm install express-rate-limit, then app.use(rateLimit({ windowMs: 15*60*1000, max: 100 })).",
       });
     }
@@ -110,6 +111,7 @@ export function scanApiSecurity(files: string[], targetRoot: string): { findings
         title: "CORS allows all origins (wildcard)",
         detail: "A wildcard CORS policy allows any website to make cross-origin requests to this API. Combined with credentials, this enables cross-site request attacks.",
         file: null,
+        line: null,
         remediation: "Restrict CORS to your actual frontend domain: cors({ origin: 'https://yourapp.com', credentials: true }).",
       });
     } else {
@@ -130,6 +132,7 @@ export function scanApiSecurity(files: string[], targetRoot: string): { findings
         title: "Cookies set without HttpOnly flag",
         detail: "Without HttpOnly, cookies are accessible to JavaScript — an XSS vulnerability can steal session tokens.",
         file: null,
+        line: null,
         remediation: "Set httpOnly: true on all authentication cookies: res.cookie('session', token, { httpOnly: true }).",
       });
     }
@@ -140,6 +143,7 @@ export function scanApiSecurity(files: string[], targetRoot: string): { findings
         title: "Cookies set without Secure flag",
         detail: "Without the Secure flag, cookies are sent over plain HTTP, allowing interception on untrusted networks.",
         file: null,
+        line: null,
         remediation: "Set secure: true on cookies in production: res.cookie('session', token, { secure: true }).",
       });
     }
@@ -150,6 +154,7 @@ export function scanApiSecurity(files: string[], targetRoot: string): { findings
         title: "Cookies set without SameSite attribute",
         detail: "Without SameSite, cookies are sent with cross-site requests, enabling CSRF attacks.",
         file: null,
+        line: null,
         remediation: "Set sameSite: 'strict' (or 'lax') on cookies: res.cookie('session', token, { sameSite: 'strict' }).",
       });
     }
@@ -165,6 +170,7 @@ export function scanApiSecurity(files: string[], targetRoot: string): { findings
         title: "No CSRF protection detected for cookie-based auth",
         detail: "The app uses cookies but no CSRF token or double-submit pattern was detected. This allows cross-site request forgery attacks.",
         file: null,
+        line: null,
         remediation: "Add CSRF protection: use the SameSite cookie attribute (strict or lax), or implement CSRF tokens with a library like csrf or csurf.",
       });
     } else {
@@ -184,6 +190,7 @@ export function scanApiSecurity(files: string[], targetRoot: string): { findings
         title: "No schema validation library detected",
         detail: "Without a validation library, request bodies are accepted as-is. Missing validation leads to type confusion, injection, and unexpected behavior.",
         file: null,
+        line: null,
         remediation: "Add schema validation with Zod (npm install zod) or Joi. Validate every request body: const schema = z.object({ email: z.string().email() }); schema.parse(req.body).",
       });
     }
@@ -199,6 +206,7 @@ export function scanApiSecurity(files: string[], targetRoot: string): { findings
         title: "No request body size limit configured",
         detail: "Without a body size limit, attackers can send extremely large payloads to exhaust memory and crash the server.",
         file: null,
+        line: null,
         remediation: "Set a body size limit: app.use(express.json({ limit: '1mb' })). Adjust the limit to match your largest expected payload.",
       });
     }
@@ -216,6 +224,7 @@ export function scanApiSecurity(files: string[], targetRoot: string): { findings
         title: "File uploads without size limit",
         detail: "Without a file size limit, attackers can upload extremely large files to exhaust disk space or memory.",
         file: null,
+        line: null,
         remediation: "Configure a file size limit in your upload middleware: multer({ limits: { fileSize: 5 * 1024 * 1024 } }) for a 5MB limit.",
       });
     }
@@ -226,12 +235,83 @@ export function scanApiSecurity(files: string[], targetRoot: string): { findings
         title: "File uploads without MIME type or extension validation",
         detail: "Without type checking, users can upload executable files (.exe, .sh, .php) that may be served or executed by the server.",
         file: null,
+        line: null,
         remediation: "Add a file filter that checks MIME types and extensions: multer({ fileFilter: (req, file, cb) => { if (!allowedTypes.includes(file.mimetype)) return cb(new Error('Invalid type')); cb(null, true); } }).",
       });
     }
     if (hasSizeLimit && hasTypeCheck) {
       passed.push({ category: "API Security", title: "File uploads have size limits and type validation" });
     }
+  }
+
+  // Path traversal detection
+  const pathTraversalPatterns = [
+    /path\.join\s*\([^)]*req\.(params|query|body)/,
+    /readFile(Sync)?\s*\([^)]*req\./,
+    /createReadStream\s*\([^)]*req\./,
+    /\.\.\/.*req\./,
+    /req\.(params|query|body)\b[^)]*\bpath\b/,
+  ];
+  let pathTraversalFound = false;
+  for (const file of jsFiles) {
+    const text = fs.readFileSync(file, "utf8");
+    const rel = path.relative(targetRoot, file);
+    for (const pat of pathTraversalPatterns) {
+      if (pat.test(text)) {
+        pathTraversalFound = true;
+        const lines = text.split("\n");
+        let lineNum: number | null = null;
+        for (let i = 0; i < lines.length; i++) {
+          if (pat.test(lines[i])) { lineNum = i + 1; break; }
+        }
+        findings.push({
+          severity: "critical",
+          category: "Security",
+          title: "Potential path traversal vulnerability",
+          detail: "User input is passed directly to file system operations without sanitization. An attacker could use ../ sequences to access files outside the intended directory.",
+          file: rel,
+          line: lineNum,
+          remediation: "Sanitize file paths by resolving them and verifying they stay within the intended directory: const safe = path.resolve(baseDir, userInput); if (!safe.startsWith(baseDir)) throw new Error('Invalid path');",
+        });
+        break;
+      }
+    }
+  }
+  if (!pathTraversalFound) {
+    passed.push({ category: "Security", title: "No path traversal patterns detected" });
+  }
+
+  // Unsafe deserialization detection
+  const deserializationPatterns = [
+    /JSON\.parse\s*\(\s*req\.(body|query|params)/,
+    /unserialize\s*\(/,
+    /deserialize\s*\([^)]*req\./,
+    /node-serialize/,
+    /js-yaml.*safeLoad|yaml\.load\s*\(/,
+    /eval\s*\(\s*JSON/,
+  ];
+  let deserializationFound = false;
+  for (const file of jsFiles) {
+    const text = fs.readFileSync(file, "utf8");
+    const rel = path.relative(targetRoot, file);
+    for (const pat of deserializationPatterns) {
+      if (pat.test(text)) {
+        deserializationFound = true;
+        findings.push({
+          severity: "high",
+          category: "Security",
+          title: "Potentially unsafe deserialization",
+          detail: "Deserializing untrusted data can lead to remote code execution if the deserialization library allows object construction or code execution.",
+          file: rel,
+          line: null,
+          remediation: "Avoid deserializing untrusted input. Use JSON.parse only with proper schema validation afterward. Never use eval or unserialize on user input. For YAML, use yaml.safeLoad instead of yaml.load.",
+        });
+        break;
+      }
+    }
+  }
+  if (!deserializationFound) {
+    passed.push({ category: "Security", title: "No unsafe deserialization patterns detected" });
   }
 
   for (const file of jsFiles) {
@@ -249,6 +329,7 @@ export function scanApiSecurity(files: string[], targetRoot: string): { findings
             ? "Disabling certificate verification makes the connection vulnerable to man-in-the-middle attacks."
             : `Found ${matches.length} non-localhost HTTP URL(s). Data sent over HTTP is visible to anyone on the network path.`,
           file: rel,
+        line: null,
           remediation: isRejectUnauthorized
             ? "Remove rejectUnauthorized: false. If you need to trust a custom CA, configure the CA certificate explicitly."
             : "Change HTTP URLs to HTTPS. If connecting to a local service, use localhost or 127.0.0.1.",

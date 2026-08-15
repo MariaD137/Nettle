@@ -5,12 +5,14 @@ import {
   getUserById,
   getUserByEmail,
   updatePassword,
+  updateEmail,
+  deleteUser,
   createPasswordResetToken,
   resolvePasswordResetToken,
   consumePasswordResetToken,
   EmailAlreadyRegisteredError,
 } from "../auth/users";
-import { createSession, destroySession } from "../auth/sessions";
+import { createSession, destroySession, listSessions, destroyAllSessions, destroySessionByPrefix } from "../auth/sessions";
 import { requireAuth } from "../auth/middleware";
 import { rateLimit } from "../middleware/rateLimit";
 
@@ -81,12 +83,9 @@ authRouter.post("/api/auth/forgot-password", authLimiter, (req, res) => {
   const user = getUserByEmail(email);
   if (user) {
     const resetToken = createPasswordResetToken(user.id);
-    // In production this sends an email via SES. For now, log the token so
-    // the developer can complete the flow manually or via the API.
     console.log(`[password-reset] token for ${email}: ${resetToken}`);
   }
 
-  // Always return success to avoid leaking whether the email is registered
   res.json({ message: "If that email is registered, a reset link has been sent" });
 });
 
@@ -130,4 +129,64 @@ authRouter.post("/api/auth/change-password", requireAuth, async (req, res) => {
 
   await updatePassword(req.userId!, newPassword);
   res.json({ message: "Password updated" });
+});
+
+authRouter.patch("/api/auth/email", requireAuth, async (req, res) => {
+  const newEmail = typeof req.body?.email === "string" ? req.body.email.trim().toLowerCase() : "";
+  const password = typeof req.body?.password === "string" ? req.body.password : "";
+
+  if (!EMAIL_PATTERN.test(newEmail)) {
+    return res.status(400).json({ error: "Provide a valid email address" });
+  }
+
+  const user = getUserById(req.userId!);
+  if (!user) return res.status(401).json({ error: "Invalid session" });
+
+  const valid = await verifyCredentials(user.email, password);
+  if (!valid) {
+    return res.status(401).json({ error: "Password is incorrect" });
+  }
+
+  try {
+    const updated = updateEmail(req.userId!, newEmail);
+    res.json({ user: updated });
+  } catch (err) {
+    if (err instanceof EmailAlreadyRegisteredError) {
+      return res.status(409).json({ error: "An account with this email already exists" });
+    }
+    throw err;
+  }
+});
+
+authRouter.get("/api/auth/sessions", requireAuth, (req, res) => {
+  const header = req.header("authorization") || "";
+  const currentToken = header.startsWith("Bearer ") ? header.slice("Bearer ".length) : undefined;
+  const sessions = listSessions(req.userId!, currentToken);
+  res.json({ sessions });
+});
+
+authRouter.delete("/api/auth/sessions/:tokenPrefix", requireAuth, (req, res) => {
+  const destroyed = destroySessionByPrefix(req.userId!, req.params.tokenPrefix);
+  if (!destroyed) return res.status(404).json({ error: "Session not found" });
+  res.status(204).end();
+});
+
+authRouter.post("/api/auth/sessions/revoke-all", requireAuth, (req, res) => {
+  destroyAllSessions(req.userId!);
+  const newToken = createSession(req.userId!);
+  res.json({ token: newToken, message: "All other sessions have been revoked" });
+});
+
+authRouter.delete("/api/auth/account", requireAuth, async (req, res) => {
+  const password = typeof req.body?.password === "string" ? req.body.password : "";
+  const user = getUserById(req.userId!);
+  if (!user) return res.status(401).json({ error: "Invalid session" });
+
+  const valid = await verifyCredentials(user.email, password);
+  if (!valid) {
+    return res.status(401).json({ error: "Password is incorrect" });
+  }
+
+  deleteUser(req.userId!);
+  res.status(204).end();
 });

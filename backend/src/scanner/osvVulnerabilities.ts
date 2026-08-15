@@ -65,6 +65,7 @@ export function scanOSVVulnerabilities(targetRoot: string): { findings: Finding[
           title: "OSV vulnerability database not found",
           detail: "The bundled OSV npm vulnerability database is missing from this build. Dependency vulnerability checks did not run.",
           file: null,
+        line: null,
           remediation: "Rebuild the OSV database by running: node scripts/build-osv-db.js",
         },
       ],
@@ -99,6 +100,7 @@ export function scanOSVVulnerabilities(targetRoot: string): { findings: Finding[
       title: `Vulnerable dependency: ${name}@${range}`,
       detail: `${matches.length} known vulnerabilit${matches.length === 1 ? "y" : "ies"} in this version range, worst severity ${worst}. Example: ${representative.vuln_id} — ${representative.summary}`,
       file: "package.json",
+        line: null,
       remediation: fixedVersion
         ? `Upgrade ${name} to version ${fixedVersion} or later: npm install ${name}@${fixedVersion}`
         : `Check for a patched version of ${name} or evaluate an alternative package.`,

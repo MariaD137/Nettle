@@ -15,8 +15,12 @@ export default function DashboardPage() {
   const { user, logout } = useAuth();
   const [overview, setOverview] = useState<OverviewData | null>(null);
   const [newName, setNewName] = useState("");
+  const [newUrl, setNewUrl] = useState("");
+  const [newDesc, setNewDesc] = useState("");
+  const [newEnv, setNewEnv] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
+  const [showAdvanced, setShowAdvanced] = useState(false);
 
   async function refresh() {
     const data = await api.overview();
@@ -32,8 +36,16 @@ export default function DashboardPage() {
     setError(null);
     setCreating(true);
     try {
-      await api.createProject(newName);
+      await api.createProject(newName, {
+        url: newUrl || undefined,
+        description: newDesc || undefined,
+        environment: newEnv || undefined,
+      });
       setNewName("");
+      setNewUrl("");
+      setNewDesc("");
+      setNewEnv("");
+      setShowAdvanced(false);
       await refresh();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Couldn't create project");
@@ -96,14 +108,45 @@ export default function DashboardPage() {
 
       <div className="card">
         <h2>New project</h2>
-        <form onSubmit={handleCreate} style={{ display: "flex", gap: 10, alignItems: "flex-end" }}>
-          <div className="field" style={{ flex: 1, marginBottom: 0 }}>
-            <label htmlFor="name">Name</label>
-            <input id="name" required value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="My App" />
+        <form onSubmit={handleCreate}>
+          <div style={{ display: "flex", gap: 10, alignItems: "flex-end" }}>
+            <div className="field" style={{ flex: 1, marginBottom: 0 }}>
+              <label htmlFor="name">Name</label>
+              <input id="name" required value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="My App" />
+            </div>
+            <button type="submit" disabled={creating}>
+              {creating ? "Creating…" : "Create"}
+            </button>
           </div>
-          <button type="submit" disabled={creating}>
-            {creating ? "Creating…" : "Create"}
+          <button
+            type="button"
+            className="link-btn"
+            onClick={() => setShowAdvanced(!showAdvanced)}
+            style={{ marginTop: 8 }}
+          >
+            {showAdvanced ? "Hide details" : "Add details (optional)"}
           </button>
+          {showAdvanced && (
+            <div style={{ marginTop: 8 }}>
+              <div className="field">
+                <label htmlFor="proj-url">URL</label>
+                <input id="proj-url" value={newUrl} onChange={(e) => setNewUrl(e.target.value)} placeholder="https://myapp.com" />
+              </div>
+              <div className="field">
+                <label htmlFor="proj-desc">Description</label>
+                <input id="proj-desc" value={newDesc} onChange={(e) => setNewDesc(e.target.value)} placeholder="Brief description" />
+              </div>
+              <div className="field">
+                <label htmlFor="proj-env">Environment</label>
+                <select id="proj-env" value={newEnv} onChange={(e) => setNewEnv(e.target.value)}>
+                  <option value="">Select…</option>
+                  <option value="development">Development</option>
+                  <option value="staging">Staging</option>
+                  <option value="production">Production</option>
+                </select>
+              </div>
+            </div>
+          )}
         </form>
       </div>
 

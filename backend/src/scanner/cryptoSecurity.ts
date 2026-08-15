@@ -104,6 +104,7 @@ export function scanCrypto(files: string[], targetRoot: string): { findings: Fin
           title: check.name,
           detail: check.detail,
           file: rel,
+        line: null,
           remediation: check.remediation,
         });
       }

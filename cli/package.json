@@ -1,0 +1,19 @@
+{
+  "name": "@nettle/cli",
+  "version": "0.1.0",
+  "description": "Nettle security scanner CLI — scan your codebase from the terminal",
+  "type": "module",
+  "bin": {
+    "nettle": "./bin/nettle.js"
+  },
+  "scripts": {
+    "start": "node bin/nettle.js"
+  },
+  "dependencies": {
+    "chalk": "^5.4.1",
+    "commander": "^13.1.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

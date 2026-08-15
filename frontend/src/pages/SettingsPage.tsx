@@ -1,10 +1,10 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { useAuth } from "../AuthContext";
-import { api, ApiError } from "../api";
+import { api, ApiError, setToken, type SessionInfo } from "../api";
 
 export default function SettingsPage() {
-  const { user, logout } = useAuth();
+  const { user, logout, refreshUser } = useAuth();
 
   return (
     <div className="shell">
@@ -31,14 +31,55 @@ export default function SettingsPage() {
         </div>
       </div>
 
+      <ChangeEmailCard onUpdated={refreshUser} />
       <ChangePasswordCard />
+      <SessionsCard />
+      <DangerZoneCard />
+    </div>
+  );
+}
 
-      <div className="card">
-        <h2>Danger zone</h2>
-        <button className="destructive" onClick={() => logout()}>
-          Log out
-        </button>
-      </div>
+function ChangeEmailCard({ onUpdated }: { onUpdated: () => void }) {
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    setError(null);
+    setSuccess(false);
+    setSubmitting(true);
+    try {
+      await api.changeEmail(email, password);
+      setSuccess(true);
+      setEmail("");
+      setPassword("");
+      onUpdated();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Something went wrong");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <div className="card">
+      <h2>Change email</h2>
+      {error && <div className="error-banner">{error}</div>}
+      {success && <div className="success-banner">Email updated</div>}
+      <form onSubmit={handleSubmit}>
+        <div className="field">
+          <label htmlFor="new-email">New email</label>
+          <input id="new-email" type="email" required value={email} onChange={(e) => setEmail(e.target.value)} />
+        </div>
+        <div className="field">
+          <label htmlFor="email-pw">Password (to confirm)</label>
+          <input id="email-pw" type="password" required value={password} onChange={(e) => setPassword(e.target.value)} />
+        </div>
+        <button type="submit" disabled={submitting}>{submitting ? "Updating…" : "Update email"}</button>
+      </form>
     </div>
   );
 }
@@ -87,39 +128,135 @@ function ChangePasswordCard() {
       <form onSubmit={handleSubmit}>
         <div className="field">
           <label htmlFor="current">Current password</label>
-          <input
-            id="current"
-            type="password"
-            required
-            value={currentPassword}
-            onChange={(e) => setCurrentPassword(e.target.value)}
-          />
+          <input id="current" type="password" required value={currentPassword} onChange={(e) => setCurrentPassword(e.target.value)} />
         </div>
         <div className="field">
           <label htmlFor="newpw">New password</label>
-          <input
-            id="newpw"
-            type="password"
-            required
-            minLength={8}
-            value={newPassword}
-            onChange={(e) => setNewPassword(e.target.value)}
-          />
+          <input id="newpw" type="password" required minLength={8} value={newPassword} onChange={(e) => setNewPassword(e.target.value)} />
         </div>
         <div className="field">
           <label htmlFor="confirm">Confirm new password</label>
-          <input
-            id="confirm"
-            type="password"
-            required
-            value={confirm}
-            onChange={(e) => setConfirm(e.target.value)}
-          />
+          <input id="confirm" type="password" required value={confirm} onChange={(e) => setConfirm(e.target.value)} />
         </div>
-        <button type="submit" disabled={submitting}>
-          {submitting ? "Updating…" : "Update password"}
-        </button>
+        <button type="submit" disabled={submitting}>{submitting ? "Updating…" : "Update password"}</button>
       </form>
+    </div>
+  );
+}
+
+function SessionsCard() {
+  const [sessions, setSessions] = useState<SessionInfo[] | null>(null);
+  const [revoking, setRevoking] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    api.listSessions().then(({ sessions }) => setSessions(sessions)).catch(() => {});
+  }, []);
+
+  async function revoke(prefix: string) {
+    setRevoking(prefix);
+    setError(null);
+    try {
+      await api.revokeSession(prefix);
+      setSessions((prev) => prev?.filter((s) => s.tokenPrefix !== prefix) ?? null);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Failed to revoke session");
+    } finally {
+      setRevoking(null);
+    }
+  }
+
+  async function revokeAll() {
+    setError(null);
+    try {
+      const { token } = await api.revokeAllSessions();
+      setToken(token);
+      const { sessions } = await api.listSessions();
+      setSessions(sessions);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Failed to revoke sessions");
+    }
+  }
+
+  return (
+    <div className="card">
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <h2 style={{ margin: 0 }}>Active sessions</h2>
+        {sessions && sessions.length > 1 && (
+          <button className="small destructive" onClick={revokeAll}>Revoke all others</button>
+        )}
+      </div>
+      {error && <div className="error-banner">{error}</div>}
+      {sessions === null && <p className="muted">Loading…</p>}
+      {sessions?.map((s) => (
+        <div key={s.tokenPrefix} className="settings-row" style={{ alignItems: "center" }}>
+          <div>
+            <code>{s.tokenPrefix}…</code>
+            {s.current && <span className="plan-badge" style={{ marginLeft: 8 }}>current</span>}
+            <span className="muted" style={{ marginLeft: 8 }}>
+              expires {new Date(s.expiresAt).toLocaleDateString()}
+            </span>
+          </div>
+          {!s.current && (
+            <button
+              className="small destructive"
+              disabled={revoking === s.tokenPrefix}
+              onClick={() => revoke(s.tokenPrefix)}
+            >
+              Revoke
+            </button>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function DangerZoneCard() {
+  const { logout } = useAuth();
+  const [showDelete, setShowDelete] = useState(false);
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
+
+  async function handleDelete(e: React.FormEvent) {
+    e.preventDefault();
+    setError(null);
+    setDeleting(true);
+    try {
+      await api.deleteAccount(password);
+      logout();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Failed to delete account");
+    } finally {
+      setDeleting(false);
+    }
+  }
+
+  return (
+    <div className="card">
+      <h2>Danger zone</h2>
+      <div className="settings-row">
+        <div>
+          <strong>Delete account</strong>
+          <p className="muted" style={{ margin: "4px 0 0" }}>Permanently removes your account and all projects, scans, and alerts.</p>
+        </div>
+        <button className="destructive" onClick={() => setShowDelete(!showDelete)}>
+          {showDelete ? "Cancel" : "Delete account…"}
+        </button>
+      </div>
+      {showDelete && (
+        <form onSubmit={handleDelete} style={{ marginTop: 12 }}>
+          {error && <div className="error-banner">{error}</div>}
+          <div className="field">
+            <label htmlFor="del-pw">Enter your password to confirm</label>
+            <input id="del-pw" type="password" required value={password} onChange={(e) => setPassword(e.target.value)} />
+          </div>
+          <button type="submit" className="destructive" disabled={deleting}>
+            {deleting ? "Deleting…" : "Permanently delete my account"}
+          </button>
+        </form>
+      )}
     </div>
   );
 }
