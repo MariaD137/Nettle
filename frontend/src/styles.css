@@ -1,14 +1,15 @@
 :root {
-  /* Champagne ground with a warm-neutral card stack above it. The neutrals
-     carry a faint gold bias so they read as chosen alongside the champagne
-     rather than as flat grey dropped on top of it. */
-  --bg: #f7e7ce;
-  --surface: #fefaf3;
-  --surface-2: #f9f0e0;
+  /* Eggshell-white ground: a white with just enough warm undertone to stay
+     off pure #fff. Cards sit a shade lighter still, so the stack reads as
+     paper on paper and the borders — not a heavy tint — carry the
+     separation. */
+  --bg: #f4f1e8;
+  --surface: #fffdf8;
+  --surface-2: #f8f6ef;
   --ink: #1f2430;
-  --muted: #6d6555;
-  --line: #e3d3b4;
-  --line-strong: #c4ad86;
+  --muted: #6b6559;
+  --line: #e2ddd0;
+  --line-strong: #c2bba8;
   --accent: #1d4ed8;
   --accent-soft: #dce5fb;
   --brand-mark: #2563eb;
