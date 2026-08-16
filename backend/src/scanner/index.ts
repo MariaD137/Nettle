@@ -16,6 +16,7 @@ import { scanFrontendSecurity } from "./frontendSecurity";
 import { scanAiSecurity } from "./aiSecurity";
 import { scanSessionJwt } from "./sessionJwt";
 import { SCANNER_VERSION, type ScanReport } from "./types";
+import { getSemgrepVersion } from "./initialization";
 
 const SCANNED_EXTENSIONS = [".js", ".ts", ".jsx", ".tsx", ".env", ".json"];
 
@@ -60,6 +61,7 @@ export function runScan(targetPath: string): ScanReport {
     scannedAt: new Date().toISOString(),
     target: path.basename(targetRoot),
     scannerVersion: SCANNER_VERSION,
+    semgrepVersion: getSemgrepVersion(),
     score,
     findings,
     passed,

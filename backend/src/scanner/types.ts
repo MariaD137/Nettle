@@ -83,6 +83,7 @@ export interface ScanReport {
   scannedAt: string;
   target: string;
   scannerVersion: string;
+  semgrepVersion?: string; // Version of Semgrep used (if available)
   score: number;
   scoreConfidence?: number; // 0-100: how complete is the scan
   status?: ScanStatus; // default COMPLETED for backward compatibility

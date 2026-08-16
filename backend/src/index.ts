@@ -7,6 +7,7 @@ import { eventsRouter } from "./routes/events.routes";
 import { authRouter } from "./routes/auth.routes";
 import { badgeRouter } from "./routes/badge.routes";
 import { billingRouter, billingWebhookRouter } from "./routes/billing.routes";
+import { initializeScanner } from "./scanner/initialization";
 
 const app = express();
 const PORT = process.env.PORT || 8080;
@@ -41,6 +42,9 @@ app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
   console.error(err);
   res.status(500).json({ error: "Internal server error" });
 });
+
+// Initialize scanner at startup
+initializeScanner();
 
 app.listen(PORT, () => {
   console.log(`Nettle backend listening on port ${PORT}`);
