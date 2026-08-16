@@ -8,6 +8,7 @@ import SettingsPage from "./pages/SettingsPage";
 import ResetPasswordPage from "./pages/ResetPasswordPage";
 import SubscribePage from "./pages/SubscribePage";
 import { CustomRulesPage } from "./pages/CustomRulesPage";
+import { AnalyticsPage } from "./pages/AnalyticsPage";
 import { hasActiveSubscription } from "./subscription";
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
@@ -65,6 +66,14 @@ export default function App() {
         element={
           <PaidRoute>
             <CustomRulesPage />
+          </PaidRoute>
+        }
+      />
+      <Route
+        path="/projects/:projectId/analytics"
+        element={
+          <PaidRoute>
+            <AnalyticsPage />
           </PaidRoute>
         }
       />

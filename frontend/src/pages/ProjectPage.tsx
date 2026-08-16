@@ -87,7 +87,11 @@ export default function ProjectPage() {
     <div className="shell">
       <div className="topbar">
         <Link to="/" className="brand"><NettleLogo size={22} title="" />nettle</Link>
-        <BadgePill state={badge} />
+        <div style={{ display: "flex", gap: "16px", alignItems: "center", marginLeft: "auto" }}>
+          <Link to={`/projects/${id}/custom-rules`} className="settings-link">Rules</Link>
+          <Link to={`/projects/${id}/analytics`} className="settings-link">Analytics</Link>
+          <BadgePill state={badge} />
+        </div>
       </div>
 
       <h1>{project.name}</h1>
