@@ -8,6 +8,7 @@ import { authRouter } from "./routes/auth.routes";
 import { badgeRouter } from "./routes/badge.routes";
 import { billingRouter, billingWebhookRouter } from "./routes/billing.routes";
 import customRulesRouter from "./routes/customRules.routes";
+import analyticsRouter from "./routes/analytics.routes";
 import { initializeScanner } from "./scanner/initialization";
 
 const app = express();
@@ -35,6 +36,7 @@ app.use(authRouter);
 app.use(badgeRouter);
 app.use(billingRouter);
 app.use('/api/custom-rules', customRulesRouter);
+app.use('/api/analytics', analyticsRouter);
 
 app.use((_req: Request, res: Response) => {
   res.status(404).json({ error: "Not found" });

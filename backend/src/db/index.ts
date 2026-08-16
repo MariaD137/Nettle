@@ -110,6 +110,53 @@ db.exec(`
   );
 `);
 
+// Phase 13: ML Analytics & Baselines
+db.exec(`
+  CREATE TABLE IF NOT EXISTS ml_baselines (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL,
+    metric_name TEXT NOT NULL,
+    aggregation_period TEXT NOT NULL,
+    hour_of_day INTEGER,
+    day_of_week INTEGER,
+    value REAL NOT NULL,
+    std_dev REAL,
+    percentile_50 REAL,
+    percentile_95 REAL,
+    percentile_99 REAL,
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY (project_id) REFERENCES projects(id)
+  );
+  CREATE INDEX IF NOT EXISTS idx_ml_baselines_project_metric
+    ON ml_baselines(project_id, metric_name, aggregation_period);
+
+  CREATE TABLE IF NOT EXISTS anomaly_scores (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL,
+    event_id TEXT NOT NULL,
+    z_score REAL,
+    isolation_score REAL,
+    composite_score REAL,
+    anomaly_type TEXT,
+    is_anomaly INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (project_id) REFERENCES projects(id)
+  );
+  CREATE INDEX IF NOT EXISTS idx_anomaly_scores_project_time
+    ON anomaly_scores(project_id, created_at DESC);
+
+  CREATE TABLE IF NOT EXISTS ml_model_status (
+    project_id TEXT PRIMARY KEY,
+    model_type TEXT,
+    trained_at TEXT,
+    training_samples INTEGER,
+    accuracy REAL,
+    is_active INTEGER NOT NULL DEFAULT 0,
+    last_update_at TEXT,
+    FOREIGN KEY (project_id) REFERENCES projects(id)
+  );
+`);
+
 // Tier 2: Custom Detection Rules
 db.exec(`
   CREATE TABLE IF NOT EXISTS custom_rules (
