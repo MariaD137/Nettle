@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
+import { api } from '../api';
 import './AnalyticsPage.css';
 
 interface Baseline {
@@ -55,23 +56,12 @@ export function AnalyticsPage() {
   async function loadDashboard() {
     try {
       setLoading(true);
-      const [dashResponse, baselinesResponse] = await Promise.all([
-        fetch(`http://localhost:3000/api/analytics/${projectId}/dashboard?timeframe=24h`, {
-          headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` },
-        }),
-        fetch(`http://localhost:3000/api/analytics/${projectId}/baselines?metric=request_rate&period=hourly`, {
-          headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` },
-        }),
+      const [dashData, baselinesData] = await Promise.all([
+        api.getAnalyticsDashboard(projectId!),
+        api.getAnalyticsBaselines(projectId!),
       ]);
-
-      if (dashResponse.ok && baselinesResponse.ok) {
-        const dashData = await dashResponse.json();
-        const baselineData = await baselinesResponse.json();
-        setData(dashData);
-        setBaselines(baselineData.baselines || []);
-      } else {
-        setError('Failed to load analytics data');
-      }
+      setData(dashData);
+      setBaselines(baselinesData.baselines || []);
     } catch (err) {
       setError('Error loading analytics');
     } finally {
@@ -82,21 +72,8 @@ export function AnalyticsPage() {
   async function recalculateBaselines() {
     try {
       setRecalculating(true);
-      const response = await fetch(
-        `http://localhost:3000/api/analytics/${projectId}/calculate-baselines`,
-        {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${localStorage.getItem('token')}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({ hoursBack: 24 }),
-        }
-      );
-
-      if (response.ok) {
-        loadDashboard();
-      }
+      await api.calculateBaselines(projectId!, 24);
+      loadDashboard();
     } catch (err) {
       setError('Failed to recalculate baselines');
     } finally {

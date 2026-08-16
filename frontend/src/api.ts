@@ -355,6 +355,28 @@ export const api = {
       body: JSON.stringify({ repoUrl, branch: opts?.branch, apiKey: opts?.apiKey }),
     }),
 
+  // Analytics
+  getAnalyticsDashboard: (projectId: string, timeframe: string = "24h") =>
+    request<any>(`/api/analytics/${projectId}/dashboard?timeframe=${timeframe}`),
+
+  getAnalyticsBaselines: (projectId: string, metric: string = "request_rate", period: string = "hourly", hour?: number) => {
+    let query = `metric=${metric}&period=${period}`;
+    if (hour !== undefined) query += `&hour=${hour}`;
+    return request<any>(`/api/analytics/${projectId}/baselines?${query}`);
+  },
+
+  getAnomalies: (projectId: string, limit: number = 50, scoreMin: number = 0.7) =>
+    request<any>(`/api/analytics/${projectId}/anomalies?limit=${limit}&score_min=${scoreMin}`),
+
+  getModelStatus: (projectId: string) =>
+    request<any>(`/api/analytics/${projectId}/model-status`),
+
+  calculateBaselines: (projectId: string, hoursBack: number = 24) =>
+    request<any>(`/api/analytics/${projectId}/calculate-baselines`, {
+      method: "POST",
+      body: JSON.stringify({ hoursBack }),
+    }),
+
   // Billing
   createCheckoutSession: (plan: "tier1" | "tier2") =>
     request<{ url: string }>("/api/billing/checkout-session", {
