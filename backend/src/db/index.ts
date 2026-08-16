@@ -34,6 +34,10 @@ db.exec(`
     user_id TEXT,
     name TEXT NOT NULL,
     api_key TEXT NOT NULL UNIQUE,
+    url TEXT,
+    description TEXT,
+    environment TEXT NOT NULL DEFAULT 'production',
+    archived_at TEXT,
     created_at TEXT NOT NULL,
     FOREIGN KEY (user_id) REFERENCES users(id)
   );
@@ -59,9 +63,17 @@ db.exec(`
     severity TEXT NOT NULL,
     rule TEXT NOT NULL,
     message TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'new',
     FOREIGN KEY (project_id) REFERENCES projects(id)
   );
   CREATE INDEX IF NOT EXISTS idx_alerts_project_time ON alerts(project_id, occurred_at);
+
+  CREATE TABLE IF NOT EXISTS password_resets (
+    token TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    expires_at TEXT NOT NULL,
+    FOREIGN KEY (user_id) REFERENCES users(id)
+  );
 
   CREATE TABLE IF NOT EXISTS scans (
     id TEXT PRIMARY KEY,
@@ -75,7 +87,79 @@ db.exec(`
     FOREIGN KEY (project_id) REFERENCES projects(id)
   );
   CREATE INDEX IF NOT EXISTS idx_scans_project_time ON scans(project_id, scanned_at);
+
+  CREATE TABLE IF NOT EXISTS finding_statuses (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL,
+    finding_hash TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'open',
+    notes TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY (project_id) REFERENCES projects(id)
+  );
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_finding_statuses_unique ON finding_statuses(project_id, finding_hash);
+
+  CREATE TABLE IF NOT EXISTS notification_preferences (
+    user_id TEXT PRIMARY KEY,
+    email_critical_alerts INTEGER NOT NULL DEFAULT 1,
+    email_scan_complete INTEGER NOT NULL DEFAULT 1,
+    email_weekly_summary INTEGER NOT NULL DEFAULT 0,
+    slack_webhook_url TEXT,
+    FOREIGN KEY (user_id) REFERENCES users(id)
+  );
 `);
+
+function columnExists(table: string, column: string): boolean {
+  const rows = db.prepare(`PRAGMA table_info(${table})`).all() as unknown as { name: string }[];
+  return rows.some((r) => r.name === column);
+}
+
+if (!columnExists("projects", "url")) {
+  db.exec("ALTER TABLE projects ADD COLUMN url TEXT");
+}
+if (!columnExists("projects", "description")) {
+  db.exec("ALTER TABLE projects ADD COLUMN description TEXT");
+}
+if (!columnExists("projects", "environment")) {
+  db.exec("ALTER TABLE projects ADD COLUMN environment TEXT NOT NULL DEFAULT 'production'");
+}
+if (!columnExists("projects", "archived_at")) {
+  db.exec("ALTER TABLE projects ADD COLUMN archived_at TEXT");
+}
+if (!columnExists("scans", "scanner_version")) {
+  db.exec("ALTER TABLE scans ADD COLUMN scanner_version TEXT");
+}
+// Billable scans are recorded here rather than counted off the `scans`
+// table. A scan run without a project API key never lands in `scans` at
+// all, so counting stored reports would let a subscriber take unlimited
+// full-price scans simply by omitting the key. The ledger tracks usage
+// independently of whether a report was persisted against a project.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS scan_usage (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    project_id TEXT,
+    source TEXT NOT NULL,
+    occurred_at TEXT NOT NULL,
+    FOREIGN KEY (user_id) REFERENCES users(id)
+  );
+  CREATE INDEX IF NOT EXISTS idx_scan_usage_user_time
+    ON scan_usage(user_id, occurred_at);
+`);
+
+// Anchor for the monthly scan allowance. Set when a subscription first goes
+// active and then left alone — the current period is derived by rolling this
+// date forward a month at a time, which is how Stripe's own billing cycle
+// behaves, so the two line up once Stripe is wired in.
+if (!columnExists("users", "billing_anchor")) {
+  db.exec("ALTER TABLE users ADD COLUMN billing_anchor TEXT");
+}
+
+// Scan status: CREATED, SCANNING, COMPLETED, PARTIALLY_COMPLETED, FAILED, CANCELLED
+if (!columnExists("scans", "status")) {
+  db.exec("ALTER TABLE scans ADD COLUMN status TEXT NOT NULL DEFAULT 'COMPLETED'");
+}
 
 export function newId(): string {
   return crypto.randomUUID();

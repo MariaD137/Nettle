@@ -1,0 +1,37 @@
+name: Backend Deploy (Staging)
+
+on:
+  push:
+    branches: [develop]
+    paths:
+      - "backend/**"
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    environment: staging
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Log in to ECR
+        id: ecr-login
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and push image
+        working-directory: backend
+        env:
+          ECR_REPOSITORY_URI: ${{ vars.ECR_REPOSITORY_URI }}
+        run: |
+          docker build -t "$ECR_REPOSITORY_URI:${{ github.sha }}" -t "$ECR_REPOSITORY_URI:staging" .
+          docker push "$ECR_REPOSITORY_URI:${{ github.sha }}"
+          docker push "$ECR_REPOSITORY_URI:staging"

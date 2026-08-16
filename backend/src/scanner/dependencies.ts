@@ -2,9 +2,6 @@ import fs from "fs";
 import path from "path";
 import type { Finding, Pass } from "./types";
 
-// Vulnerable-version checking lives in osvVulnerabilities.ts now, against a
-// real bundled snapshot of OSV's database — this module just covers what
-// OSV doesn't: whether a lockfile exists at all.
 export function scanDependencies(targetRoot: string): { findings: Finding[]; passed: Pass[] } {
   const findings: Finding[] = [];
   const passed: Pass[] = [];
@@ -12,11 +9,13 @@ export function scanDependencies(targetRoot: string): { findings: Finding[]; pas
 
   if (!fs.existsSync(pkgPath)) {
     findings.push({
-      severity: "caution",
-      category: "Security",
+      severity: "medium",
+      category: "Dependencies",
       title: "No package.json found",
       detail: "Couldn't run dependency checks.",
       file: null,
+        line: null,
+      remediation: "If this is a Node.js project, run npm init to create a package.json.",
     });
     return { findings, passed };
   }
@@ -26,14 +25,16 @@ export function scanDependencies(targetRoot: string): { findings: Finding[]; pas
   );
   if (!hasLockfile) {
     findings.push({
-      severity: "caution",
-      category: "Security",
+      severity: "medium",
+      category: "Dependencies",
       title: "No dependency lockfile committed",
       detail: "Without a lockfile, installs can silently pull newer (or compromised) transitive versions. Commit package-lock.json / yarn.lock / pnpm-lock.yaml.",
       file: "package.json",
+        line: null,
+      remediation: "Run npm install (or yarn / pnpm install) and commit the generated lockfile to your repository.",
     });
   } else {
-    passed.push({ category: "Security", title: "Dependency lockfile present" });
+    passed.push({ category: "Dependencies", title: "Dependency lockfile present" });
   }
 
   return { findings, passed };

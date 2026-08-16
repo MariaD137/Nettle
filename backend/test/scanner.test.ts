@@ -79,3 +79,43 @@ test("clean app is recognized as having a privacy policy and terms", () => {
 test("score never drops below 0", () => {
   assert.ok(flawedReport.score >= 0);
 });
+
+test("flags missing security headers in flawed app", () => {
+  assert.ok(flawedReport.findings.some((f) => f.title.includes("security headers middleware")));
+});
+
+test("clean app passes security headers via Helmet", () => {
+  assert.ok(cleanReport.passed.some((p) => p.title.includes("Helmet")));
+});
+
+test("flags SQL injection pattern in flawed app", () => {
+  assert.ok(flawedReport.findings.some((f) => f.title.includes("SQL query built with string concatenation")));
+});
+
+test("flags CORS wildcard in flawed app", () => {
+  assert.ok(flawedReport.findings.some((f) => f.title.includes("CORS allows all origins")));
+});
+
+test("flags TLS verification disabled in flawed app", () => {
+  assert.ok(flawedReport.findings.some((f) => f.title.includes("TLS certificate verification disabled")));
+});
+
+test("flags missing rate limiting in flawed app", () => {
+  assert.ok(flawedReport.findings.some((f) => f.title.includes("No rate limiting")));
+});
+
+test("clean app passes rate limiting check", () => {
+  assert.ok(cleanReport.passed.some((p) => p.title.includes("Rate limiting")));
+});
+
+test("flags JWT without expiration in flawed app", () => {
+  assert.ok(flawedReport.findings.some((f) => f.title.includes("JWT tokens issued without expiration")));
+});
+
+test("clean app passes JWT expiration check", () => {
+  assert.ok(cleanReport.passed.some((p) => p.title.includes("JWT tokens have expiration")));
+});
+
+test("clean app passes request body size limit check", () => {
+  assert.ok(cleanReport.passed.some((p) => p.title.includes("Request body size limit")));
+});

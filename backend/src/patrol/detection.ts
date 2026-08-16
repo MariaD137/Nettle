@@ -58,7 +58,7 @@ export function runDetection(projectId: string, event: StoredEvent): Alert[] {
     alerts.push(
       createAlert(
         projectId,
-        "caution",
+        "medium",
         "high-request-rate",
         `${lastTenSeconds.length} requests from ${event.ip} in 10s — possible scraping or denial-of-service probing.`
       )

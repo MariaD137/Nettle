@@ -1,7 +1,8 @@
 import { useState } from "react";
-import { Navigate, useNavigate } from "react-router-dom";
+import { Link, Navigate, useNavigate } from "react-router-dom";
 import { useAuth } from "../AuthContext";
 import { ApiError } from "../api";
+import NettleLogo from "../components/NettleLogo";
 
 export default function LoginPage() {
   const { user, login, signup } = useAuth();
@@ -30,11 +31,14 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="shell" style={{ maxWidth: 400 }}>
-      <h1>nettle</h1>
-      <p className="muted" style={{ marginBottom: 24 }}>
-        Scans AI-built apps for launch-readiness gaps, then keeps watching after they ship.
-      </p>
+    <div className="auth-landing">
+      <div className="auth-header">
+        <NettleLogo size={92} />
+        <h1 className="auth-wordmark">nettle</h1>
+        <p className="muted auth-tagline">
+          Scans AI-built apps for launch-readiness gaps, then keeps watching after they ship.
+        </p>
+      </div>
 
       <div className="tabs">
         <button className={`tab ${mode === "signup" ? "active" : ""}`} onClick={() => setMode("signup")} type="button">
@@ -67,6 +71,12 @@ export default function LoginPage() {
           {submitting ? "Please wait…" : mode === "signup" ? "Create account" : "Log in"}
         </button>
       </form>
+
+      {mode === "login" && (
+        <p style={{ marginTop: 16, textAlign: "center" }}>
+          <Link to="/reset-password">Forgot password?</Link>
+        </p>
+      )}
     </div>
   );
 }
