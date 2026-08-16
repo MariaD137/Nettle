@@ -156,6 +156,11 @@ if (!columnExists("users", "billing_anchor")) {
   db.exec("ALTER TABLE users ADD COLUMN billing_anchor TEXT");
 }
 
+// Scan status: CREATED, SCANNING, COMPLETED, PARTIALLY_COMPLETED, FAILED, CANCELLED
+if (!columnExists("scans", "status")) {
+  db.exec("ALTER TABLE scans ADD COLUMN status TEXT NOT NULL DEFAULT 'COMPLETED'");
+}
+
 export function newId(): string {
   return crypto.randomUUID();
 }
