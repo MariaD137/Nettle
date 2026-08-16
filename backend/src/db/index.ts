@@ -110,6 +110,58 @@ db.exec(`
   );
 `);
 
+// Tier 2: Custom Detection Rules
+db.exec(`
+  CREATE TABLE IF NOT EXISTS custom_rules (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL,
+    name TEXT NOT NULL,
+    description TEXT,
+    pattern_type TEXT NOT NULL,
+    pattern_value TEXT NOT NULL,
+    weight INTEGER NOT NULL,
+    severity TEXT NOT NULL,
+    enabled INTEGER NOT NULL DEFAULT 1,
+    version INTEGER NOT NULL DEFAULT 1,
+    created_by TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY (project_id) REFERENCES projects(id),
+    FOREIGN KEY (created_by) REFERENCES users(id)
+  );
+  CREATE INDEX IF NOT EXISTS idx_custom_rules_project_enabled ON custom_rules(project_id, enabled);
+  CREATE INDEX IF NOT EXISTS idx_custom_rules_project_type ON custom_rules(project_id, pattern_type);
+
+  CREATE TABLE IF NOT EXISTS rule_versions (
+    id TEXT PRIMARY KEY,
+    rule_id TEXT NOT NULL,
+    version INTEGER NOT NULL,
+    pattern_value TEXT NOT NULL,
+    weight INTEGER NOT NULL,
+    severity TEXT NOT NULL,
+    changes TEXT,
+    created_by TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (rule_id) REFERENCES custom_rules(id),
+    FOREIGN KEY (created_by) REFERENCES users(id)
+  );
+  CREATE INDEX IF NOT EXISTS idx_rule_versions_rule ON rule_versions(rule_id, version DESC);
+
+  CREATE TABLE IF NOT EXISTS rule_test_results (
+    id TEXT PRIMARY KEY,
+    rule_id TEXT NOT NULL,
+    test_run_id TEXT NOT NULL,
+    events_matched INTEGER NOT NULL DEFAULT 0,
+    true_positives INTEGER NOT NULL DEFAULT 0,
+    false_positives INTEGER NOT NULL DEFAULT 0,
+    accuracy REAL,
+    execution_time_ms INTEGER,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (rule_id) REFERENCES custom_rules(id)
+  );
+  CREATE INDEX IF NOT EXISTS idx_rule_test_results_rule ON rule_test_results(rule_id, created_at DESC);
+`);
+
 function columnExists(table: string, column: string): boolean {
   const rows = db.prepare(`PRAGMA table_info(${table})`).all() as unknown as { name: string }[];
   return rows.some((r) => r.name === column);

@@ -1,6 +1,7 @@
 import { recentEvents } from "./events";
 import { createAlert, hasRecentAlert } from "./alerts";
 import type { StoredEvent, Alert } from "./types";
+import { listCustomRules, evaluateCustomRule } from "./customRules";
 
 const ALERT_COOLDOWN_SECONDS = 300; // don't re-alert on an ongoing pattern every single request
 
@@ -85,6 +86,24 @@ export function runDetection(projectId: string, event: StoredEvent): Alert[] {
         `Request to "${event.path}" from ${event.ip} contains a SQL-injection-shaped pattern.`
       )
     );
+  }
+
+  // Evaluate custom rules
+  const customRules = listCustomRules(projectId, true); // enabledOnly
+  for (const rule of customRules) {
+    if (evaluateCustomRule(rule, event)) {
+      const alertId = `custom-rule-${rule.id}`;
+      if (!hasRecentAlert(projectId, alertId, ALERT_COOLDOWN_SECONDS)) {
+        alerts.push(
+          createAlert(
+            projectId,
+            rule.severity,
+            alertId,
+            `Custom rule "${rule.name}" matched: ${rule.description || rule.pattern_value}`
+          )
+        );
+      }
+    }
   }
 
   return alerts;
