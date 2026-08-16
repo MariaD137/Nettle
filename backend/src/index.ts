@@ -8,6 +8,9 @@ import { authRouter } from "./routes/auth.routes";
 import { badgeRouter } from "./routes/badge.routes";
 import { billingRouter, billingWebhookRouter } from "./routes/billing.routes";
 import customRulesRouter from "./routes/customRules.routes";
+import analyticsRouter from "./routes/analytics.routes";
+import integrationsRouter from "./routes/integrations.routes";
+import { scanRateLimit, publicRateLimit, apiRateLimit } from "./middleware/rateLimit";
 import { initializeScanner } from "./scanner/initialization";
 
 const app = express();
@@ -28,13 +31,16 @@ app.use(billingWebhookRouter);
 
 app.use(express.json());
 app.use(healthRouter);
-app.use(scansRouter);
+app.use(apiRateLimit);
+app.use(scanRateLimit, scansRouter);
 app.use(projectsRouter);
-app.use(eventsRouter);
+app.use(publicRateLimit, eventsRouter);
 app.use(authRouter);
-app.use(badgeRouter);
+app.use(publicRateLimit, badgeRouter);
 app.use(billingRouter);
 app.use('/api/custom-rules', customRulesRouter);
+app.use('/api/analytics', analyticsRouter);
+app.use('/api/projects', integrationsRouter);
 
 app.use((_req: Request, res: Response) => {
   res.status(404).json({ error: "Not found" });
