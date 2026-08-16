@@ -7,6 +7,7 @@ import BillingResultPage from "./pages/BillingResultPage";
 import SettingsPage from "./pages/SettingsPage";
 import ResetPasswordPage from "./pages/ResetPasswordPage";
 import SubscribePage from "./pages/SubscribePage";
+import { CustomRulesPage } from "./pages/CustomRulesPage";
 import { hasActiveSubscription } from "./subscription";
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
@@ -56,6 +57,14 @@ export default function App() {
         element={
           <PaidRoute>
             <ProjectPage />
+          </PaidRoute>
+        }
+      />
+      <Route
+        path="/projects/:projectId/custom-rules"
+        element={
+          <PaidRoute>
+            <CustomRulesPage />
           </PaidRoute>
         }
       />
