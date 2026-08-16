@@ -3,16 +3,15 @@ import { getUserById } from "../auth/users";
 
 /**
  * Monthly scan allowance per plan — the metered dimension the subscription
- * actually buys.
+ * actually buys. Change a number here and the API, the dashboard and the
+ * paywall copy all follow.
  *
- * Tier 1 is the confirmed number. TIER 2 IS A PLACEHOLDER pending a real
- * figure; it is set proportional to the price difference purely so the
- * mechanism has something to enforce. Change it here and the API, the
- * dashboard and the paywall copy all follow.
+ * Keep in sync with the "N scans per month" lines in frontend/src/plans.ts:
+ * that copy is what a customer is quoted, this table is what they get.
  */
 export const SCAN_QUOTAS: Record<string, number> = {
   tier1: 30,
-  tier2: 100, // PLACEHOLDER — confirm before launch
+  tier2: 60,
 };
 
 export interface QuotaState {

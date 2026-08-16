@@ -124,3 +124,28 @@ test("usage is recorded even when no project is attached", async () => {
   recordScanUsage(id, null, "upload");
   assert.equal(getQuotaState(id)!.used, 1);
 });
+
+test("the paywall copy quotes the allowance the API actually enforces", () => {
+  // These two live in different packages, so nothing but this check stops
+  // them drifting — and drift here means quoting a customer one number and
+  // charging them for another.
+  const fs = require("fs") as typeof import("fs");
+  const path = require("path") as typeof import("path");
+  const copy = fs.readFileSync(
+    path.join(__dirname, "..", "..", "frontend", "src", "plans.ts"),
+    "utf8"
+  );
+
+  for (const [plan, limit] of Object.entries(SCAN_QUOTAS)) {
+    assert.ok(
+      copy.includes(`${limit} scans per month`),
+      `frontend/src/plans.ts should advertise "${limit} scans per month" for ${plan}`
+    );
+  }
+
+  // And must not still be advertising an unmetered plan.
+  assert.ok(
+    !/unlimited\s+(launch-readiness\s+)?scans/i.test(copy),
+    "paywall copy must not promise unlimited scans while a quota is enforced"
+  );
+});

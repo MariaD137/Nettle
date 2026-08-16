@@ -42,7 +42,7 @@ export const PLANS: PlanCopy[] = [
     cadence: "per month",
     highlight: true,
     features: [
-      "100 scans per month",
+      "60 scans per month",
       "Everything in Tier 1",
       "Up to 50 projects",
       "Continuous runtime monitoring",
