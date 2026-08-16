@@ -17,16 +17,9 @@ import { scanAiSecurity } from "./aiSecurity";
 import { scanSessionJwt } from "./sessionJwt";
 import { SCANNER_VERSION, type ScanReport } from "./types";
 import { getSemgrepVersion } from "./initialization";
+import { SCORING_CONFIG, calculateScore, calculateConfidence } from "./scoringConfig";
 
 const SCANNED_EXTENSIONS = [".js", ".ts", ".jsx", ".tsx", ".env", ".json"];
-
-const SEVERITY_PENALTY: Record<string, number> = {
-  critical: 16,
-  high: 10,
-  medium: 5,
-  low: 2,
-  info: 0,
-};
 
 export function runScan(targetPath: string): ScanReport {
   const targetRoot = path.resolve(targetPath);
@@ -53,9 +46,13 @@ export function runScan(targetPath: string): ScanReport {
   const findings = results.flatMap((r) => r.findings);
   const passed = results.flatMap((r) => r.passed);
 
-  let score = 100;
-  for (const f of findings) score -= SEVERITY_PENALTY[f.severity] ?? 7;
-  score = Math.max(0, Math.min(100, score));
+  // Calculate score using versioned config (excludes NOT_VERIFIED from penalty)
+  const score = calculateScore(findings, SCORING_CONFIG);
+
+  // Calculate confidence: what percentage of checks completed?
+  // For now, based on legacy model (we'll enhance when migrating to CheckResult)
+  // Confidence = 100% until we migrate to checkResults with NOT_VERIFIED
+  const scoreConfidence = 100;
 
   return {
     scannedAt: new Date().toISOString(),
@@ -63,6 +60,7 @@ export function runScan(targetPath: string): ScanReport {
     scannerVersion: SCANNER_VERSION,
     semgrepVersion: getSemgrepVersion(),
     score,
+    scoreConfidence,
     findings,
     passed,
     summary: {
