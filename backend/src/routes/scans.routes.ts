@@ -13,6 +13,7 @@ import { requireSubscription } from "../billing/subscription";
 import { getUserById } from "../auth/users";
 import { applyScanAccess } from "../billing/scanAccess";
 import { getQuotaState, recordScanUsage } from "../billing/scanQuota";
+import { safeExtractZip } from "../scanner/safeExtraction";
 import type { Request as ExpressRequest } from "express";
 
 export const scansRouter = Router();
@@ -79,7 +80,7 @@ scansRouter.post("/api/scans", optionalAuth, upload.single("codebase"), (req: Re
 
   const extractDir = fs.mkdtempSync(path.join(os.tmpdir(), "nettle-scan-"));
   try {
-    execFileSync("unzip", ["-q", "-o", req.file.path, "-d", extractDir]);
+    safeExtractZip(req.file.path, extractDir);
     const scanRoot = resolveScanRoot(extractDir);
     const report = runScan(scanRoot);
 
@@ -100,7 +101,22 @@ scansRouter.post("/api/scans", optionalAuth, upload.single("codebase"), (req: Re
 
     res.json(applyScanAccess(report, planForScan(req, ownerUserId)));
   } catch (err) {
-    res.status(422).json({ error: "Couldn't extract or scan the uploaded file", detail: (err as Error).message });
+    const msg = (err as Error).message;
+    let statusCode = 422;
+    let errorMsg = "Couldn't extract or scan the uploaded file";
+
+    if (msg.includes("symlink")) {
+      statusCode = 400;
+      errorMsg = "Archive contains symlinks, which are not allowed";
+    } else if (msg.includes("timeout")) {
+      statusCode = 413;
+      errorMsg = "Archive appears to be a decompression bomb or is too complex";
+    } else if (msg.includes("exceeds limit")) {
+      statusCode = 413;
+      errorMsg = msg; // Use the specific limit message
+    }
+
+    res.status(statusCode).json({ error: errorMsg, detail: msg });
   } finally {
     fs.unlinkSync(req.file.path);
     fs.rmSync(extractDir, { recursive: true, force: true });
