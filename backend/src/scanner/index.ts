@@ -5,6 +5,7 @@ import { scanDependencies } from "./dependencies";
 import { scanLegalPolicy } from "./legalPolicy";
 import { scanAIDisclosure } from "./aiDisclosure";
 import { scanAuthHeuristic } from "./authHeuristic";
+import { scanAuthAnalysis } from "./authAnalysisScan";
 import { scanWithSemgrep } from "./semgrepScanner";
 import { scanOSVVulnerabilities } from "./osvVulnerabilities";
 import { scanSecurityHeaders } from "./securityHeaders";
@@ -31,6 +32,7 @@ export function runScan(targetPath: string): ScanReport {
     scanLegalPolicy(targetRoot),
     scanAIDisclosure(files),
     scanAuthHeuristic(files, targetRoot),
+    scanAuthAnalysis(files, targetRoot),
     scanWithSemgrep(targetRoot),
     scanOSVVulnerabilities(targetRoot),
     scanSecurityHeaders(files, targetRoot),

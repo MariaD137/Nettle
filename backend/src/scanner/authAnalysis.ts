@@ -106,17 +106,19 @@ function detectFramework(code: string): FrameworkType {
  * Check if a route/function has authentication.
  */
 function hasAuthentication(code: string, framework: FrameworkType): { protected: boolean; method: string } {
-  const patterns =
-    {
-      express: EXPRESS_AUTH_PATTERNS,
-      django: DJANGO_AUTH_PATTERNS,
-      flask: FLASK_AUTH_PATTERNS,
-      fastapi: FASTAPI_AUTH_PATTERNS,
-      rails: RAILS_AUTH_PATTERNS,
-      nextjs: NEXTJS_AUTH_PATTERNS,
-    }[framework] || EXPRESS_AUTH_PATTERNS;
+  const patterns: Record<FrameworkType, RegExp[]> = {
+    express: EXPRESS_AUTH_PATTERNS,
+    django: DJANGO_AUTH_PATTERNS,
+    flask: FLASK_AUTH_PATTERNS,
+    fastapi: FASTAPI_AUTH_PATTERNS,
+    rails: RAILS_AUTH_PATTERNS,
+    nextjs: NEXTJS_AUTH_PATTERNS,
+    nuxt: NEXTJS_AUTH_PATTERNS,
+    unknown: EXPRESS_AUTH_PATTERNS,
+  };
+  const patternList = patterns[framework];
 
-  for (const pattern of patterns) {
+  for (const pattern of patternList) {
     if (pattern.test(code)) {
       return { protected: true, method: pattern.source };
     }
@@ -295,14 +297,16 @@ export function getAuthSeverity(route: RouteInfo): "critical" | "high" | "medium
  * Generate remediation for unprotected route.
  */
 export function generateAuthRemediation(route: RouteInfo, framework: FrameworkType): string {
-  const paths = {
+  const unknownAdvice = `Add authentication checks before handling requests. Verify user identity and permissions.`;
+  const paths: Record<FrameworkType, string> = {
     express: `Add auth middleware: \`app.get('${route.path}', verifyJWT, handler)\``,
     django: `Add @login_required decorator: \`@login_required\\ndef handler(request):\``,
     flask: `Add @login_required decorator: \`@app.route('${route.path}')\\n@login_required\\ndef handler():\``,
     fastapi: `Use Depends: \`@app.get('${route.path}')\\ndef handler(token: str = Depends(oauth2_scheme)):\``,
     rails: `Add before_action: \`before_action :authenticate_user, only: :action_name\``,
     nextjs: `Use middleware.ts: \`const response = NextResponse.next()\\nif (!token) redirect('/');\``,
-    unknown: `Add authentication checks before handling requests. Verify user identity and permissions.`,
+    nuxt: `Use server middleware: \`export default defineEventHandler((event) => { if (!event.context.auth) throw createError({ statusCode: 401 }); })\``,
+    unknown: unknownAdvice,
   };
 
   return paths[framework] || paths.unknown;
