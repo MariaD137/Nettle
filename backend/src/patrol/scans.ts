@@ -1,5 +1,5 @@
 import { db, newId } from "../db";
-import type { ScanReport } from "../scanner/types";
+import type { ScanReport, ScanStatus } from "../scanner/types";
 
 export interface StoredScan {
   id: string;
@@ -9,6 +9,7 @@ export interface StoredScan {
   criticalCount: number;
   cautionCount: number;
   clearCount: number;
+  status: ScanStatus;
   report: ScanReport;
 }
 
@@ -20,6 +21,7 @@ interface ScanRow {
   critical_count: number;
   caution_count: number;
   clear_count: number;
+  status: string;
   report_json: string;
 }
 
@@ -32,23 +34,27 @@ function toScan(row: ScanRow): StoredScan {
     criticalCount: row.critical_count,
     cautionCount: row.caution_count,
     clearCount: row.clear_count,
+    status: (row.status || "COMPLETED") as ScanStatus,
     report: JSON.parse(row.report_json),
   };
 }
 
-export function recordScan(projectId: string, report: ScanReport): StoredScan {
+export function recordScan(projectId: string, report: ScanReport, status: ScanStatus = "COMPLETED"): StoredScan {
+  const criticalCount = report.summary.critical + report.summary.high;
+  const cautionCount = report.summary.medium + report.summary.low + report.summary.info;
   const stored: StoredScan = {
     id: newId(),
     projectId,
     scannedAt: report.scannedAt,
     score: report.score,
-    criticalCount: report.summary.critical,
-    cautionCount: report.summary.caution,
+    criticalCount,
+    cautionCount,
     clearCount: report.summary.clear,
+    status: report.status || status, // Use report status if set, otherwise fall back to parameter
     report,
   };
   db.prepare(
-    "INSERT INTO scans (id, project_id, scanned_at, score, critical_count, caution_count, clear_count, report_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+    "INSERT INTO scans (id, project_id, scanned_at, score, critical_count, caution_count, clear_count, status, report_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
   ).run(
     stored.id,
     stored.projectId,
@@ -57,6 +63,7 @@ export function recordScan(projectId: string, report: ScanReport): StoredScan {
     stored.criticalCount,
     stored.cautionCount,
     stored.clearCount,
+    stored.status,
     JSON.stringify(report)
   );
   return stored;

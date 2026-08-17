@@ -21,7 +21,7 @@ test("recordScan persists a real scan report and round-trips it", () => {
 
   assert.equal(stored.projectId, projectId);
   assert.equal(stored.score, report.score);
-  assert.equal(stored.criticalCount, report.summary.critical);
+  assert.equal(stored.criticalCount, report.summary.critical + report.summary.high);
   assert.deepEqual(stored.report.findings, report.findings);
 });
 

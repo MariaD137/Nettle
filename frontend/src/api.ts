@@ -14,24 +14,43 @@ export interface Project {
   userId: string;
   name: string;
   apiKey: string;
+  url: string | null;
+  description: string | null;
+  environment: string | null;
+  archivedAt: string | null;
   createdAt: string;
 }
 
+export type Severity = "critical" | "high" | "medium" | "low" | "info";
+
 export interface Finding {
-  severity: "critical" | "caution";
+  severity: Severity;
   category: string;
   title: string;
   detail: string;
   file: string | null;
+  line: number | null;
+  remediation: string | null;
+}
+
+export interface ScanAccess {
+  tier: "preview" | "full";
+  fullReport: boolean;
+  totalFindings: number;
+  visibleFindings: number;
+  lockedFindings: number;
+  message: string | null;
 }
 
 export interface ScanReport {
   scannedAt: string;
   target: string;
   score: number;
+  scannerVersion: string;
+  access?: ScanAccess;
   findings: Finding[];
   passed: { category: string; title: string }[];
-  summary: { critical: number; caution: number; clear: number };
+  summary: { critical: number; high: number; medium: number; low: number; info: number; clear: number };
 }
 
 export interface StoredScan {
@@ -45,13 +64,16 @@ export interface StoredScan {
   report: ScanReport;
 }
 
+export type AlertStatus = "new" | "acknowledged" | "resolved" | "false_positive";
+
 export interface Alert {
   id: string;
   projectId: string;
   occurredAt: string;
-  severity: "critical" | "caution";
+  severity: "critical" | "high" | "medium" | "low";
   rule: string;
   message: string;
+  status: AlertStatus;
 }
 
 export interface BadgeState {
@@ -59,6 +81,103 @@ export interface BadgeState {
   label: string;
   lastScannedAt: string | null;
   score: number | null;
+}
+
+export interface AlertCounts {
+  new: number;
+  acknowledged: number;
+  resolved: number;
+  false_positive: number;
+}
+
+export interface ProjectDetail {
+  project: Project;
+  badge: BadgeState;
+  latestScan: StoredScan | null;
+  alertCounts: AlertCounts;
+}
+
+export interface QuotaState {
+  limit: number;
+  used: number;
+  remaining: number;
+  periodStart: string;
+  periodEnd: string;
+  exhausted: boolean;
+}
+
+export interface OverviewData {
+  quota: QuotaState | null;
+  totalProjects: number;
+  totalCriticalFindings: number;
+  totalHighFindings: number;
+  totalNewAlerts: number;
+  latestScore: number | null;
+  latestScanAt: string | null;
+  projects: {
+    id: string;
+    name: string;
+    badge: BadgeState;
+    latestScore: number | null;
+    lastScannedAt: string | null;
+    newAlerts: number;
+  }[];
+}
+
+export type FindingStatus = "open" | "in_progress" | "resolved" | "false_positive" | "accepted_risk";
+
+export interface StoredFindingStatus {
+  id: string;
+  projectId: string;
+  findingHash: string;
+  status: FindingStatus;
+  notes: string | null;
+  updatedAt: string;
+}
+
+export interface SessionInfo {
+  tokenPrefix: string;
+  createdAt: string;
+  expiresAt: string;
+  current: boolean;
+}
+
+export interface CustomRule {
+  id: string;
+  project_id: string;
+  name: string;
+  description?: string;
+  pattern_type: "exact" | "regex" | "threshold" | "combination";
+  pattern_value: string;
+  weight: number;
+  severity: "critical" | "high" | "medium" | "low";
+  enabled: boolean;
+  version: number;
+  created_by: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CustomRuleInput {
+  name: string;
+  description?: string;
+  pattern_type: CustomRule["pattern_type"];
+  pattern_value: string;
+  weight: number;
+  severity: CustomRule["severity"];
+  enabled: boolean;
+}
+
+export interface ScanComparison {
+  from: { id: string; score: number; scannedAt: string };
+  to: { id: string; score: number; scannedAt: string };
+  scoreDelta: number;
+  fixed: number;
+  new: number;
+  remaining: number;
+  fixedFindings: Finding[];
+  newFindings: Finding[];
+  fullReport: boolean;
 }
 
 class ApiError extends Error {
@@ -86,16 +205,24 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   if (options.body && !(options.body instanceof FormData)) headers["Content-Type"] = "application/json";
 
   const res = await fetch(`${API_BASE}${path}`, { ...options, headers });
+  if (res.status === 204) return undefined as T;
   const isJson = res.headers.get("content-type")?.includes("application/json");
   const body = isJson ? await res.json() : null;
 
   if (!res.ok) {
+    // The API is the real paywall; this keeps a client that's holding stale
+    // user data (subscription cancelled in another tab, webhook landed after
+    // load) from sitting on a dashboard it can no longer fetch.
+    if (res.status === 402 && body?.subscriptionRequired && window.location.pathname !== "/subscribe") {
+      window.location.assign("/subscribe");
+    }
     throw new ApiError(res.status, body?.error ?? `Request failed with status ${res.status}`);
   }
   return body as T;
 }
 
 export const api = {
+  // Auth
   signup: (email: string, password: string) =>
     request<{ token: string; user: User }>("/api/auth/signup", {
       method: "POST",
@@ -112,21 +239,153 @@ export const api = {
 
   me: () => request<{ user: User }>("/api/auth/me"),
 
-  listProjects: () => request<{ projects: Project[] }>("/api/projects"),
+  forgotPassword: (email: string) =>
+    request<{ message: string }>("/api/auth/forgot-password", {
+      method: "POST",
+      body: JSON.stringify({ email }),
+    }),
 
-  createProject: (name: string) =>
-    request<Project>("/api/projects", { method: "POST", body: JSON.stringify({ name }) }),
+  resetPassword: (token: string, password: string) =>
+    request<{ message: string }>("/api/auth/reset-password", {
+      method: "POST",
+      body: JSON.stringify({ token, password }),
+    }),
 
+  changePassword: (currentPassword: string, newPassword: string) =>
+    request<{ message: string }>("/api/auth/change-password", {
+      method: "POST",
+      body: JSON.stringify({ currentPassword, newPassword }),
+    }),
+
+  changeEmail: (email: string, password: string) =>
+    request<{ user: User }>("/api/auth/email", {
+      method: "PATCH",
+      body: JSON.stringify({ email, password }),
+    }),
+
+  listSessions: () =>
+    request<{ sessions: SessionInfo[] }>("/api/auth/sessions"),
+
+  revokeSession: (tokenPrefix: string) =>
+    request<void>(`/api/auth/sessions/${tokenPrefix}`, { method: "DELETE" }),
+
+  revokeAllSessions: () =>
+    request<{ token: string; message: string }>("/api/auth/sessions/revoke-all", { method: "POST" }),
+
+  deleteAccount: (password: string) =>
+    request<void>("/api/auth/account", {
+      method: "DELETE",
+      body: JSON.stringify({ password }),
+    }),
+
+  // Dashboard
+  overview: () => request<OverviewData>("/api/overview"),
+
+  // Projects
+  listProjects: (includeArchived = false) =>
+    request<{ projects: Project[] }>(`/api/projects${includeArchived ? "?includeArchived=true" : ""}`),
+
+  createProject: (name: string, opts?: { url?: string; description?: string; environment?: string }) =>
+    request<Project>("/api/projects", { method: "POST", body: JSON.stringify({ name, ...opts }) }),
+
+  getProject: (id: string) => request<ProjectDetail>(`/api/projects/${id}`),
+
+  updateProject: (id: string, updates: { name?: string; url?: string; description?: string; environment?: string }) =>
+    request<Project>(`/api/projects/${id}`, { method: "PATCH", body: JSON.stringify(updates) }),
+
+  deleteProject: (id: string) =>
+    request<void>(`/api/projects/${id}`, { method: "DELETE" }),
+
+  archiveProject: (id: string) =>
+    request<Project>(`/api/projects/${id}/archive`, { method: "POST" }),
+
+  restoreProject: (id: string) =>
+    request<Project>(`/api/projects/${id}/restore`, { method: "POST" }),
+
+  rotateApiKey: (id: string) =>
+    request<Project>(`/api/projects/${id}/rotate-key`, { method: "POST" }),
+
+  // Alerts
   getAlerts: (projectId: string) =>
     request<{ project: { id: string; name: string }; alerts: Alert[] }>(`/api/projects/${projectId}/alerts`),
 
+  updateAlertStatus: (projectId: string, alertId: string, status: AlertStatus) =>
+    request<{ alert: Alert }>(`/api/projects/${projectId}/alerts/${alertId}`, {
+      method: "PATCH",
+      body: JSON.stringify({ status }),
+    }),
+
+  // Scans
   getScans: (projectId: string) =>
     request<{ project: { id: string; name: string }; scans: StoredScan[] }>(`/api/projects/${projectId}/scans`),
 
+  compareScans: (projectId: string, from?: string, to?: string) => {
+    const params = new URLSearchParams();
+    if (from) params.set("from", from);
+    if (to) params.set("to", to);
+    const qs = params.toString();
+    return request<ScanComparison>(`/api/projects/${projectId}/scans/compare${qs ? `?${qs}` : ""}`);
+  },
+
+  // Fetched rather than linked: the export route is bearer-authenticated, and
+  // a plain <a href> can't carry the Authorization header. Downloading through
+  // fetch also lets a 402 surface as a real upgrade prompt instead of dumping
+  // a JSON error into a new tab.
+  downloadScanReport: async (projectId: string, scanId: string): Promise<void> => {
+    const token = getToken();
+    const res = await fetch(`${API_BASE}/api/projects/${projectId}/scans/${scanId}/export`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => null);
+      throw new ApiError(res.status, body?.error ?? `Export failed with status ${res.status}`);
+    }
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `nettle-report-${scanId}.json`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  },
+
+  // Findings
+  listFindingStatuses: (projectId: string) =>
+    request<{ findingStatuses: StoredFindingStatus[] }>(`/api/projects/${projectId}/findings`),
+
+  updateFindingStatus: (projectId: string, findingHash: string, status: FindingStatus, notes?: string) =>
+    request<{ findingStatus: StoredFindingStatus }>(`/api/projects/${projectId}/findings/${findingHash}`, {
+      method: "PATCH",
+      body: JSON.stringify({ status, notes }),
+    }),
+
+  // Custom rules
+  listCustomRules: (projectId: string) =>
+    request<{ rules: CustomRule[] }>(`/api/custom-rules/${projectId}`),
+
+  createCustomRule: (projectId: string, input: CustomRuleInput) =>
+    request<CustomRule>(`/api/custom-rules/${projectId}`, {
+      method: "POST",
+      body: JSON.stringify(input),
+    }),
+
+  updateCustomRule: (projectId: string, ruleId: string, input: Partial<CustomRuleInput>) =>
+    request<CustomRule>(`/api/custom-rules/${projectId}/${ruleId}`, {
+      method: "PATCH",
+      body: JSON.stringify(input),
+    }),
+
+  deleteCustomRule: (projectId: string, ruleId: string) =>
+    request<void>(`/api/custom-rules/${projectId}/${ruleId}`, { method: "DELETE" }),
+
+  // Badge
   getBadge: (projectId: string) => request<BadgeState>(`/api/projects/${projectId}/badge.json`),
 
   badgeSvgUrl: (projectId: string) => `${API_BASE}/api/projects/${projectId}/badge.svg`,
 
+  // Scan upload
   scanCodebase: async (file: File, apiKey?: string): Promise<ScanReport> => {
     const form = new FormData();
     form.append("codebase", file);
@@ -135,6 +394,35 @@ export const api = {
     return request<ScanReport>("/api/scans", { method: "POST", body: form, headers });
   },
 
+  scanRepo: (repoUrl: string, opts?: { branch?: string; apiKey?: string }) =>
+    request<ScanReport>("/api/scans/repo", {
+      method: "POST",
+      body: JSON.stringify({ repoUrl, branch: opts?.branch, apiKey: opts?.apiKey }),
+    }),
+
+  // Analytics
+  getAnalyticsDashboard: (projectId: string, timeframe: string = "24h") =>
+    request<any>(`/api/analytics/${projectId}/dashboard?timeframe=${timeframe}`),
+
+  getAnalyticsBaselines: (projectId: string, metric: string = "request_rate", period: string = "hourly", hour?: number) => {
+    let query = `metric=${metric}&period=${period}`;
+    if (hour !== undefined) query += `&hour=${hour}`;
+    return request<any>(`/api/analytics/${projectId}/baselines?${query}`);
+  },
+
+  getAnomalies: (projectId: string, limit: number = 50, scoreMin: number = 0.7) =>
+    request<any>(`/api/analytics/${projectId}/anomalies?limit=${limit}&score_min=${scoreMin}`),
+
+  getModelStatus: (projectId: string) =>
+    request<any>(`/api/analytics/${projectId}/model-status`),
+
+  calculateBaselines: (projectId: string, hoursBack: number = 24) =>
+    request<any>(`/api/analytics/${projectId}/calculate-baselines`, {
+      method: "POST",
+      body: JSON.stringify({ hoursBack }),
+    }),
+
+  // Billing
   createCheckoutSession: (plan: "tier1" | "tier2") =>
     request<{ url: string }>("/api/billing/checkout-session", {
       method: "POST",

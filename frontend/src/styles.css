@@ -1,16 +1,26 @@
 :root {
-  --bg: #f1ecdd;
-  --surface: #fbf8ee;
-  --surface-2: #f5f0e1;
-  --ink: #20242b;
-  --muted: #6b6455;
-  --line: #cdc4aa;
-  --line-strong: #a99e7e;
-  --accent: #2c4a5c;
-  --accent-soft: #dce6e9;
+  /* White ground. With the page and the cards both white, the borders do all
+     the separating, so the neutrals are mixed cool — a slight blue bias —
+     to sit under royal blue rather than fight it with leftover warmth. */
+  --bg: #ffffff;
+  --surface: #ffffff;
+  --surface-2: #f5f7fa;
+  --ink: #171a21;
+  --muted: #5c6370;
+  --line: #e3e6ec;
+  --line-strong: #c4cad6;
+  /* Two weights of royal blue. The mark runs at full vividness because it's
+     a large graphic; the UI accent is deepened a step so button and link
+     text clears WCAG AA on white with headroom, which true royal only just
+     manages. */
+  --accent: #3050c8;
+  --accent-soft: #e4e9fb;
+  --brand-mark: #4169e1;
   --sev-critical: #b23a2e;
+  --sev-high: #c45a2f;
   --sev-warning: #b9822a;
   --sev-good: #3f7a52;
+  --sev-info: #5a7a8a;
   --serif: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
   --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
   --mono: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
@@ -25,11 +35,14 @@
     --muted: #9c9484;
     --line: #333b44;
     --line-strong: #4a5561;
-    --accent: #79b0d1;
-    --accent-soft: #233642;
+    --accent: #8aa4f2;
+    --accent-soft: #1e2748;
+    --brand-mark: #8aa4f2;
     --sev-critical: #e17667;
+    --sev-high: #e89060;
     --sev-warning: #e3ad5c;
     --sev-good: #69bb8e;
+    --sev-info: #7ab0c4;
   }
 }
 
@@ -59,11 +72,45 @@ a {
   margin-bottom: 32px;
 }
 .brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
   font-family: var(--serif);
   font-weight: 600;
   font-size: 20px;
   text-decoration: none;
   color: var(--ink);
+}
+.nettle-logo {
+  color: var(--brand-mark);
+  display: block;
+}
+
+/* Signed-out landing: the mark leads, the form sits under it. */
+.auth-landing {
+  max-width: 400px;
+  margin: 0 auto;
+  padding: 56px 20px 80px;
+}
+.auth-header {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 14px;
+  margin-bottom: 28px;
+}
+.auth-wordmark {
+  font-family: var(--serif);
+  font-size: 34px;
+  font-weight: 600;
+  margin: 0;
+  letter-spacing: -0.01em;
+}
+.auth-tagline {
+  margin: 0;
+  max-width: 34ch;
+  line-height: 1.55;
 }
 .topbar-right {
   display: flex;
@@ -140,6 +187,14 @@ button.secondary,
   color: var(--accent);
   border: 1px solid var(--line-strong);
 }
+button.small {
+  padding: 5px 10px;
+  font-size: 12px;
+}
+button.destructive {
+  background: var(--sev-critical);
+  color: #fff;
+}
 
 .error-banner {
   background: color-mix(in srgb, var(--sev-critical) 12%, var(--surface));
@@ -151,6 +206,17 @@ button.secondary,
   margin-bottom: 14px;
 }
 
+.success-banner {
+  background: color-mix(in srgb, var(--sev-good) 12%, var(--surface));
+  border: 1px solid var(--sev-good);
+  color: var(--sev-good);
+  padding: 10px 14px;
+  border-radius: 6px;
+  font-size: 13px;
+  margin-bottom: 14px;
+}
+
+/* Pills and badges */
 .pill {
   display: inline-flex;
   align-items: center;
@@ -184,6 +250,7 @@ button.secondary,
   background: currentColor;
 }
 
+/* Project list */
 .project-row {
   display: flex;
   align-items: center;
@@ -196,16 +263,45 @@ button.secondary,
 .project-row:last-child {
   border-bottom: none;
 }
+.project-row-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
 .project-row-name {
   font-weight: 600;
 }
+.alert-count {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--sev-critical);
+  background: color-mix(in srgb, var(--sev-critical) 12%, transparent);
+  padding: 2px 8px;
+  border-radius: 10px;
+}
 
+/* Findings */
 .finding {
   border: 1px solid var(--line);
   border-radius: 6px;
   padding: 12px 14px;
   margin-bottom: 8px;
   background: var(--surface);
+}
+.finding-critical {
+  border-left: 3px solid var(--sev-critical);
+}
+.finding-high {
+  border-left: 3px solid var(--sev-high);
+}
+.finding-medium {
+  border-left: 3px solid var(--sev-warning);
+}
+.finding-low {
+  border-left: 3px solid var(--sev-info);
+}
+.finding-info {
+  border-left: 3px solid var(--muted);
 }
 .finding-top {
   display: flex;
@@ -228,6 +324,39 @@ button.secondary,
   margin: 5px 0 0;
   line-height: 1.5;
 }
+.finding-file {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--accent);
+  margin: 4px 0 0;
+}
+.remediation {
+  margin-top: 10px;
+  padding: 10px 12px;
+  background: var(--surface-2);
+  border-radius: 4px;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--ink);
+}
+
+/* Passed checks */
+.passed-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--line);
+  font-size: 13px;
+}
+.passed-check:last-child {
+  border-bottom: none;
+}
+.passed-icon {
+  color: var(--sev-good);
+  font-weight: 700;
+  font-size: 14px;
+}
 
 .code-snippet {
   background: var(--surface-2);
@@ -240,12 +369,61 @@ button.secondary,
   white-space: pre;
 }
 
+/* Score display */
 .score-num {
   font-family: var(--serif);
   font-weight: 700;
   font-size: 40px;
 }
+.report-header {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+}
+.score-block {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+}
+.score-label {
+  font-weight: 700;
+  font-size: 14px;
+  padding: 4px 12px;
+  border-radius: 4px;
+}
+.score-ready {
+  background: color-mix(in srgb, var(--sev-good) 18%, transparent);
+  color: var(--sev-good);
+}
+.score-review {
+  background: color-mix(in srgb, var(--sev-warning) 18%, transparent);
+  color: var(--sev-warning);
+}
+.score-work {
+  background: color-mix(in srgb, var(--sev-high) 18%, transparent);
+  color: var(--sev-high);
+}
+.score-bad {
+  background: color-mix(in srgb, var(--sev-critical) 18%, transparent);
+  color: var(--sev-critical);
+}
+.score-counts {
+  display: flex;
+  gap: 10px;
+  font-size: 12px;
+  font-family: var(--mono);
+}
+.count-critical { color: var(--sev-critical); }
+.count-high { color: var(--sev-high); }
+.count-medium { color: var(--sev-warning); }
+.count-low { color: var(--sev-info); }
+.count-clear { color: var(--sev-good); }
+.score-up { color: var(--sev-good); font-weight: 600; font-size: 13px; }
+.score-down { color: var(--sev-critical); font-weight: 600; font-size: 13px; }
 
+/* Tabs */
 .tabs {
   display: flex;
   gap: 4px;
@@ -261,8 +439,737 @@ button.secondary,
   border-bottom: 2px solid transparent;
   background: none;
   border-radius: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
 }
 .tab.active {
   color: var(--accent);
   border-bottom-color: var(--accent);
+}
+.tab-badge {
+  background: var(--sev-critical);
+  color: #fff;
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 8px;
+  font-weight: 700;
+}
+
+/* Alert status */
+.status-pill {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+.status-new {
+  background: color-mix(in srgb, var(--sev-critical) 15%, transparent);
+  color: var(--sev-critical);
+}
+.status-acknowledged {
+  background: color-mix(in srgb, var(--sev-warning) 15%, transparent);
+  color: var(--sev-warning);
+}
+.status-resolved {
+  background: color-mix(in srgb, var(--sev-good) 15%, transparent);
+  color: var(--sev-good);
+}
+.status-false_positive {
+  background: var(--surface-2);
+  color: var(--muted);
+}
+.alert-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
+.filter-select {
+  padding: 6px 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 13px;
+}
+.field select {
+  padding: 9px 11px;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 14px;
+}
+.link-btn {
+  background: none;
+  border: none;
+  color: var(--accent);
+  font-size: 13px;
+  cursor: pointer;
+  padding: 0;
+  font-weight: 600;
+}
+.status-open {
+  background: color-mix(in srgb, var(--sev-critical) 15%, transparent);
+  color: var(--sev-critical);
+}
+.status-in_progress {
+  background: color-mix(in srgb, var(--sev-warning) 15%, transparent);
+  color: var(--sev-warning);
+}
+.status-accepted_risk {
+  background: var(--surface-2);
+  color: var(--muted);
+}
+.a.small.secondary {
+  padding: 5px 10px;
+  font-size: 12px;
+}
+
+/* Stats grid (overview dashboard) */
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 12px;
+  margin-bottom: 16px;
+}
+.stat-card {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 18px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.stat-value {
+  font-family: var(--serif);
+  font-weight: 700;
+  font-size: 32px;
+  line-height: 1;
+}
+.stat-critical { color: var(--sev-critical); }
+.stat-warning { color: var(--sev-warning); }
+.stat-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink);
+}
+.stat-sublabel {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+/* Settings */
+.settings-link {
+  text-decoration: none;
+  font-weight: 600;
+}
+.settings-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--line);
+  font-size: 14px;
+}
+.settings-row:last-child {
+  border-bottom: none;
+}
+.settings-label {
+  color: var(--muted);
+  font-size: 13px;
+}
+.plan-badge {
+  font-size: 12px;
+  font-weight: 600;
+  padding: 2px 10px;
+  border-radius: 10px;
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.scan-upload-row {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  margin-bottom: 16px;
+}
+/* A file input carries an intrinsic width that won't shrink, so on a phone
+   the row becomes a column rather than pushing the Scan button off-screen. */
+@media (max-width: 700px) {
+  .scan-upload-row {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 12px;
+  }
+  .scan-upload-row input[type="file"] {
+    max-width: 100%;
+  }
+  .project-row {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+}
+
+/* Scan method toggle */
+.scan-method-tabs {
+  display: flex;
+  gap: 0;
+  margin-bottom: 16px;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  overflow: hidden;
+  width: fit-content;
+}
+.scan-method-tab {
+  padding: 7px 16px;
+  font-size: 13px;
+  font-weight: 600;
+  background: transparent;
+  color: var(--muted);
+  border: none;
+  border-radius: 0;
+  cursor: pointer;
+}
+.scan-method-tab.active {
+  background: var(--accent);
+  color: var(--surface);
+}
+
+/* Paywall */
+.paywall-intro {
+  text-align: center;
+  max-width: 520px;
+  margin: 12px auto 28px;
+}
+.paywall-intro h1 {
+  margin-bottom: 10px;
+}
+.paywall-intro p {
+  line-height: 1.6;
+}
+.plan-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 16px;
+  align-items: start;
+}
+.plan-card {
+  position: relative;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 24px 22px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.plan-card-highlight {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+.plan-card h2 {
+  margin: 0;
+}
+.plan-flag {
+  position: absolute;
+  top: -10px;
+  right: 18px;
+  background: var(--accent);
+  color: var(--surface);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 3px 10px;
+  border-radius: 10px;
+}
+.plan-tagline {
+  margin: -6px 0 0;
+  font-size: 13.5px;
+  color: var(--muted);
+  line-height: 1.5;
+}
+.plan-price {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--line);
+}
+.plan-price-amount {
+  font-family: var(--serif);
+  font-weight: 700;
+  font-size: 38px;
+  line-height: 1;
+}
+.plan-features {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  flex: 1;
+}
+.plan-features li {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  font-size: 13.5px;
+  line-height: 1.45;
+}
+
+/* ===========================================================================
+   MOBILE APP SHELL
+   ---------------------------------------------------------------------------
+   On a phone the app stops presenting as a document and starts presenting as
+   an app: a grouped-list ground (grey page, white sections) instead of
+   bordered cards floating on white, a pinned app bar, and a tab bar in the
+   thumb zone instead of a row of underlined text links at the top.
+   =========================================================================== */
+
+:root {
+  --m-page: #f2f3f7;
+  --m-chrome: rgba(255, 255, 255, 0.86);
+  --m-sep: #e6e8ee;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --m-page: #0d1015;
+    --m-chrome: rgba(20, 25, 32, 0.88);
+    --m-sep: #262d36;
+  }
+}
+
+@media (max-width: 700px) {
+  body {
+    background: var(--m-page);
+    /* Momentum scrolling, and no grey flash on every tap. */
+    -webkit-tap-highlight-color: transparent;
+    overscroll-behavior-y: contain;
+  }
+
+  /* --- App bar ---------------------------------------------------------- */
+  .m-appbar {
+    position: sticky;
+    top: 0;
+    z-index: 50;
+    background: var(--m-chrome);
+    backdrop-filter: saturate(180%) blur(14px);
+    -webkit-backdrop-filter: saturate(180%) blur(14px);
+    border-bottom: 1px solid var(--m-sep);
+    padding-top: env(safe-area-inset-top);
+  }
+  .m-appbar-inner {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    height: 52px;
+    padding: 0 8px;
+  }
+  .m-back {
+    background: none;
+    border: none;
+    color: var(--accent);
+    padding: 8px;
+    min-width: 40px;
+    min-height: 40px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 10px;
+  }
+  .m-appbar-spacer,
+  .m-appbar-action {
+    min-width: 40px;
+    display: flex;
+    justify-content: flex-end;
+  }
+  .m-appbar-titles {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    line-height: 1.15;
+  }
+  .m-appbar-title {
+    font-family: var(--sans);
+    font-size: 16px;
+    font-weight: 650;
+    color: var(--ink);
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .m-appbar-subtitle {
+    font-size: 11.5px;
+    color: var(--muted);
+    margin-top: 1px;
+  }
+
+  /* --- Bottom tab bar --------------------------------------------------- */
+  .m-bottomnav {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 50;
+    display: flex;
+    background: var(--m-chrome);
+    backdrop-filter: saturate(180%) blur(14px);
+    -webkit-backdrop-filter: saturate(180%) blur(14px);
+    border-top: 1px solid var(--m-sep);
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+  .m-navitem {
+    flex: 1;
+    background: none;
+    border: none;
+    border-radius: 0;
+    padding: 7px 2px 6px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 3px;
+    color: var(--muted);
+    font-weight: 500;
+    min-height: 52px;
+  }
+  .m-navitem.active {
+    color: var(--accent);
+  }
+  .m-navicon {
+    position: relative;
+    display: flex;
+  }
+  .m-navlabel {
+    font-size: 10.5px;
+    letter-spacing: -0.01em;
+  }
+  .m-navbadge {
+    position: absolute;
+    top: -4px;
+    right: -8px;
+    background: var(--sev-critical);
+    color: #fff;
+    font-size: 9.5px;
+    font-weight: 700;
+    line-height: 1;
+    padding: 2.5px 5px;
+    border-radius: 9px;
+  }
+
+  /* Screens that carry a bottom bar need room so the last row isn't buried. */
+  .m-has-bottomnav {
+    padding-bottom: calc(70px + env(safe-area-inset-bottom));
+  }
+
+  /* --- Grouped sections ------------------------------------------------- */
+  .shell {
+    padding: 0 0 40px;
+    max-width: none;
+  }
+  .card {
+    border-radius: 14px;
+    border: none;
+    background: var(--surface);
+    margin: 0 12px 14px;
+    padding: 16px 16px;
+  }
+  .m-section-title {
+    font-family: var(--sans);
+    font-size: 12px;
+    font-weight: 650;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin: 22px 26px 8px;
+  }
+
+  /* Tappable list rows read as rows, with a chevron and a full-width press
+     target, rather than as links floating inside a box. */
+  .m-list {
+    background: var(--surface);
+    border-radius: 14px;
+    margin: 0 12px 14px;
+    overflow: hidden;
+  }
+  .m-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    width: 100%;
+    padding: 14px 16px;
+    background: none;
+    border: none;
+    border-radius: 0;
+    text-align: left;
+    text-decoration: none;
+    color: var(--ink);
+    font-size: 15px;
+    min-height: 56px;
+    position: relative;
+  }
+  .m-row + .m-row::before {
+    content: "";
+    position: absolute;
+    top: 0;
+    left: 16px;
+    right: 0;
+    height: 1px;
+    background: var(--m-sep);
+  }
+  .m-row:active {
+    background: var(--surface-2);
+  }
+  .m-row-main {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+  }
+  .m-row-title {
+    font-weight: 600;
+    font-size: 15.5px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .m-row-sub {
+    font-size: 12.5px;
+    color: var(--muted);
+  }
+  .m-chevron {
+    color: var(--line-strong);
+    flex-shrink: 0;
+    display: flex;
+  }
+
+  /* Headings shed the editorial serif on mobile — a phone app reads as UI,
+     not as a printed page. */
+  .card h2,
+  .m-list h2 {
+    font-family: var(--sans);
+    font-size: 15px;
+    font-weight: 650;
+  }
+
+  /* 16px is the threshold below which iOS Safari zooms the viewport on
+     focus, which then leaves the page stranded mid-zoom. */
+  .field input,
+  .field select,
+  .filter-select,
+  input,
+  select,
+  textarea {
+    font-size: 16px;
+  }
+
+  /* Full-width primary actions, the way app forms behave. */
+  .card form > button[type="submit"],
+  .m-fullwidth {
+    width: 100%;
+  }
+
+  /* --- Compact stat strip ----------------------------------------------- */
+  /* Four numbers across one row rather than four desktop cards stacked into
+     a tall wall the customer has to scroll past to reach their projects. */
+  .m-statstrip {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    background: var(--surface);
+    border-radius: 14px;
+    margin: 14px 12px 4px;
+    padding: 14px 4px;
+  }
+  .m-stat {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 3px;
+    position: relative;
+  }
+  .m-stat + .m-stat::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    top: 12%;
+    height: 76%;
+    width: 1px;
+    background: var(--m-sep);
+  }
+  .m-stat-value {
+    font-family: var(--serif);
+    font-weight: 700;
+    font-size: 25px;
+    line-height: 1;
+  }
+  .m-stat-label {
+    font-size: 11px;
+    color: var(--muted);
+  }
+
+  /* --- Signed-out + paywall --------------------------------------------- */
+  .auth-landing {
+    padding: 34px 20px 60px;
+  }
+  .paywall-intro {
+    margin: 18px 16px 20px;
+  }
+  .paywall-intro h1 {
+    font-size: 22px;
+  }
+  .plan-grid {
+    grid-template-columns: 1fr;
+    gap: 14px;
+    margin: 0 12px;
+  }
+  .plan-card {
+    border-radius: 14px;
+  }
+  /* The paywall keeps the desktop topbar (it has no bottom nav), so it needs
+     its own breathing room rather than the shell's zeroed padding. */
+  .paywall-shell {
+    padding: 14px 0 40px;
+  }
+  .paywall-shell .topbar {
+    padding: 0 16px;
+  }
+}
+
+/* Responsive
+   ---------------------------------------------------------------------------
+   Two separate concerns, deliberately keyed off different things:
+
+   - max-width handles layout that runs out of room. The project tab strip is
+     the load-bearing case: six tabs measure ~485px, so on a phone the last
+     two used to sit off-screen entirely, unreachable rather than merely ugly.
+     They wrap instead of scrolling horizontally, because a scroll strip hides
+     tabs that a customer has no reason to suspect exist.
+
+   - pointer: coarse handles touch targets, and only fires on touch devices,
+     so a narrow desktop window keeps its compact controls. */
+
+@media (max-width: 700px) {
+  .shell,
+  .auth-landing {
+    padding: 20px 14px 60px;
+  }
+  h1 {
+    font-size: 23px;
+  }
+  h2 {
+    font-size: 16px;
+  }
+  .card {
+    padding: 16px 15px;
+  }
+
+  .topbar {
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-bottom: 22px;
+  }
+  .topbar-right {
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+
+  /* The fix for the unreachable tabs. */
+  .tabs {
+    flex-wrap: wrap;
+    gap: 2px;
+  }
+  .tab {
+    padding: 8px 11px;
+    font-size: 12.5px;
+  }
+
+  .stats-grid {
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+  }
+  .stat-card {
+    padding: 14px 15px;
+  }
+  .stat-value {
+    font-size: 26px;
+  }
+
+  .report-header,
+  .score-counts,
+  .alert-actions,
+  .finding-top {
+    flex-wrap: wrap;
+  }
+  .report-header {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  /* Label-and-control rows read as two stacked blocks rather than a squeezed
+     pair once there's no horizontal room to separate them. */
+  .settings-row {
+    flex-direction: column;
+    align-items: flex-start !important;
+    gap: 10px;
+  }
+
+  /* Long unbroken strings — API keys, session tokens, emails — must not push
+     the page sideways. */
+  .settings-row,
+  .finding-detail,
+  .stat-label,
+  .topbar-right {
+    overflow-wrap: anywhere;
+  }
+
+  .auth-wordmark {
+    font-size: 28px;
+  }
+  .plan-card {
+    padding: 20px 17px;
+  }
+  .plan-price-amount {
+    font-size: 32px;
+  }
+}
+
+@media (pointer: coarse) {
+  button,
+  .button,
+  select,
+  .filter-select,
+  .field input,
+  .field select {
+    min-height: 42px;
+  }
+  button.small,
+  .button.small {
+    min-height: 36px;
+    padding: 7px 12px;
+  }
+  .tab {
+    min-height: 40px;
+  }
+  /* Inline text buttons stay inline — a 42px box around them would break the
+     sentence they sit in — but still get a usable strip to hit. */
+  .link-btn {
+    min-height: 32px;
+  }
+  .scan-method-tab {
+    min-height: 40px;
+  }
+  /* The wordmark doubles as the "back to dashboard" link on every signed-in
+     page, so it needs a thumb-sized strip rather than the 23px the type
+     alone gives it. */
+  .brand {
+    min-height: 40px;
+  }
 }
