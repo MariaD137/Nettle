@@ -9,7 +9,10 @@ import type { Finding, Pass } from "./types";
  * findings describe what the Dockerfile text says, not the built image.
  */
 
-const SECRET_LIKE_NAME = /\b(API_KEY|SECRET|PASSWORD|TOKEN|PRIVATE_KEY|ACCESS_KEY|AWS_SECRET|CREDENTIAL)\b/i;
+// `_` doesn't break a \b word boundary, so a plain \b pattern would miss the
+// most common real naming style (STRIPE_SECRET_KEY, DB_PASSWORD, ...). Treat
+// underscore and string start/end as delimiters instead.
+const SECRET_LIKE_NAME = /(?:^|_)(API_KEY|SECRET|PASSWORD|TOKEN|PRIVATE_KEY|ACCESS_KEY|AWS_SECRET|CREDENTIAL)(?:_|$)/i;
 const LOOKS_LIKE_LITERAL_VALUE = /^[^$][\w\-./+=]{6,}$/; // not empty, not starting with $ (a var reference)
 
 function isDockerfile(filename: string): boolean {
