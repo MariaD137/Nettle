@@ -247,6 +247,40 @@ db.exec(`
     ON scan_usage(user_id, occurred_at);
 `);
 
+// Phase 14: Integration Ecosystem (Webhooks)
+db.exec(`
+  CREATE TABLE IF NOT EXISTS webhooks (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL,
+    service TEXT NOT NULL,
+    webhook_url TEXT NOT NULL,
+    is_active INTEGER NOT NULL DEFAULT 1,
+    event_types TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY (project_id) REFERENCES projects(id)
+  );
+  CREATE INDEX IF NOT EXISTS idx_webhooks_project_service
+    ON webhooks(project_id, service);
+
+  CREATE TABLE IF NOT EXISTS webhook_events (
+    id TEXT PRIMARY KEY,
+    webhook_id TEXT NOT NULL,
+    event_type TEXT NOT NULL,
+    payload TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending',
+    attempt_count INTEGER NOT NULL DEFAULT 0,
+    last_error TEXT,
+    created_at TEXT NOT NULL,
+    sent_at TEXT,
+    FOREIGN KEY (webhook_id) REFERENCES webhooks(id)
+  );
+  CREATE INDEX IF NOT EXISTS idx_webhook_events_status
+    ON webhook_events(status, created_at DESC);
+  CREATE INDEX IF NOT EXISTS idx_webhook_events_webhook
+    ON webhook_events(webhook_id, created_at DESC);
+`);
+
 // Anchor for the monthly scan allowance. Set when a subscription first goes
 // active and then left alone — the current period is derived by rolling this
 // date forward a month at a time, which is how Stripe's own billing cycle

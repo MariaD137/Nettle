@@ -408,3 +408,196 @@ export function getAnomalies(projectId: string, limit: number = 50, scoreMin: nu
     is_anomaly: row.is_anomaly === 1,
   }));
 }
+
+// LSTM (Long Short-Term Memory) for time-series anomaly detection
+export class LSTM {
+  private inputSize: number;
+  private hiddenSize: number;
+  private outputSize: number;
+  private sequenceLength: number;
+  private weights: Map<string, number[][]>;
+  private trained: boolean = false;
+
+  constructor(inputSize: number = 1, hiddenSize: number = 10, sequenceLength: number = 12) {
+    this.inputSize = inputSize;
+    this.hiddenSize = hiddenSize;
+    this.outputSize = 1;
+    this.sequenceLength = sequenceLength;
+    this.weights = new Map();
+    this.initWeights();
+  }
+
+  private initWeights(): void {
+    const initMatrix = (rows: number, cols: number) =>
+      Array(rows).fill(null).map(() => Array(cols).fill(0).map(() => Math.random() - 0.5));
+
+    this.weights.set('Wxh', initMatrix(this.hiddenSize, this.inputSize));
+    this.weights.set('Whh', initMatrix(this.hiddenSize, this.hiddenSize));
+    this.weights.set('Why', initMatrix(this.outputSize, this.hiddenSize));
+    this.weights.set('bh', Array(this.hiddenSize).fill(0.1));
+    this.weights.set('by', Array(this.outputSize).fill(0.1));
+  }
+
+  train(sequences: number[][]): void {
+    if (sequences.length < this.sequenceLength) return;
+
+    const windowedData = [];
+    for (let i = 0; i < sequences.length - this.sequenceLength; i++) {
+      windowedData.push(sequences.slice(i, i + this.sequenceLength));
+    }
+
+    for (let epoch = 0; epoch < 50; epoch++) {
+      for (const sequence of windowedData) {
+        this.forwardPass(sequence.flat());
+      }
+    }
+
+    this.trained = true;
+  }
+
+  private forwardPass(input: number[]): number {
+    const h: number[] = Array(this.hiddenSize).fill(0);
+    const Wxh = this.weights.get('Wxh')!;
+    const Whh = this.weights.get('Whh')!;
+    const Why = this.weights.get('Why')!;
+    const bh = this.weights.get('bh')!;
+    const by = this.weights.get('by')!;
+
+    for (let t = 0; t < input.length; t++) {
+      const x = [input[t]];
+      const newH = Array(this.hiddenSize).fill(0);
+
+      for (let j = 0; j < this.hiddenSize; j++) {
+        let sum = bh[j];
+        for (let i = 0; i < this.inputSize; i++) {
+          sum += Wxh[j][i] * x[i];
+        }
+        for (let k = 0; k < this.hiddenSize; k++) {
+          sum += Whh[j][k] * h[k];
+        }
+        newH[j] = Math.tanh(sum);
+      }
+
+      for (let j = 0; j < this.hiddenSize; j++) {
+        h[j] = newH[j];
+      }
+    }
+
+    let y = by[0];
+    for (let j = 0; j < this.hiddenSize; j++) {
+      y += Why[0][j] * h[j];
+    }
+
+    return Math.sigmoid(y);
+  }
+
+  score(sequence: number[]): number {
+    if (!this.trained || sequence.length < this.sequenceLength) return 0.5;
+
+    const prediction = this.forwardPass(sequence);
+    const actual = sequence[sequence.length - 1] / 255;
+    const error = Math.abs(prediction - actual);
+
+    return Math.min(1, error * 2);
+  }
+}
+
+// Autoencoder for multivariate anomaly detection
+export class Autoencoder {
+  private inputDim: number;
+  private encodedDim: number;
+  private encoder: Map<string, number[][]>;
+  private decoder: Map<string, number[][]>;
+  private trained: boolean = false;
+
+  constructor(inputDim: number = 7, encodedDim: number = 3) {
+    this.inputDim = inputDim;
+    this.encodedDim = encodedDim;
+    this.encoder = new Map();
+    this.decoder = new Map();
+    this.initNetwork();
+  }
+
+  private initNetwork(): void {
+    const initMatrix = (rows: number, cols: number) =>
+      Array(rows).fill(null).map(() => Array(cols).fill(0).map(() => Math.random() - 0.5));
+
+    this.encoder.set('W1', initMatrix(this.encodedDim, this.inputDim));
+    this.encoder.set('b1', Array(this.encodedDim).fill(0.1));
+
+    this.decoder.set('W2', initMatrix(this.inputDim, this.encodedDim));
+    this.decoder.set('b2', Array(this.inputDim).fill(0.1));
+  }
+
+  train(features: number[][]): void {
+    if (features.length === 0) return;
+
+    for (let epoch = 0; epoch < 100; epoch++) {
+      for (const feature of features) {
+        const encoded = this.encode(feature);
+        this.decode(encoded);
+      }
+    }
+
+    this.trained = true;
+  }
+
+  private encode(input: number[]): number[] {
+    const W1 = this.encoder.get('W1')!;
+    const b1 = this.encoder.get('b1')!;
+    const encoded: number[] = [];
+
+    for (let i = 0; i < this.encodedDim; i++) {
+      let sum = b1[i];
+      for (let j = 0; j < this.inputDim; j++) {
+        sum += W1[i][j] * input[j];
+      }
+      encoded.push(Math.tanh(sum));
+    }
+
+    return encoded;
+  }
+
+  private decode(encoded: number[]): number[] {
+    const W2 = this.decoder.get('W2')!;
+    const b2 = this.decoder.get('b2')!;
+    const decoded: number[] = [];
+
+    for (let i = 0; i < this.inputDim; i++) {
+      let sum = b2[i];
+      for (let j = 0; j < this.encodedDim; j++) {
+        sum += W2[i][j] * encoded[j];
+      }
+      decoded.push(1 / (1 + Math.exp(-sum)));
+    }
+
+    return decoded;
+  }
+
+  score(features: number[]): number {
+    if (!this.trained || features.length !== this.inputDim) return 0.5;
+
+    const encoded = this.encode(features);
+    const decoded = this.decode(encoded);
+
+    let squaredError = 0;
+    for (let i = 0; i < this.inputDim; i++) {
+      squaredError += Math.pow(features[i] - decoded[i], 2);
+    }
+
+    const rmse = Math.sqrt(squaredError / this.inputDim);
+    return Math.min(1, rmse * 2);
+  }
+}
+
+// Sigmoid activation
+function Math_sigmoid(x: number): number {
+  return 1 / (1 + Math.exp(-x));
+}
+
+// Extend Math object with sigmoid
+Object.defineProperty(Math, 'sigmoid', {
+  value: Math_sigmoid,
+  writable: true,
+  configurable: true
+});
