@@ -10,6 +10,7 @@ import {
   getRuleVersions,
   getTestResults,
   CustomRule,
+  CustomRuleInput,
 } from '../patrol/customRules';
 import { requireAuth } from '../auth/middleware';
 
@@ -63,15 +64,16 @@ router.post(
       return res.status(400).json({ error: 'Invalid pattern_type' });
     }
 
-    const rule = await createCustomRule(projectId, userId, {
+    const ruleInput: CustomRuleInput = {
       name,
       description,
-      pattern_type: pattern_type as any,
+      pattern_type: pattern_type as CustomRule['pattern_type'],
       pattern_value,
       weight: weight || 50,
       severity: severity || 'medium',
       enabled: enabled !== false,
-    } as any);
+    };
+    const rule = await createCustomRule(projectId, userId, ruleInput);
 
     if (!rule) {
       return res.status(400).json({ error: 'Failed to create rule' });

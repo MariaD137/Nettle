@@ -87,7 +87,7 @@ export function generateEvidenceForFinding(
     variable?: string;
     value?: string;
   }
-): string {
+): string | undefined {
   if (!context) return undefined;
 
   let evidence = "";
@@ -100,7 +100,7 @@ export function generateEvidenceForFinding(
   } else if (context.value) {
     evidence = redactSecrets(context.value);
   } else if (context.line) {
-    evidence = extractLineEvidence(context.line);
+    evidence = extractLineEvidence(context.line) ?? "";
   }
 
   return evidence || undefined;

@@ -104,7 +104,10 @@ function matchCombination(event: any, pattern: string): boolean {
 
     const results = conditions.map(cond => {
       const [field, value] = cond.trim().split('=');
-      return event[field] === value;
+      // event field values aren't always strings (e.g. status_code is a
+      // number) while the pattern's value always is, since it comes from
+      // splitting the rule text — compare as strings on both sides.
+      return String(event[field]) === value;
     });
 
     return hasOR ? results.some(r => r) : results.every(r => r);
@@ -113,10 +116,13 @@ function matchCombination(event: any, pattern: string): boolean {
   }
 }
 
+export type CustomRuleInput = Pick<CustomRule, 'name' | 'pattern_type' | 'pattern_value'> &
+  Partial<Omit<CustomRule, 'name' | 'pattern_type' | 'pattern_value'>>;
+
 export async function createCustomRule(
   projectId: string,
   userId: string,
-  data: Partial<CustomRule>
+  data: CustomRuleInput
 ): Promise<CustomRule | null> {
   try {
     // Validate rule count
@@ -155,7 +161,7 @@ export async function createCustomRule(
       data.pattern_value,
       data.weight || 50,
       data.severity || 'medium',
-      data.enabled ? 1 : 0,
+      data.enabled !== false ? 1 : 0,
       userId,
       now,
       now
@@ -177,9 +183,11 @@ export function getCustomRule(ruleId: string): CustomRule | null {
 }
 
 export function listCustomRules(projectId: string, enabledOnly = false): CustomRule[] {
+  // created_at has only millisecond resolution, so rules created in quick
+  // succession can tie — rowid DESC breaks the tie in insertion order.
   const query = enabledOnly
-    ? 'SELECT * FROM custom_rules WHERE project_id = ? AND enabled = 1 ORDER BY created_at DESC'
-    : 'SELECT * FROM custom_rules WHERE project_id = ? ORDER BY created_at DESC';
+    ? 'SELECT * FROM custom_rules WHERE project_id = ? AND enabled = 1 ORDER BY created_at DESC, rowid DESC'
+    : 'SELECT * FROM custom_rules WHERE project_id = ? ORDER BY created_at DESC, rowid DESC';
 
   const rows = db.prepare(query).all(projectId) as any[];
   return rows.map(row => ({
@@ -264,13 +272,14 @@ export function deleteCustomRule(ruleId: string): boolean {
 export function getRuleVersions(ruleId: string): RuleVersion[] {
   const rows = db.prepare(
     'SELECT * FROM rule_versions WHERE rule_id = ? ORDER BY version DESC'
-  ).all(ruleId) as RuleVersion[];
+  ).all(ruleId) as unknown as RuleVersion[];
   return rows;
 }
 
 export async function testRule(ruleId: string, events: any[]): Promise<TestResult | null> {
   const rule = getCustomRule(ruleId);
   if (!rule) return null;
+  if (events.length > 10000) return null;
 
   const startTime = Date.now();
   let matched = 0;
@@ -347,8 +356,8 @@ export async function testRule(ruleId: string, events: any[]): Promise<TestResul
   }
 }
 
-export function evaluateCustomRule(rule: CustomRule, event: any): boolean {
-  if (!rule.enabled) return false;
+export function evaluateCustomRule(rule: CustomRule | null, event: any): boolean {
+  if (!rule || !rule.enabled) return false;
 
   try {
     switch (rule.pattern_type) {
@@ -372,6 +381,6 @@ export function evaluateCustomRule(rule: CustomRule, event: any): boolean {
 export function getTestResults(ruleId: string, limit = 10): TestResult[] {
   const rows = db.prepare(
     'SELECT * FROM rule_test_results WHERE rule_id = ? ORDER BY created_at DESC LIMIT ?'
-  ).all(ruleId, limit) as TestResult[];
+  ).all(ruleId, limit) as unknown as TestResult[];
   return rows;
 }

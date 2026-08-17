@@ -204,8 +204,8 @@ test('Phase 15: Performance & Optimization', async (t) => {
       const scanId = newId();
       db.prepare(
         `INSERT INTO scans
-        (id, project_id, scanned_at, score, critical_count, caution_count, clear_count, report_json, status, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        (id, project_id, scanned_at, score, critical_count, caution_count, clear_count, report_json)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
       ).run(
         scanId,
         projectId,
@@ -214,9 +214,7 @@ test('Phase 15: Performance & Optimization', async (t) => {
         0,
         i,
         15,
-        '{}',
-        'COMPLETED',
-        new Date().toISOString()
+        '{}'
       );
     }
 

@@ -155,7 +155,13 @@ async function deliverWebhook(webhook: WebhookConfig, event: WebhookEvent): Prom
         return;
       }
 
-      if (attempt < maxRetries - 1) {
+      // A 4xx (other than 429 rate-limiting) means the request itself is
+      // wrong — a bad URL, an unauthorized endpoint, a malformed payload.
+      // Retrying with backoff can't fix that; only 5xx/network failures and
+      // 429 are transient enough to be worth retrying.
+      const isPermanentFailure = response.status >= 400 && response.status < 500 && response.status !== 429;
+
+      if (!isPermanentFailure && attempt < maxRetries - 1) {
         await new Promise(resolve => setTimeout(resolve, backoffMs[attempt]));
         db.prepare(`
           UPDATE webhook_events
@@ -164,6 +170,7 @@ async function deliverWebhook(webhook: WebhookConfig, event: WebhookEvent): Prom
         `).run(event.id);
       } else {
         updateWebhookEventStatus(event.id, 'failed', `HTTP ${response.status}`);
+        return;
       }
     } catch (error) {
       const errMsg = error instanceof Error ? error.message : 'Unknown error';
@@ -196,7 +203,7 @@ function updateWebhookEventStatus(
   `).run(status, status === 'sent' ? now : null, error || null, eventId);
 }
 
-function generateSignature(payload: Record<string, any>): string {
+export function generateSignature(payload: Record<string, any>): string {
   const crypto = require('crypto');
   const secret = process.env.NETTLE_WEBHOOK_SECRET || 'nettle-webhook';
   return crypto

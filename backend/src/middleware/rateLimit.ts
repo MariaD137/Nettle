@@ -68,7 +68,7 @@ class RateLimiter {
           delete this.store[key];
         }
       }
-    }, 60000);
+    }, 60000).unref();
   }
 
   private getKey(req: Request, prefix: string): string {

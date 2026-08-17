@@ -1,4 +1,5 @@
-import { describe, it, expect, beforeEach } from '@jest/globals';
+import { describe, it, beforeEach } from 'node:test';
+import assert from 'node:assert/strict';
 import { db, newId } from '../src/db/index';
 import {
   createCustomRule,
@@ -22,10 +23,10 @@ describe('Phase 12: Custom Detection Rules', () => {
     // Create test project and user
     db.exec(`
       INSERT OR IGNORE INTO users (id, email, password_hash, created_at)
-      VALUES ('${userId}', 'test@example.com', 'hash', '${new Date().toISOString()}');
+      VALUES ('${userId}', 'test-${userId}@example.com', 'hash', '${new Date().toISOString()}');
 
       INSERT OR IGNORE INTO projects (id, user_id, name, api_key, created_at)
-      VALUES ('${projectId}', '${userId}', 'Test Project', 'key_test', '${new Date().toISOString()}');
+      VALUES ('${projectId}', '${userId}', 'Test Project', 'key_${projectId}', '${new Date().toISOString()}');
     `);
   });
 
@@ -41,11 +42,11 @@ describe('Phase 12: Custom Detection Rules', () => {
         enabled: true,
       } as any);
 
-      expect(rule).toBeDefined();
-      expect(rule?.name).toBe('Admin Path Detection');
-      expect(rule?.weight).toBe(75);
-      expect(rule?.enabled).toBe(true);
-      expect(rule?.version).toBe(1);
+      assert.notEqual(rule, undefined);
+      assert.equal(rule?.name, 'Admin Path Detection');
+      assert.equal(rule?.weight, 75);
+      assert.equal(rule?.enabled, true);
+      assert.equal(rule?.version, 1);
     });
 
     it('should reject invalid weight', async () => {
@@ -57,7 +58,7 @@ describe('Phase 12: Custom Detection Rules', () => {
         severity: 'high',
       } as any);
 
-      expect(rule).toBeNull();
+      assert.equal(rule, null);
     });
 
     it('should reject invalid regex', async () => {
@@ -69,7 +70,7 @@ describe('Phase 12: Custom Detection Rules', () => {
         severity: 'high',
       } as any);
 
-      expect(rule).toBeNull();
+      assert.equal(rule, null);
     });
 
     it('should enforce max rules per project', async () => {
@@ -93,7 +94,7 @@ describe('Phase 12: Custom Detection Rules', () => {
         severity: 'medium',
       } as any);
 
-      expect(rule).toBeNull();
+      assert.equal(rule, null);
     });
 
     it('should retrieve a rule', async () => {
@@ -106,7 +107,7 @@ describe('Phase 12: Custom Detection Rules', () => {
       } as any);
 
       const retrieved = getCustomRule(created!.id);
-      expect(retrieved?.name).toBe('Test Rule');
+      assert.equal(retrieved?.name, 'Test Rule');
     });
 
     it('should list rules by project', async () => {
@@ -127,8 +128,8 @@ describe('Phase 12: Custom Detection Rules', () => {
       } as any);
 
       const rules = listCustomRules(projectId);
-      expect(rules.length).toBe(2);
-      expect(rules[0].name).toBe('Rule 2'); // Most recent first
+      assert.equal(rules.length, 2);
+      assert.equal(rules[0].name, 'Rule 2'); // Most recent first
     });
 
     it('should update a rule', async () => {
@@ -146,10 +147,10 @@ describe('Phase 12: Custom Detection Rules', () => {
         enabled: false,
       } as any);
 
-      expect(updated?.name).toBe('Updated Name');
-      expect(updated?.weight).toBe(75);
-      expect(updated?.enabled).toBe(false);
-      expect(updated?.version).toBe(2);
+      assert.equal(updated?.name, 'Updated Name');
+      assert.equal(updated?.weight, 75);
+      assert.equal(updated?.enabled, false);
+      assert.equal(updated?.version, 2);
     });
 
     it('should delete a rule', async () => {
@@ -162,10 +163,10 @@ describe('Phase 12: Custom Detection Rules', () => {
       } as any);
 
       const deleted = deleteCustomRule(created!.id);
-      expect(deleted).toBe(true);
+      assert.equal(deleted, true);
 
       const retrieved = getCustomRule(created!.id);
-      expect(retrieved).toBeNull();
+      assert.equal(retrieved, null);
     });
   });
 
@@ -180,10 +181,10 @@ describe('Phase 12: Custom Detection Rules', () => {
       } as any);
 
       const event = { path: '/admin', status_code: 200 };
-      expect(evaluateCustomRule(rule!, event)).toBe(true);
+      assert.equal(evaluateCustomRule(rule!, event), true);
 
       const nomatch = { path: '/user', status_code: 200 };
-      expect(evaluateCustomRule(rule!, nomatch)).toBe(false);
+      assert.equal(evaluateCustomRule(rule!, nomatch), false);
     });
 
     it('should match regex patterns', async () => {
@@ -195,9 +196,9 @@ describe('Phase 12: Custom Detection Rules', () => {
         severity: 'high',
       } as any);
 
-      expect(evaluateCustomRule(rule!, { path: '/api/v1/admin', status_code: 200 })).toBe(true);
-      expect(evaluateCustomRule(rule!, { path: '/api/v2/admin/users', status_code: 200 })).toBe(true);
-      expect(evaluateCustomRule(rule!, { path: '/api/admin', status_code: 200 })).toBe(false);
+      assert.equal(evaluateCustomRule(rule!, { path: '/api/v1/admin', status_code: 200 }), true);
+      assert.equal(evaluateCustomRule(rule!, { path: '/api/v2/admin/users', status_code: 200 }), true);
+      assert.equal(evaluateCustomRule(rule!, { path: '/api/admin', status_code: 200 }), false);
     });
 
     it('should disable matching when rule is disabled', async () => {
@@ -211,7 +212,7 @@ describe('Phase 12: Custom Detection Rules', () => {
       } as any);
 
       const event = { path: '/admin', status_code: 200 };
-      expect(evaluateCustomRule(rule!, event)).toBe(false);
+      assert.equal(evaluateCustomRule(rule!, event), false);
     });
 
     it('should match combination patterns', async () => {
@@ -223,8 +224,8 @@ describe('Phase 12: Custom Detection Rules', () => {
         severity: 'high',
       } as any);
 
-      expect(evaluateCustomRule(rule!, { method: 'POST', status_code: 401 })).toBe(true);
-      expect(evaluateCustomRule(rule!, { method: 'GET', status_code: 401 })).toBe(false);
+      assert.equal(evaluateCustomRule(rule!, { method: 'POST', status_code: 401 }), true);
+      assert.equal(evaluateCustomRule(rule!, { method: 'GET', status_code: 401 }), false);
     });
   });
 
@@ -247,10 +248,10 @@ describe('Phase 12: Custom Detection Rules', () => {
 
       const result = await testRule(rule!.id, events);
 
-      expect(result?.events_matched).toBe(3);
-      expect(result?.true_positives).toBe(2);
-      expect(result?.false_positives).toBe(1);
-      expect(result?.accuracy).toBe(0.6666666666666666); // 2TP / (2TP + 1FP)
+      assert.equal(result?.events_matched, 3);
+      assert.equal(result?.true_positives, 2);
+      assert.equal(result?.false_positives, 1);
+      assert.equal(result?.accuracy, 0.6666666666666666); // 2TP / (2TP + 1FP)
     });
 
     it('should reject oversized test events', async () => {
@@ -265,7 +266,7 @@ describe('Phase 12: Custom Detection Rules', () => {
       const events = Array(10001).fill({ path: '/admin', status_code: 200 });
       const result = await testRule(rule!.id, events);
 
-      expect(result).toBeNull();
+      assert.equal(result, null);
     });
   });
 
@@ -291,9 +292,11 @@ describe('Phase 12: Custom Detection Rules', () => {
       } as any);
 
       const versions = getRuleVersions(rule!.id);
-      expect(versions.length).toBe(2);
-      expect(versions[0].version).toBe(2);
-      expect(versions[1].version).toBe(1);
+      assert.equal(versions.length, 2);
+      // The rule is created at version 1 (not itself recorded as a version
+      // row); each update then records the version it just moved to.
+      assert.equal(versions[0].version, 3);
+      assert.equal(versions[1].version, 2);
     });
 
     it('should record changes in versions', async () => {
@@ -309,7 +312,7 @@ describe('Phase 12: Custom Detection Rules', () => {
 
       const versions = getRuleVersions(rule!.id);
       const changes = JSON.parse(versions[0].changes || '{}');
-      expect(changes.weight).toBe(75);
+      assert.equal(changes.weight, 75);
     });
   });
 
@@ -336,9 +339,9 @@ describe('Phase 12: Custom Detection Rules', () => {
       const allRules = listCustomRules(projectId, false);
       const enabledRules = listCustomRules(projectId, true);
 
-      expect(allRules.length).toBe(2);
-      expect(enabledRules.length).toBe(1);
-      expect(enabledRules[0].name).toBe('Enabled Rule');
+      assert.equal(allRules.length, 2);
+      assert.equal(enabledRules.length, 1);
+      assert.equal(enabledRules[0].name, 'Enabled Rule');
     });
   });
 
@@ -354,7 +357,7 @@ describe('Phase 12: Custom Detection Rules', () => {
         severity: 'critical',
       } as any);
 
-      expect(rule).toBeDefined();
+      assert.notEqual(rule, undefined);
       // Would call detection pipeline and verify alert was created
     });
   });
@@ -362,7 +365,7 @@ describe('Phase 12: Custom Detection Rules', () => {
   describe('Error Handling', () => {
     it('should handle null rule gracefully', () => {
       const result = evaluateCustomRule(null as any, { path: '/test' });
-      expect(result).toBe(false);
+      assert.equal(result, false);
     });
 
     it('should handle malformed events', async () => {
@@ -374,8 +377,8 @@ describe('Phase 12: Custom Detection Rules', () => {
         severity: 'high',
       } as any);
 
-      expect(evaluateCustomRule(rule!, {})).toBe(false);
-      expect(evaluateCustomRule(rule!, { path: null })).toBe(false);
+      assert.equal(evaluateCustomRule(rule!, {}), false);
+      assert.equal(evaluateCustomRule(rule!, { path: null }), false);
     });
 
     it('should timeout slow regex patterns', async () => {
@@ -389,7 +392,7 @@ describe('Phase 12: Custom Detection Rules', () => {
       } as any);
 
       // Should either return null or handle the error
-      expect(rule === null || rule?.id).toBeDefined();
+      assert.notEqual(rule === null || rule?.id, undefined);
     });
   });
 });

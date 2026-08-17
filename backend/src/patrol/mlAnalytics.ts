@@ -1,6 +1,20 @@
 import { db, newId } from '../db/index';
 import type { StoredEvent } from './types';
 
+// Raw `events` table row shape (snake_case), distinct from the camelCase
+// StoredEvent the rest of the app works with — calculateBaselines reads
+// straight from SQL and never maps through events.ts's toEvent().
+interface EventTableRow {
+  id: string;
+  project_id: string;
+  occurred_at: string;
+  ip: string;
+  method: string;
+  path: string;
+  status_code: number;
+  user_agent: string | null;
+}
+
 export interface Baseline {
   id: string;
   metric_name: string;
@@ -59,7 +73,7 @@ export async function calculateBaselines(projectId: string, hoursBack: number = 
       FROM events
       WHERE project_id = ? AND occurred_at > datetime('now', ? || ' hours')
       ORDER BY occurred_at DESC
-    `).all(projectId, -hoursBack) as StoredEvent[];
+    `).all(projectId, -hoursBack) as unknown as EventTableRow[];
 
     if (events.length === 0) return { error: 'No events found' };
 
@@ -70,7 +84,7 @@ export async function calculateBaselines(projectId: string, hoursBack: number = 
     }
 
     for (const event of events) {
-      const hour = new Date(event.occurredAt).getHours();
+      const hour = new Date(event.occurred_at).getHours();
       metricsPerHour[hour].push(event);
     }
 
@@ -181,6 +195,12 @@ export class IsolationForest {
   private trees: any[] = [];
   private nTrees: number;
   private sampleSize: number;
+  // The sample size actually used to build each tree — randomSample() caps
+  // at the training set's size, which is often smaller than the requested
+  // sampleSize. score() must normalize against that real size, not the
+  // requested one, or path lengths get compared against the wrong baseline
+  // and every score is skewed toward 1 regardless of how normal a point is.
+  private actualSampleSize: number = 0;
 
   constructor(nTrees: number = 50, sampleSize: number = 256) {
     this.nTrees = nTrees;
@@ -188,6 +208,7 @@ export class IsolationForest {
   }
 
   train(features: number[][]): void {
+    this.actualSampleSize = Math.min(this.sampleSize, features.length);
     for (let i = 0; i < this.nTrees; i++) {
       const sample = this.randomSample(features, this.sampleSize);
       const tree = this.buildTree(sample, 0);
@@ -202,7 +223,7 @@ export class IsolationForest {
     const avgPathLength = pathLengths.reduce((a, b) => a + b) / pathLengths.length;
 
     // Normalize anomaly score to 0-1
-    const c = this.averagePathLengthOfUnsuccessfulSearch(this.sampleSize);
+    const c = this.averagePathLengthOfUnsuccessfulSearch(this.actualSampleSize || this.sampleSize);
     const anomalyScore = Math.pow(2, -avgPathLength / c);
 
     return Math.min(1, Math.max(0, anomalyScore));
@@ -223,8 +244,16 @@ export class IsolationForest {
     }
 
     const featureIndex = Math.floor(Math.random() * (data[0]?.length || 1));
-    const values = data.map(d => d[featureIndex]).sort((a, b) => a - b);
-    const splitValue = values[Math.floor(values.length / 2)];
+    const values = data.map(d => d[featureIndex]);
+    const min = Math.min(...values);
+    const max = Math.max(...values);
+    // Isolation Forest depends on the split being random, not the median —
+    // a median split makes the tree a balanced binary search, where every
+    // point (outlier or not) takes ~log2(n) steps to isolate, so nothing is
+    // actually distinguished as anomalous. A uniformly random split between
+    // min and max is what makes outliers separate out in far fewer steps
+    // than points near the center of the distribution.
+    const splitValue = min === max ? min : min + Math.random() * (max - min);
 
     const left = data.filter(d => d[featureIndex] < splitValue);
     const right = data.filter(d => d[featureIndex] >= splitValue);
@@ -251,13 +280,18 @@ export class IsolationForest {
     }
   }
 
+  // The c(n) / H(i) terms in the standard Isolation Forest score formula
+  // (Liu, Ting & Zhou 2008) are defined with natural log — only the final
+  // score's exponentiation (2^(-E(h(x))/c(n))) uses base 2. Using log2 here
+  // instead of ln inflates c(n), which pushes every score uniformly toward
+  // 1 regardless of how anomalous a point actually is.
   private logarithm(n: number): number {
-    return Math.log2(Math.max(1, n));
+    return Math.log(Math.max(1, n));
   }
 
   private averagePathLengthOfUnsuccessfulSearch(n: number): number {
     if (n <= 1) return 0;
-    return 2 * (Math.log2(n - 1) + 0.5772156649) - (2 * (n - 1)) / n;
+    return 2 * (Math.log(n - 1) + 0.5772156649) - (2 * (n - 1)) / n;
   }
 }
 
@@ -416,6 +450,7 @@ export class LSTM {
   private outputSize: number;
   private sequenceLength: number;
   private weights: Map<string, number[][]>;
+  private biases: Map<string, number[]>;
   private trained: boolean = false;
 
   constructor(inputSize: number = 1, hiddenSize: number = 10, sequenceLength: number = 12) {
@@ -424,6 +459,7 @@ export class LSTM {
     this.outputSize = 1;
     this.sequenceLength = sequenceLength;
     this.weights = new Map();
+    this.biases = new Map();
     this.initWeights();
   }
 
@@ -434,8 +470,12 @@ export class LSTM {
     this.weights.set('Wxh', initMatrix(this.hiddenSize, this.inputSize));
     this.weights.set('Whh', initMatrix(this.hiddenSize, this.hiddenSize));
     this.weights.set('Why', initMatrix(this.outputSize, this.hiddenSize));
-    this.weights.set('bh', Array(this.hiddenSize).fill(0.1));
-    this.weights.set('by', Array(this.outputSize).fill(0.1));
+    this.biases.set('bh', Array(this.hiddenSize).fill(0.1));
+    this.biases.set('by', Array(this.outputSize).fill(0.1));
+  }
+
+  private sigmoid(x: number): number {
+    return 1 / (1 + Math.exp(-x));
   }
 
   train(sequences: number[][]): void {
@@ -460,8 +500,8 @@ export class LSTM {
     const Wxh = this.weights.get('Wxh')!;
     const Whh = this.weights.get('Whh')!;
     const Why = this.weights.get('Why')!;
-    const bh = this.weights.get('bh')!;
-    const by = this.weights.get('by')!;
+    const bh = this.biases.get('bh')!;
+    const by = this.biases.get('by')!;
 
     for (let t = 0; t < input.length; t++) {
       const x = [input[t]];
@@ -488,7 +528,7 @@ export class LSTM {
       y += Why[0][j] * h[j];
     }
 
-    return Math.sigmoid(y);
+    return this.sigmoid(y);
   }
 
   score(sequence: number[]): number {
@@ -507,14 +547,18 @@ export class Autoencoder {
   private inputDim: number;
   private encodedDim: number;
   private encoder: Map<string, number[][]>;
+  private encoderBias: Map<string, number[]>;
   private decoder: Map<string, number[][]>;
+  private decoderBias: Map<string, number[]>;
   private trained: boolean = false;
 
   constructor(inputDim: number = 7, encodedDim: number = 3) {
     this.inputDim = inputDim;
     this.encodedDim = encodedDim;
     this.encoder = new Map();
+    this.encoderBias = new Map();
     this.decoder = new Map();
+    this.decoderBias = new Map();
     this.initNetwork();
   }
 
@@ -523,10 +567,10 @@ export class Autoencoder {
       Array(rows).fill(null).map(() => Array(cols).fill(0).map(() => Math.random() - 0.5));
 
     this.encoder.set('W1', initMatrix(this.encodedDim, this.inputDim));
-    this.encoder.set('b1', Array(this.encodedDim).fill(0.1));
+    this.encoderBias.set('b1', Array(this.encodedDim).fill(0.1));
 
     this.decoder.set('W2', initMatrix(this.inputDim, this.encodedDim));
-    this.decoder.set('b2', Array(this.inputDim).fill(0.1));
+    this.decoderBias.set('b2', Array(this.inputDim).fill(0.1));
   }
 
   train(features: number[][]): void {
@@ -544,7 +588,7 @@ export class Autoencoder {
 
   private encode(input: number[]): number[] {
     const W1 = this.encoder.get('W1')!;
-    const b1 = this.encoder.get('b1')!;
+    const b1 = this.encoderBias.get('b1')!;
     const encoded: number[] = [];
 
     for (let i = 0; i < this.encodedDim; i++) {
@@ -560,7 +604,7 @@ export class Autoencoder {
 
   private decode(encoded: number[]): number[] {
     const W2 = this.decoder.get('W2')!;
-    const b2 = this.decoder.get('b2')!;
+    const b2 = this.decoderBias.get('b2')!;
     const decoded: number[] = [];
 
     for (let i = 0; i < this.inputDim; i++) {
