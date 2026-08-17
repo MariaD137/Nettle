@@ -27,7 +27,7 @@ We will acknowledge receipt within 24 hours and provide updates every 5 days.
 ### Data Protection
 
 - ✅ Encrypted in transit (HTTPS only)
-- ✅ Database encryption at rest (configured in RDS)
+- ⚠️ Database encryption at rest — **not yet true**. Production currently runs on `node:sqlite`, a single file on the App Runner container's ephemeral disk. No RDS, S3, or Secrets Manager resource is provisioned in `infra/` today. See "SQLite in Production" under Known Issues.
 - ✅ API keys never logged
 - ✅ Credentials in environment variables, not files
 - ✅ Scanner never sends customer code to external services
@@ -171,7 +171,7 @@ Current state: Scanner runs in same process as API.
 - Monitoring (logging, alerting)
 - Change management (deployments, CI/CD)
 
-**Audit:** Scheduled for Q2 2025
+**Audit:** No SOC 2 audit has been performed or scheduled as of this revision. The Q2 2025 date in a previous version of this document has passed without one occurring — this section describes intended scope, not current certification status.
 
 ## Security Testing
 
@@ -194,26 +194,28 @@ Current state: Scanner runs in same process as API.
 
 ### Penetration Testing
 
-**Scheduled:** Q1 2025
+**Status:** Not yet performed. The Q1 2025 date in a previous version of this document has passed without a penetration test occurring; a new date has not been set.
 
 ## Security Roadmap
 
-### Q4 2024
+The Q4 2024 / Q1 2025 / Q2 2025 target dates in earlier versions of this
+document have all passed without these items being completed. Removing the
+stale dates rather than replacing them with new unverified ones — this list
+reflects what's still outstanding as of this revision, not a committed
+timeline.
 
-- [ ] Process-level scanner isolation
-- [ ] Redis-backed rate limiting
-- [ ] Audit logging system
-
-### Q1 2025
-
-- [ ] RDS migration requirement
+- [ ] Process-level scanner isolation (scans currently run in the same
+      process as the API server — see "Scanner Isolation" above)
+- [ ] Redis-backed rate limiting (currently in-memory, single-instance only)
+- [ ] Audit logging system (currently console-based application logging only)
+- [ ] RDS migration (currently `node:sqlite` on ephemeral container disk)
 - [ ] Penetration testing
 - [ ] Security audit report
-
-### Q2 2025
-
 - [ ] SOC 2 Type II certification
-- [ ] Advanced threat detection
+- [ ] Real anomaly/threat detection beyond the current rule-based checks
+      (brute force, request flood, known attack-probe paths, SQLi-shaped
+      requests) — an ML-based scoring module exists in the codebase but is
+      not connected to live detection
 - [ ] Security incident response plan
 
 ## Contact
@@ -224,5 +226,4 @@ Current state: Scanner runs in same process as API.
 
 ---
 
-Last Updated: 2024-01-01  
-Next Review: 2024-04-01
+Last Updated: 2026-08-17
