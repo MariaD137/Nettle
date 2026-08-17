@@ -418,7 +418,7 @@ test('Phase 14: Integration Ecosystem', { timeout: 10 * 60_000 }, async (t) => {
     const pagerduty = createWebhookConfig(integrationProjectId, 'pagerduty', 'https://pagerduty.example.com', [
       'incident_alert',
     ]);
-    const splunk = createWebhookConfig(integrationProjectId, 'splunk', 'https://splunk.example.com', ['metric_event']);
+    const splunk = createWebhookConfig(integrationProjectId, 'splunk', 'https://splunk.example.com', ['anomaly_alert']);
     const datadog = createWebhookConfig(integrationProjectId, 'datadog', 'https://datadog.example.com', [
       'anomaly_alert',
       'metric_event',

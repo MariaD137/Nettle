@@ -1,0 +1,19 @@
+# Semgrep's built-in default ignore rules exclude any directory named
+# test/ or tests/ (see semgrep/templates/.semgrepignore in the semgrep
+# package) — that's a real problem for us: a target repo's own test/
+# directory is exactly the kind of place a hardcoded secret or an unsafe
+# eval() ends up, and it's also where Nettle's own scanner test fixtures
+# live (test/fixtures/...), so the built-in default silently skipped both.
+# This file exists so semgrep uses it (even mostly-empty) instead of
+# falling back to those defaults — see semgrepScanner.ts's execFileSync
+# `cwd` option, which points here specifically so this file is always
+# found regardless of where the actual scan target lives.
+#
+# Only exclude what's genuinely not source code worth scanning.
+node_modules/
+.git/
+dist/
+build/
+.venv/
+.tox/
+*.min.js

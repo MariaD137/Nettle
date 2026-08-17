@@ -3,7 +3,18 @@ import path from "path";
 import type { Finding, Pass, CheckResult } from "./types";
 import { createNotVerified, generateCheckId } from "./threeStateModel";
 
-const RULES_PATH = path.join(__dirname, "semgrep-rules", "nettle-js-rules.yaml");
+const RULES_DIR = path.join(__dirname, "semgrep-rules");
+const RULES_PATH = path.join(RULES_DIR, "nettle-js-rules.yaml");
+
+// Semgrep auto-detects a project root (nearest .git/ ancestor of its cwd)
+// and, if that root has no .semgrepignore file, silently falls back to its
+// own built-in defaults — which exclude any directory literally named
+// test/ or tests/. That's exactly where Nettle's own scan fixtures live,
+// and exactly the kind of place a real target repo's secrets/vulnerable
+// code can live too. Running semgrep from RULES_DIR (which does have a
+// real, deliberately-scoped .semgrepignore next to it — see that file for
+// why) means it always finds ours instead of guessing at one.
+const SEMGREP_CWD = RULES_DIR;
 
 interface SemgrepResult {
   check_id: string;
@@ -69,7 +80,7 @@ export function scanWithSemgrep(targetRoot: string): { findings: Finding[]; pass
         "--quiet",
         targetRoot,
       ],
-      { encoding: "utf8", timeout: 30_000, maxBuffer: 20 * 1024 * 1024 }
+      { encoding: "utf8", timeout: 30_000, maxBuffer: 20 * 1024 * 1024, cwd: SEMGREP_CWD }
     );
     output = JSON.parse(raw);
   } catch (err) {
@@ -130,7 +141,7 @@ export function scanWithSemgrepCheckResults(targetRoot: string): CheckResult[] {
         "--quiet",
         targetRoot,
       ],
-      { encoding: "utf8", timeout: 30_000, maxBuffer: 20 * 1024 * 1024 }
+      { encoding: "utf8", timeout: 30_000, maxBuffer: 20 * 1024 * 1024, cwd: SEMGREP_CWD }
     );
     output = JSON.parse(raw);
   } catch (err) {

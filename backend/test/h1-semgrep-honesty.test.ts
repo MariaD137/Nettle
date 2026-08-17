@@ -1,7 +1,19 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import fs from "fs";
+import os from "os";
+import path from "path";
 import { scanWithSemgrepCheckResults } from "../src/scanner/semgrepScanner";
 import { initializeScanner, isSemgrepAvailable } from "../src/scanner/initialization";
+
+// A fresh, empty directory per call — /tmp itself is a shared system
+// directory that can genuinely contain other processes' or earlier runs'
+// files, so scanning it isn't a reliable "no matches" baseline once
+// Semgrep is actually working (as opposed to erroring out, which happened
+// to produce the same "no real findings" symptom for an unrelated reason).
+function emptyScanDir(): string {
+  return fs.mkdtempSync(path.join(os.tmpdir(), "h1-semgrep-empty-"));
+}
 
 test("H-1: Semgrep initialization records version", () => {
   const metadata = initializeScanner();
@@ -22,7 +34,7 @@ test("H-1: isSemgrepAvailable tracks initialization", () => {
 test("H-1: Semgrep missing returns NOT_VERIFIED for AST checks", () => {
   // If Semgrep is not available in this environment, scanWithSemgrepCheckResults
   // should return NOT_VERIFIED for each of the 6 AST checks
-  const dummyPath = "/tmp";
+  const dummyPath = emptyScanDir();
   let results;
 
   try {
@@ -50,7 +62,7 @@ test("H-1: Semgrep missing returns NOT_VERIFIED for AST checks", () => {
 });
 
 test("H-1: Check results include detection method", () => {
-  const dummyPath = "/tmp";
+  const dummyPath = emptyScanDir();
   let results;
 
   try {
@@ -71,7 +83,7 @@ test("H-1: Check results include detection method", () => {
 });
 
 test("H-1: Check results include confidence", () => {
-  const dummyPath = "/tmp";
+  const dummyPath = emptyScanDir();
   let results;
 
   try {
@@ -92,7 +104,7 @@ test("H-1: Check results include confidence", () => {
 });
 
 test("H-1: AST check titles are descriptive", () => {
-  const dummyPath = "/tmp";
+  const dummyPath = emptyScanDir();
   let results;
 
   try {

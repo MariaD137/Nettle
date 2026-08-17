@@ -25,9 +25,14 @@ export function initializeScanner(): ScannerMetadata {
     initializationTime: new Date().toISOString(),
   };
 
-  // Verify Semgrep is available and capture version
+  // Verify Semgrep is available and capture version. --disable-version-check
+  // matters here as much as it does for the real scan calls: without it,
+  // `semgrep --version` phones home to check for updates before returning,
+  // which can take much longer than this check's own timeout on a network
+  // that's slow or has no route to Semgrep's servers — reporting Semgrep as
+  // unavailable even though it's installed and works fine.
   try {
-    const versionOutput = execFileSync("semgrep", ["--version"], {
+    const versionOutput = execFileSync("semgrep", ["--version", "--disable-version-check"], {
       encoding: "utf8",
       timeout: 5_000,
     });
