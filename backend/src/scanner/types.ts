@@ -13,7 +13,9 @@ export type FindingCategory =
   | "Frontend Security"
   | "Code Quality"
   | "Supply Chain"
-  | "Session Management";
+  | "Session Management"
+  | "Infrastructure"
+  | "CI/CD";
 
 export type CheckStatus = "PASS" | "FAIL" | "NOT_VERIFIED";
 
@@ -61,7 +63,23 @@ export interface Pass {
   title: string;
 }
 
-export const SCANNER_VERSION = "1.3.0";
+/**
+ * A correlated group of findings that together suggest a plausible path
+ * from an entry point to impact — not a confirmed exploit. Language used in
+ * chain descriptions should always be hedged ("may be able to", "potential")
+ * unless the underlying findings themselves establish something stronger.
+ */
+export interface AttackChain {
+  severity: Severity;
+  title: string;
+  entryPoint: string;
+  component: string;
+  impact: string;
+  recommendation: string;
+  findings: Finding[];
+}
+
+export const SCANNER_VERSION = "1.4.0";
 
 export type ScanStatus = "CREATED" | "SCANNING" | "COMPLETED" | "PARTIALLY_COMPLETED" | "FAILED" | "CANCELLED";
 
@@ -93,6 +111,8 @@ export interface ScanReport {
   passed: Pass[];
   // New unified result format
   checkResults?: CheckResult[];
+  // Correlated multi-finding attack paths (see AttackChain doc comment).
+  attackChains?: AttackChain[];
   summary: {
     critical: number;
     high: number;

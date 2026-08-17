@@ -19,6 +19,7 @@ import { scanSessionJwt } from "./sessionJwt";
 import { SCANNER_VERSION, type ScanReport } from "./types";
 import { getSemgrepVersion } from "./initialization";
 import { SCORING_CONFIG, calculateScore, calculateConfidence } from "./scoringConfig";
+import { correlateAttackChains } from "./attackChains";
 
 const SCANNED_EXTENSIONS = [".js", ".ts", ".jsx", ".tsx", ".env", ".json"];
 
@@ -47,6 +48,7 @@ export function runScan(targetPath: string): ScanReport {
 
   const findings = results.flatMap((r) => r.findings);
   const passed = results.flatMap((r) => r.passed);
+  const attackChains = correlateAttackChains(findings);
 
   // Calculate score using versioned config (excludes NOT_VERIFIED from penalty)
   const score = calculateScore(findings, SCORING_CONFIG);
@@ -65,6 +67,7 @@ export function runScan(targetPath: string): ScanReport {
     scoreConfidence,
     findings,
     passed,
+    attackChains,
     summary: {
       critical: findings.filter((f) => f.severity === "critical").length,
       high: findings.filter((f) => f.severity === "high").length,
@@ -76,4 +79,4 @@ export function runScan(targetPath: string): ScanReport {
   };
 }
 
-export type { ScanReport, Finding, Pass, Severity } from "./types";
+export type { ScanReport, Finding, Pass, Severity, AttackChain } from "./types";

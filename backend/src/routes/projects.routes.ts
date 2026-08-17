@@ -8,6 +8,7 @@ import { requireAuth } from "../auth/middleware";
 import { requireSubscription } from "../billing/subscription";
 import { getQuotaState } from "../billing/scanQuota";
 import type { AlertStatus, FindingStatus } from "../patrol/types";
+import { computeChangeIntelligence } from "../scanner/changeIntelligence";
 
 export const projectsRouter = Router();
 
@@ -166,6 +167,7 @@ projectsRouter.get("/api/projects/:id/scans/compare", ...paywalled, (req, res) =
     remaining: remaining.length,
     fixedFindings: fixed,
     newFindings,
+    changeIntelligence: computeChangeIntelligence(older, newer),
   });
 });
 
