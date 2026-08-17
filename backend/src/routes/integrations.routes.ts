@@ -118,16 +118,18 @@ router.patch('/:projectId/webhooks/:webhookId', async (req: Request, res: Respon
     }
 
     const now = new Date().toISOString();
-    const updates: any = { updated_at: now };
 
-    if (webhook_url !== undefined) updates.webhook_url = webhook_url;
-    if (event_types !== undefined) updates.event_types = JSON.stringify(event_types);
-    if (is_active !== undefined) updates.is_active = is_active ? 1 : 0;
-
-    const updateKeys = Object.keys(updates).map(k => `${k} = ?`).join(', ');
-    const updateValues = Object.values(updates) as (string | number)[];
-
-    db.prepare(`UPDATE webhooks SET ${updateKeys} WHERE id = ?`).run(...updateValues, webhookId);
+    // Fixed column list — never built from request-controlled keys, so
+    // there's no way for a caller to inject arbitrary column names here.
+    db.prepare(
+      'UPDATE webhooks SET webhook_url = ?, event_types = ?, is_active = ?, updated_at = ? WHERE id = ?'
+    ).run(
+      webhook_url !== undefined ? webhook_url : webhook.webhook_url,
+      event_types !== undefined ? JSON.stringify(event_types) : webhook.event_types,
+      is_active !== undefined ? (is_active ? 1 : 0) : webhook.is_active,
+      now,
+      webhookId
+    );
 
     const updatedWebhook = db.prepare('SELECT * FROM webhooks WHERE id = ?').get(webhookId) as any;
     const result: WebhookConfig = {

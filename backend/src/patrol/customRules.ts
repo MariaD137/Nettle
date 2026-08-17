@@ -226,21 +226,26 @@ export function updateCustomRule(
     now
   );
 
-  // Update rule
-  const updateFields = Object.entries(updates)
-    .filter(([key]) => key !== 'id' && key !== 'created_at')
-    .map(([key]) => `${key} = ?`)
-    .join(', ');
-
-  const values = Object.entries(updates)
-    .filter(([key]) => key !== 'id' && key !== 'created_at')
-    .map(([, value]) => value);
-
+  // Update rule. Fixed column list — never built from the keys of the
+  // caller-supplied `updates` object, so there's no way to inject an
+  // arbitrary column name here.
   db.prepare(`
     UPDATE custom_rules
-    SET ${updateFields}, version = ?, updated_at = ?
+    SET name = ?, description = ?, pattern_type = ?, pattern_value = ?,
+        weight = ?, severity = ?, enabled = ?, version = ?, updated_at = ?
     WHERE id = ?
-  `).run(...values, newVersion, now, ruleId);
+  `).run(
+    updates.name ?? existing.name,
+    updates.description ?? existing.description ?? null,
+    updates.pattern_type ?? existing.pattern_type,
+    updates.pattern_value ?? existing.pattern_value,
+    updates.weight !== undefined ? updates.weight : existing.weight,
+    updates.severity ?? existing.severity,
+    updates.enabled !== undefined ? (updates.enabled ? 1 : 0) : (existing.enabled ? 1 : 0),
+    newVersion,
+    now,
+    ruleId
+  );
 
   return getCustomRule(ruleId);
 }
