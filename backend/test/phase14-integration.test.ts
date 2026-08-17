@@ -21,11 +21,13 @@ const testProjectId = newId();
 
 // This suite sends through real webhook delivery (deliverWebhook's
 // fetch + retry/backoff) against real third-party URLs for every send*
-// call after the webhook config is created in the first subtest — a
-// single one hitting a non-4xx failure can otherwise retry for several
-// minutes. A hard ceiling keeps that bounded and visible as a clear
-// timeout failure instead of a silent CI hang.
-test('Phase 14: Integration Ecosystem', { timeout: 60_000 }, async (t) => {
+// call after the webhook config is created in the first subtest.
+// Observed real latency per call against these endpoints from a CI
+// runner ranges up to several tens of seconds even on success (TLS
+// handshake + real round trip, no retries involved), and there are
+// ~15 such calls run sequentially, so the ceiling needs real headroom —
+// this is a backstop against genuine hangs, not a tight budget.
+test('Phase 14: Integration Ecosystem', { timeout: 10 * 60_000 }, async (t) => {
   // Initialize test data
   const userEmail = `test-${Date.now()}@example.com`;
   db.prepare(
@@ -113,10 +115,13 @@ test('Phase 14: Integration Ecosystem', { timeout: 60_000 }, async (t) => {
       severity: 'high',
     };
 
-    // This queues events for delivery
+    // sendWebhook queues the event, then delivers it synchronously before
+    // returning — by the time we query, it's already reached a terminal
+    // state ('sent' on success, 'failed' if delivery couldn't succeed),
+    // never still 'pending'.
     await sendWebhook(testProjectId, 'anomaly_alert', testPayload);
 
-    // Verify event was queued
+    // Verify the event was queued and delivery was attempted
     const events = db
       .prepare(
         'SELECT * FROM webhook_events WHERE webhook_id = ? AND event_type = ? ORDER BY created_at DESC LIMIT 1'
@@ -124,7 +129,7 @@ test('Phase 14: Integration Ecosystem', { timeout: 60_000 }, async (t) => {
       .get(webhook.id, 'anomaly_alert');
 
     ok(events);
-    strictEqual((events as any).status, 'pending');
+    ok(['sent', 'failed'].includes((events as any).status));
   });
 
   await t.test('Slack: Alert format with severity colors', async () => {
