@@ -1,5 +1,5 @@
 import { Router, Request, Response } from 'express';
-import { authMiddleware } from '../middleware/auth';
+import { requireAuth } from '../auth/middleware';
 import { db, newId } from '../db/index';
 import {
   createWebhookConfig,
@@ -10,17 +10,17 @@ import {
 } from '../integrations/webhooks';
 
 const router = Router();
-router.use(authMiddleware);
+router.use(requireAuth);
 
 // Create webhook
 router.post('/:projectId/webhooks', async (req: Request, res: Response) => {
   try {
     const { projectId } = req.params;
     const { service, webhook_url, event_types } = req.body;
-    const userId = (req as any).user?.id;
+    const userId = req.userId as string;
 
     // Verify project ownership
-    const project = db.prepare('SELECT * FROM projects WHERE id = ? AND user_id = ?').get(projectId);
+    const project = db.prepare('SELECT * FROM projects WHERE id = ? AND user_id = ?').get(projectId, userId) as any;
     if (!project) {
       return res.status(404).json({ error: 'Project not found' });
     }
@@ -48,10 +48,10 @@ router.post('/:projectId/webhooks', async (req: Request, res: Response) => {
 router.get('/:projectId/webhooks', async (req: Request, res: Response) => {
   try {
     const { projectId } = req.params;
-    const userId = (req as any).user?.id;
+    const userId = req.userId as string;
 
     // Verify project ownership
-    const project = db.prepare('SELECT * FROM projects WHERE id = ? AND user_id = ?').get(projectId);
+    const project = db.prepare('SELECT * FROM projects WHERE id = ? AND user_id = ?').get(projectId, userId) as any;
     if (!project) {
       return res.status(404).json({ error: 'Project not found' });
     }
@@ -68,15 +68,15 @@ router.get('/:projectId/webhooks', async (req: Request, res: Response) => {
 router.get('/:projectId/webhooks/:webhookId', async (req: Request, res: Response) => {
   try {
     const { projectId, webhookId } = req.params;
-    const userId = (req as any).user?.id;
+    const userId = req.userId as string;
 
     // Verify project ownership
-    const project = db.prepare('SELECT * FROM projects WHERE id = ? AND user_id = ?').get(projectId);
+    const project = db.prepare('SELECT * FROM projects WHERE id = ? AND user_id = ?').get(projectId, userId) as any;
     if (!project) {
       return res.status(404).json({ error: 'Project not found' });
     }
 
-    const webhook = db.prepare('SELECT * FROM webhooks WHERE id = ? AND project_id = ?').get(webhookId, projectId);
+    const webhook = db.prepare('SELECT * FROM webhooks WHERE id = ? AND project_id = ?').get(webhookId, projectId) as any;
     if (!webhook) {
       return res.status(404).json({ error: 'Webhook not found' });
     }
@@ -104,15 +104,15 @@ router.patch('/:projectId/webhooks/:webhookId', async (req: Request, res: Respon
   try {
     const { projectId, webhookId } = req.params;
     const { webhook_url, event_types, is_active } = req.body;
-    const userId = (req as any).user?.id;
+    const userId = req.userId as string;
 
     // Verify project ownership
-    const project = db.prepare('SELECT * FROM projects WHERE id = ? AND user_id = ?').get(projectId);
+    const project = db.prepare('SELECT * FROM projects WHERE id = ? AND user_id = ?').get(projectId, userId) as any;
     if (!project) {
       return res.status(404).json({ error: 'Project not found' });
     }
 
-    const webhook = db.prepare('SELECT * FROM webhooks WHERE id = ? AND project_id = ?').get(webhookId, projectId);
+    const webhook = db.prepare('SELECT * FROM webhooks WHERE id = ? AND project_id = ?').get(webhookId, projectId) as any;
     if (!webhook) {
       return res.status(404).json({ error: 'Webhook not found' });
     }
@@ -125,11 +125,11 @@ router.patch('/:projectId/webhooks/:webhookId', async (req: Request, res: Respon
     if (is_active !== undefined) updates.is_active = is_active ? 1 : 0;
 
     const updateKeys = Object.keys(updates).map(k => `${k} = ?`).join(', ');
-    const updateValues = Object.values(updates);
+    const updateValues = Object.values(updates) as (string | number)[];
 
     db.prepare(`UPDATE webhooks SET ${updateKeys} WHERE id = ?`).run(...updateValues, webhookId);
 
-    const updatedWebhook = db.prepare('SELECT * FROM webhooks WHERE id = ?').get(webhookId);
+    const updatedWebhook = db.prepare('SELECT * FROM webhooks WHERE id = ?').get(webhookId) as any;
     const result: WebhookConfig = {
       id: updatedWebhook.id,
       project_id: updatedWebhook.project_id,
@@ -152,15 +152,15 @@ router.patch('/:projectId/webhooks/:webhookId', async (req: Request, res: Respon
 router.delete('/:projectId/webhooks/:webhookId', async (req: Request, res: Response) => {
   try {
     const { projectId, webhookId } = req.params;
-    const userId = (req as any).user?.id;
+    const userId = req.userId as string;
 
     // Verify project ownership
-    const project = db.prepare('SELECT * FROM projects WHERE id = ? AND user_id = ?').get(projectId);
+    const project = db.prepare('SELECT * FROM projects WHERE id = ? AND user_id = ?').get(projectId, userId) as any;
     if (!project) {
       return res.status(404).json({ error: 'Project not found' });
     }
 
-    const webhook = db.prepare('SELECT * FROM webhooks WHERE id = ? AND project_id = ?').get(webhookId, projectId);
+    const webhook = db.prepare('SELECT * FROM webhooks WHERE id = ? AND project_id = ?').get(webhookId, projectId) as any;
     if (!webhook) {
       return res.status(404).json({ error: 'Webhook not found' });
     }
@@ -179,15 +179,15 @@ router.delete('/:projectId/webhooks/:webhookId', async (req: Request, res: Respo
 router.post('/:projectId/webhooks/:webhookId/test', async (req: Request, res: Response) => {
   try {
     const { projectId, webhookId } = req.params;
-    const userId = (req as any).user?.id;
+    const userId = req.userId as string;
 
     // Verify project ownership
-    const project = db.prepare('SELECT * FROM projects WHERE id = ? AND user_id = ?').get(projectId);
+    const project = db.prepare('SELECT * FROM projects WHERE id = ? AND user_id = ?').get(projectId, userId) as any;
     if (!project) {
       return res.status(404).json({ error: 'Project not found' });
     }
 
-    const webhook = db.prepare('SELECT * FROM webhooks WHERE id = ? AND project_id = ?').get(webhookId, projectId);
+    const webhook = db.prepare('SELECT * FROM webhooks WHERE id = ? AND project_id = ?').get(webhookId, projectId) as any;
     if (!webhook) {
       return res.status(404).json({ error: 'Webhook not found' });
     }
@@ -214,16 +214,16 @@ router.post('/:projectId/webhooks/:webhookId/test', async (req: Request, res: Re
 router.get('/:projectId/webhooks/:webhookId/events', async (req: Request, res: Response) => {
   try {
     const { projectId, webhookId } = req.params;
-    const userId = (req as any).user?.id;
+    const userId = req.userId as string;
     const limit = parseInt(req.query.limit as string) || 50;
 
     // Verify project ownership
-    const project = db.prepare('SELECT * FROM projects WHERE id = ? AND user_id = ?').get(projectId);
+    const project = db.prepare('SELECT * FROM projects WHERE id = ? AND user_id = ?').get(projectId, userId) as any;
     if (!project) {
       return res.status(404).json({ error: 'Project not found' });
     }
 
-    const webhook = db.prepare('SELECT * FROM webhooks WHERE id = ? AND project_id = ?').get(webhookId, projectId);
+    const webhook = db.prepare('SELECT * FROM webhooks WHERE id = ? AND project_id = ?').get(webhookId, projectId) as any;
     if (!webhook) {
       return res.status(404).json({ error: 'Webhook not found' });
     }

@@ -1,5 +1,56 @@
 import { Request, Response, NextFunction } from 'express';
 
+interface RateLimitOptions {
+  windowMs: number;
+  maxRequests: number;
+  message?: string;
+}
+
+interface LegacyRateLimitEntry {
+  count: number;
+  resetAt: number;
+}
+
+const legacyBuckets = new Map<string, LegacyRateLimitEntry>();
+
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, entry] of legacyBuckets) {
+    if (entry.resetAt <= now) legacyBuckets.delete(key);
+  }
+}, 60_000).unref();
+
+// Configurable per-route rate limiter factory (used by auth routes for
+// stricter limits on signup/login).
+export function rateLimit(options: RateLimitOptions) {
+  const { windowMs, maxRequests, message = "Too many requests — try again later" } = options;
+
+  return function rateLimitMiddleware(req: Request, res: Response, next: NextFunction) {
+    const key = `${req.path}:${req.ip}`;
+    const now = Date.now();
+    let entry = legacyBuckets.get(key);
+
+    if (!entry || entry.resetAt <= now) {
+      entry = { count: 0, resetAt: now + windowMs };
+      legacyBuckets.set(key, entry);
+    }
+
+    entry.count++;
+
+    res.setHeader("X-RateLimit-Limit", maxRequests);
+    res.setHeader("X-RateLimit-Remaining", Math.max(0, maxRequests - entry.count));
+    res.setHeader("X-RateLimit-Reset", Math.ceil(entry.resetAt / 1000));
+
+    if (entry.count > maxRequests) {
+      const retryAfter = Math.ceil((entry.resetAt - now) / 1000);
+      res.setHeader("Retry-After", retryAfter);
+      return res.status(429).json({ error: message });
+    }
+
+    next();
+  };
+}
+
 interface RateLimitStore {
   [key: string]: { count: number; resetTime: number };
 }
