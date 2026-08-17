@@ -135,20 +135,32 @@ async function deliverWebhook(webhook: WebhookConfig, event: WebhookEvent): Prom
 
   for (let attempt = 0; attempt < maxRetries; attempt++) {
     try {
-      const response = await fetch(webhook.webhook_url, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Nettle-Signature': generateSignature(event.payload),
-          'X-Nettle-Event-Type': event.event_type,
-        },
-        body: JSON.stringify({
-          id: event.id,
-          timestamp: event.created_at,
-          event_type: event.event_type,
-          data: event.payload,
-        }),
-      });
+      // Without a timeout, a receiving endpoint that accepts the connection
+      // but never responds hangs this attempt indefinitely — retries never
+      // even get a chance to run. 10s is generous for a webhook receiver
+      // while keeping each attempt's worst case bounded.
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 10_000);
+      let response: Response;
+      try {
+        response = await fetch(webhook.webhook_url, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Nettle-Signature': generateSignature(event.payload),
+            'X-Nettle-Event-Type': event.event_type,
+          },
+          body: JSON.stringify({
+            id: event.id,
+            timestamp: event.created_at,
+            event_type: event.event_type,
+            data: event.payload,
+          }),
+          signal: controller.signal,
+        });
+      } finally {
+        clearTimeout(timeout);
+      }
 
       if (response.ok) {
         updateWebhookEventStatus(event.id, 'sent');
