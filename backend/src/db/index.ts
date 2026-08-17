@@ -260,6 +260,27 @@ if (!columnExists("scans", "status")) {
   db.exec("ALTER TABLE scans ADD COLUMN status TEXT NOT NULL DEFAULT 'COMPLETED'");
 }
 
+// Phase 15: Performance Optimization — Additional Indexes
+db.exec(`
+  CREATE INDEX IF NOT EXISTS idx_scans_project_status ON scans(project_id, status);
+  CREATE INDEX IF NOT EXISTS idx_scans_created_at ON scans(scanned_at DESC);
+  CREATE INDEX IF NOT EXISTS idx_findings_scan_id ON finding_statuses(finding_hash);
+  CREATE INDEX IF NOT EXISTS idx_findings_status ON finding_statuses(status);
+  CREATE INDEX IF NOT EXISTS idx_alerts_severity ON alerts(severity);
+  CREATE INDEX IF NOT EXISTS idx_alerts_status ON alerts(status);
+  CREATE INDEX IF NOT EXISTS idx_events_occurred_at ON events(occurred_at DESC);
+  CREATE INDEX IF NOT EXISTS idx_anomaly_scores_project_composite
+    ON anomaly_scores(project_id, composite_score DESC);
+  CREATE INDEX IF NOT EXISTS idx_anomaly_scores_anomaly_type
+    ON anomaly_scores(anomaly_type);
+  CREATE INDEX IF NOT EXISTS idx_ml_baselines_updated_at
+    ON ml_baselines(updated_at DESC);
+  CREATE INDEX IF NOT EXISTS idx_custom_rules_severity
+    ON custom_rules(severity, enabled);
+  CREATE INDEX IF NOT EXISTS idx_webhook_events_created_at
+    ON webhook_events(created_at DESC);
+`);
+
 export function newId(): string {
   return crypto.randomUUID();
 }
