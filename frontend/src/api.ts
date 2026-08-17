@@ -142,6 +142,32 @@ export interface SessionInfo {
   current: boolean;
 }
 
+export interface CustomRule {
+  id: string;
+  project_id: string;
+  name: string;
+  description?: string;
+  pattern_type: "exact" | "regex" | "threshold" | "combination";
+  pattern_value: string;
+  weight: number;
+  severity: "critical" | "high" | "medium" | "low";
+  enabled: boolean;
+  version: number;
+  created_by: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CustomRuleInput {
+  name: string;
+  description?: string;
+  pattern_type: CustomRule["pattern_type"];
+  pattern_value: string;
+  weight: number;
+  severity: CustomRule["severity"];
+  enabled: boolean;
+}
+
 export interface ScanComparison {
   from: { id: string; score: number; scannedAt: string };
   to: { id: string; score: number; scannedAt: string };
@@ -334,6 +360,25 @@ export const api = {
       method: "PATCH",
       body: JSON.stringify({ status, notes }),
     }),
+
+  // Custom rules
+  listCustomRules: (projectId: string) =>
+    request<{ rules: CustomRule[] }>(`/api/custom-rules/${projectId}`),
+
+  createCustomRule: (projectId: string, input: CustomRuleInput) =>
+    request<CustomRule>(`/api/custom-rules/${projectId}`, {
+      method: "POST",
+      body: JSON.stringify(input),
+    }),
+
+  updateCustomRule: (projectId: string, ruleId: string, input: Partial<CustomRuleInput>) =>
+    request<CustomRule>(`/api/custom-rules/${projectId}/${ruleId}`, {
+      method: "PATCH",
+      body: JSON.stringify(input),
+    }),
+
+  deleteCustomRule: (projectId: string, ruleId: string) =>
+    request<void>(`/api/custom-rules/${projectId}/${ruleId}`, { method: "DELETE" }),
 
   // Badge
   getBadge: (projectId: string) => request<BadgeState>(`/api/projects/${projectId}/badge.json`),

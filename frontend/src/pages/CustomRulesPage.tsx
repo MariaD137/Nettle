@@ -1,19 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
-import { api } from '../api';
+import { api, ApiError, type CustomRule } from '../api';
 import './CustomRulesPage.css';
-
-interface CustomRule {
-  id: string;
-  name: string;
-  description?: string;
-  pattern_type: string;
-  weight: number;
-  severity: string;
-  enabled: boolean;
-  version: number;
-  created_at: string;
-}
 
 export function CustomRulesPage() {
   const { projectId } = useParams<{ projectId: string }>();
@@ -28,68 +16,37 @@ export function CustomRulesPage() {
   }, [projectId]);
 
   async function loadRules() {
+    if (!projectId) return;
     try {
       setLoading(true);
-      const response = await fetch(
-        `http://localhost:3000/api/custom-rules/${projectId}`,
-        {
-          headers: {
-            'Authorization': `Bearer ${localStorage.getItem('token')}`,
-          },
-        }
-      );
-      if (response.ok) {
-        const data = await response.json();
-        setRules(data.rules || []);
-      } else {
-        setError('Failed to load rules');
-      }
+      const { rules } = await api.listCustomRules(projectId);
+      setRules(rules);
     } catch (err) {
-      setError('Error loading rules');
+      setError(err instanceof ApiError ? err.message : 'Error loading rules');
     } finally {
       setLoading(false);
     }
   }
 
   async function deleteRule(ruleId: string) {
+    if (!projectId) return;
     if (confirm('Are you sure you want to delete this rule?')) {
       try {
-        const response = await fetch(
-          `http://localhost:3000/api/custom-rules/${projectId}/${ruleId}`,
-          {
-            method: 'DELETE',
-            headers: {
-              'Authorization': `Bearer ${localStorage.getItem('token')}`,
-            },
-          }
-        );
-        if (response.ok) {
-          setRules(rules.filter(r => r.id !== ruleId));
-        }
+        await api.deleteCustomRule(projectId, ruleId);
+        setRules(rules.filter(r => r.id !== ruleId));
       } catch (err) {
-        setError('Failed to delete rule');
+        setError(err instanceof ApiError ? err.message : 'Failed to delete rule');
       }
     }
   }
 
   async function toggleRule(rule: CustomRule) {
+    if (!projectId) return;
     try {
-      const response = await fetch(
-        `http://localhost:3000/api/custom-rules/${projectId}/${rule.id}`,
-        {
-          method: 'PATCH',
-          headers: {
-            'Authorization': `Bearer ${localStorage.getItem('token')}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({ enabled: !rule.enabled }),
-        }
-      );
-      if (response.ok) {
-        loadRules();
-      }
+      await api.updateCustomRule(projectId, rule.id, { enabled: !rule.enabled });
+      loadRules();
     } catch (err) {
-      setError('Failed to update rule');
+      setError(err instanceof ApiError ? err.message : 'Failed to update rule');
     }
   }
 
@@ -202,28 +159,14 @@ function RuleForm({ projectId, rule, onSave, onCancel }: RuleFormProps) {
     setLoading(true);
 
     try {
-      const url = rule
-        ? `http://localhost:3000/api/custom-rules/${projectId}/${rule.id}`
-        : `http://localhost:3000/api/custom-rules/${projectId}`;
-
-      const method = rule ? 'PATCH' : 'POST';
-
-      const response = await fetch(url, {
-        method,
-        headers: {
-          'Authorization': `Bearer ${localStorage.getItem('token')}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(formData),
-      });
-
-      if (response.ok) {
-        onSave();
+      if (rule) {
+        await api.updateCustomRule(projectId, rule.id, formData);
       } else {
-        setError('Failed to save rule');
+        await api.createCustomRule(projectId, formData);
       }
+      onSave();
     } catch (err) {
-      setError('Error saving rule');
+      setError(err instanceof ApiError ? err.message : 'Error saving rule');
     } finally {
       setLoading(false);
     }
@@ -260,7 +203,7 @@ function RuleForm({ projectId, rule, onSave, onCancel }: RuleFormProps) {
               <label>Pattern Type *</label>
               <select
                 value={formData.pattern_type}
-                onChange={e => setFormData({ ...formData, pattern_type: e.target.value })}
+                onChange={e => setFormData({ ...formData, pattern_type: e.target.value as CustomRule["pattern_type"] })}
               >
                 <option value="exact">Exact Match</option>
                 <option value="regex">Regular Expression</option>
@@ -273,7 +216,7 @@ function RuleForm({ projectId, rule, onSave, onCancel }: RuleFormProps) {
               <label>Severity *</label>
               <select
                 value={formData.severity}
-                onChange={e => setFormData({ ...formData, severity: e.target.value })}
+                onChange={e => setFormData({ ...formData, severity: e.target.value as CustomRule["severity"] })}
               >
                 <option value="low">Low</option>
                 <option value="medium">Medium</option>
