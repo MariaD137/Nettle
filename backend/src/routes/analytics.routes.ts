@@ -22,7 +22,7 @@ function verifyProjectAccess(req: Request, res: Response, next: Function) {
 
   const project = db.prepare(
     'SELECT * FROM projects WHERE id = ? AND user_id = ?'
-  ).get(projectId);
+  ).get(projectId, userId);
 
   if (!project) {
     return res.status(403).json({ error: 'Forbidden' });

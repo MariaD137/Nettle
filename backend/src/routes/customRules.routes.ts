@@ -26,7 +26,7 @@ function verifyProjectAccess(req: Request, res: Response, next: Function) {
 
   const project = db.prepare(
     'SELECT * FROM projects WHERE id = ? AND user_id = ?'
-  ).get(projectId);
+  ).get(projectId, userId);
 
   if (!project) {
     return res.status(403).json({ error: 'Forbidden' });
@@ -34,6 +34,15 @@ function verifyProjectAccess(req: Request, res: Response, next: Function) {
 
   (req as any).project = project;
   next();
+}
+
+// Fetches a rule and verifies it actually belongs to the project in the URL
+// (not just that the caller owns *some* project) — ruleId alone is not
+// sufficient to authorize access to a rule.
+function getOwnedRule(ruleId: string, projectId: string): CustomRule | null {
+  const rule = getCustomRule(ruleId);
+  if (!rule || rule.project_id !== projectId) return null;
+  return rule;
 }
 
 // POST /api/custom-rules/:projectId
@@ -92,9 +101,9 @@ router.get(
   requireAuth,
   verifyProjectAccess,
   (req: Request, res: Response) => {
-    const { ruleId } = req.params;
+    const { projectId, ruleId } = req.params;
 
-    const rule = getCustomRule(ruleId);
+    const rule = getOwnedRule(ruleId, projectId);
     if (!rule) {
       return res.status(404).json({ error: 'Rule not found' });
     }
@@ -109,8 +118,8 @@ router.patch(
   requireAuth,
   verifyProjectAccess,
   async (req: Request, res: Response) => {
-    const { ruleId } = req.params;
-    const existing = getCustomRule(ruleId);
+    const { projectId, ruleId } = req.params;
+    const existing = getOwnedRule(ruleId, projectId);
 
     if (!existing) {
       return res.status(404).json({ error: 'Rule not found' });
@@ -141,9 +150,9 @@ router.delete(
   requireAuth,
   verifyProjectAccess,
   (req: Request, res: Response) => {
-    const { ruleId } = req.params;
+    const { projectId, ruleId } = req.params;
 
-    if (!deleteCustomRule(ruleId)) {
+    if (!getOwnedRule(ruleId, projectId) || !deleteCustomRule(ruleId)) {
       return res.status(404).json({ error: 'Rule not found' });
     }
 
@@ -157,8 +166,12 @@ router.post(
   requireAuth,
   verifyProjectAccess,
   async (req: Request, res: Response) => {
-    const { ruleId } = req.params;
+    const { projectId, ruleId } = req.params;
     const { events } = req.body;
+
+    if (!getOwnedRule(ruleId, projectId)) {
+      return res.status(404).json({ error: 'Rule not found' });
+    }
 
     if (!Array.isArray(events) || events.length === 0) {
       return res.status(400).json({ error: 'events must be a non-empty array' });
@@ -183,7 +196,11 @@ router.get(
   requireAuth,
   verifyProjectAccess,
   (req: Request, res: Response) => {
-    const { ruleId } = req.params;
+    const { projectId, ruleId } = req.params;
+
+    if (!getOwnedRule(ruleId, projectId)) {
+      return res.status(404).json({ error: 'Rule not found' });
+    }
 
     const versions = getRuleVersions(ruleId);
     res.json({ versions });
@@ -196,8 +213,12 @@ router.get(
   requireAuth,
   verifyProjectAccess,
   (req: Request, res: Response) => {
-    const { ruleId } = req.params;
+    const { projectId, ruleId } = req.params;
     const { limit } = req.query;
+
+    if (!getOwnedRule(ruleId, projectId)) {
+      return res.status(404).json({ error: 'Rule not found' });
+    }
 
     const results = getTestResults(ruleId, parseInt(limit as string) || 10);
     res.json({ results });
