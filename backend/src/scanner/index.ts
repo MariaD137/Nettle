@@ -20,8 +20,12 @@ import { SCANNER_VERSION, type ScanReport } from "./types";
 import { getSemgrepVersion } from "./initialization";
 import { SCORING_CONFIG, calculateScore, calculateConfidence } from "./scoringConfig";
 import { correlateAttackChains } from "./attackChains";
+import { scanTerraformSecurity } from "./terraformSecurity";
+import { scanDockerSecurity } from "./dockerSecurity";
+import { scanKubernetesSecurity } from "./kubernetesSecurity";
+import { scanCicdSecurity } from "./cicdSecurity";
 
-const SCANNED_EXTENSIONS = [".js", ".ts", ".jsx", ".tsx", ".env", ".json"];
+const SCANNED_EXTENSIONS = [".js", ".ts", ".jsx", ".tsx", ".env", ".json", ".tf", ".yaml", ".yml", "dockerfile"];
 
 export function runScan(targetPath: string): ScanReport {
   const targetRoot = path.resolve(targetPath);
@@ -44,6 +48,10 @@ export function runScan(targetPath: string): ScanReport {
     scanFrontendSecurity(files, targetRoot),
     scanAiSecurity(files, targetRoot),
     scanSessionJwt(files, targetRoot),
+    scanTerraformSecurity(files, targetRoot),
+    scanDockerSecurity(files, targetRoot),
+    scanKubernetesSecurity(files, targetRoot),
+    scanCicdSecurity(files, targetRoot),
   ];
 
   const findings = results.flatMap((r) => r.findings);
