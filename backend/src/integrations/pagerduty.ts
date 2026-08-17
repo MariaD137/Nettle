@@ -46,7 +46,7 @@ export async function sendPagerDutyAlert(
     ],
   };
 
-  await sendWebhook(projectId, 'incident_alert', payload);
+  await sendWebhook(projectId, 'incident_alert', payload, 'pagerduty');
 }
 
 export async function resolvePagerDutyIncident(
@@ -61,5 +61,5 @@ export async function resolvePagerDutyIncident(
     dedup_key,
   };
 
-  await sendWebhook(projectId, 'incident_resolved', payload);
+  await sendWebhook(projectId, 'incident_resolved', payload, 'pagerduty');
 }

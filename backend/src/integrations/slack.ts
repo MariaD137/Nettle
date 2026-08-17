@@ -58,7 +58,7 @@ export async function sendSlackAlert(
     ],
   };
 
-  await sendWebhook(projectId, 'anomaly_alert', payload);
+  await sendWebhook(projectId, 'anomaly_alert', payload, 'slack');
 }
 
 export async function sendSlackNotification(
@@ -89,7 +89,7 @@ export async function sendSlackNotification(
     ],
   };
 
-  await sendWebhook(projectId, 'notification', payload);
+  await sendWebhook(projectId, 'notification', payload, 'slack');
 }
 
 function formatDetailsForSlack(details: Record<string, any>): string {

@@ -1,5 +1,10 @@
 import { db, newId } from "../db";
 import type { Alert, AlertSeverity, AlertStatus } from "./types";
+import { getWebhookConfigs, sendWebhook } from "../integrations/webhooks";
+import { sendSlackAlert } from "../integrations/slack";
+import { sendPagerDutyAlert } from "../integrations/pagerduty";
+import { sendSplunkAlert } from "../integrations/splunk";
+import { sendDatadogAlert } from "../integrations/datadog";
 
 interface AlertRow {
   id: string;
@@ -36,7 +41,37 @@ export function createAlert(projectId: string, severity: AlertSeverity, rule: st
   db.prepare(
     "INSERT INTO alerts (id, project_id, occurred_at, severity, rule, message, status) VALUES (?, ?, ?, ?, ?, ?, ?)"
   ).run(alert.id, alert.projectId, alert.occurredAt, alert.severity, alert.rule, alert.message, alert.status);
+  notifyAlertWebhooks(alert);
   return alert;
+}
+
+/**
+ * Fans a newly-created alert out to every active webhook configured for the
+ * project, using the right per-service payload shape. Fire-and-forget by
+ * design — a slow or unreachable webhook (deliverWebhook retries with
+ * backoff up to ~8 minutes) must never block or fail the caller, matching
+ * the same "monitoring can't break the thing it's monitoring" principle as
+ * nettleMonitor.ts. Errors are swallowed after being logged.
+ */
+function notifyAlertWebhooks(alert: Alert): void {
+  const webhooks = getWebhookConfigs(alert.projectId);
+  const services = new Set(webhooks.filter((w) => w.is_active).map((w) => w.service));
+  const details = { rule: alert.rule, message: alert.message, alert_id: alert.id };
+
+  const deliveries: Promise<void>[] = [];
+  if (services.has("slack")) deliveries.push(sendSlackAlert(alert.projectId, alert.rule, alert.severity, details));
+  if (services.has("pagerduty")) deliveries.push(sendPagerDutyAlert(alert.projectId, alert.rule, alert.severity, details));
+  if (services.has("splunk")) deliveries.push(sendSplunkAlert(alert.projectId, alert.rule, alert.severity, details));
+  if (services.has("datadog")) deliveries.push(sendDatadogAlert(alert.projectId, alert.rule, alert.severity, details));
+  if (services.has("generic")) {
+    deliveries.push(sendWebhook(alert.projectId, "incident_alert", { alert, ...details }, "generic"));
+  }
+
+  Promise.allSettled(deliveries).then((results) => {
+    for (const r of results) {
+      if (r.status === "rejected") console.error("Alert webhook delivery failed:", r.reason);
+    }
+  });
 }
 
 export function listAlerts(projectId: string): Alert[] {

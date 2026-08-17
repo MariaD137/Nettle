@@ -109,13 +109,17 @@ export function queueWebhookEvent(
   };
 }
 
-// Send webhook with retry logic
+// Send webhook with retry logic. When `service` is provided, only webhooks
+// configured for that service are considered — otherwise a service-shaped
+// payload (e.g. Slack's attachment format) could be delivered to a webhook
+// configured for a different service that happens to share an event type.
 export async function sendWebhook(
   projectId: string,
   eventType: string,
-  payload: Record<string, any>
+  payload: Record<string, any>,
+  service?: string
 ): Promise<void> {
-  const webhooks = getWebhookConfigs(projectId);
+  const webhooks = getWebhookConfigs(projectId, service);
 
   for (const webhook of webhooks) {
     if (!webhook.is_active || !webhook.event_types.includes(eventType)) continue;

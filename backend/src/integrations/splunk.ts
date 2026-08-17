@@ -46,7 +46,7 @@ export async function sendSplunkAlert(
     },
   };
 
-  await sendWebhook(projectId, 'anomaly_alert', payload);
+  await sendWebhook(projectId, 'anomaly_alert', payload, 'splunk');
 }
 
 export async function sendSplunkMetric(
@@ -71,7 +71,7 @@ export async function sendSplunkMetric(
     },
   };
 
-  await sendWebhook(projectId, 'metric_event', payload);
+  await sendWebhook(projectId, 'metric_event', payload, 'splunk');
 }
 
 export async function sendSplunkEvent(
@@ -93,5 +93,5 @@ export async function sendSplunkEvent(
     },
   };
 
-  await sendWebhook(projectId, 'platform_event', payload);
+  await sendWebhook(projectId, 'platform_event', payload, 'splunk');
 }

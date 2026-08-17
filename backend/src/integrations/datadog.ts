@@ -66,7 +66,7 @@ export async function sendDatadogAlert(
     },
   };
 
-  await sendWebhook(projectId, 'anomaly_alert', payload);
+  await sendWebhook(projectId, 'anomaly_alert', payload, 'datadog');
 }
 
 export async function sendDatadogMetric(
@@ -100,7 +100,7 @@ export async function sendDatadogMetric(
     },
   };
 
-  await sendWebhook(projectId, 'metric_event', payload);
+  await sendWebhook(projectId, 'metric_event', payload, 'datadog');
 }
 
 export async function sendDatadogEvent(
@@ -134,7 +134,7 @@ export async function sendDatadogEvent(
     },
   };
 
-  await sendWebhook(projectId, 'platform_event', payload);
+  await sendWebhook(projectId, 'platform_event', payload, 'datadog');
 }
 
 export async function sendDatadogLog(
@@ -158,5 +158,5 @@ export async function sendDatadogLog(
     },
   };
 
-  await sendWebhook(projectId, 'log_event', payload);
+  await sendWebhook(projectId, 'log_event', payload, 'datadog');
 }
