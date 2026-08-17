@@ -130,8 +130,15 @@ export async function sendWebhook(
 }
 
 async function deliverWebhook(webhook: WebhookConfig, event: WebhookEvent): Promise<void> {
-  const maxRetries = 5;
-  const backoffMs = [1000, 5000, 30000, 2 * 60000, 8 * 60000];
+  // A security/anomaly alert that's still undecided 11 minutes after it
+  // fired isn't useful even as "fire and forget" background delivery, and
+  // this is directly awaited in real caller code paths (e.g. sendWebhook
+  // used inline by tests and by some integrations), so an unbounded-feeling
+  // wait here becomes a caller-visible hang. 4 attempts over well under a
+  // minute keeps meaningful retry resilience against a transient blip
+  // without that cost.
+  const maxRetries = 4;
+  const backoffMs = [1000, 3000, 10000];
 
   for (let attempt = 0; attempt < maxRetries; attempt++) {
     try {

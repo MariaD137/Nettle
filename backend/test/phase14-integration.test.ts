@@ -19,7 +19,13 @@ import crypto from 'crypto';
 const testUserId = newId();
 const testProjectId = newId();
 
-test('Phase 14: Integration Ecosystem', async (t) => {
+// This suite sends through real webhook delivery (deliverWebhook's
+// fetch + retry/backoff) against real third-party URLs for every send*
+// call after the webhook config is created in the first subtest — a
+// single one hitting a non-4xx failure can otherwise retry for several
+// minutes. A hard ceiling keeps that bounded and visible as a clear
+// timeout failure instead of a silent CI hang.
+test('Phase 14: Integration Ecosystem', { timeout: 60_000 }, async (t) => {
   // Initialize test data
   const userEmail = `test-${Date.now()}@example.com`;
   db.prepare(
