@@ -117,6 +117,22 @@ test("does not flag code with no deserialization patterns at all", () => {
   }
 });
 
+test("does not flag plain JSON.parse(req.body) — it isn't RCE-capable the way the other patterns are", () => {
+  const { dir, file } = tempFile(`
+    app.post('/webhook', (req, res) => {
+      const payload = JSON.parse(req.body.toString());
+      res.json({ received: payload });
+    });
+  `);
+  try {
+    const { findings, passed } = scanApiSecurity([file], dir);
+    assert.equal(findings.some((f) => f.title === "Potentially unsafe deserialization"), false);
+    assert.ok(passed.some((p) => p.title === "No unsafe deserialization patterns detected"));
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("unsafe deserialization detection reaches the aggregated scan report", () => {
   const { dir } = tempFile(`
     app.post('/exec', (req, res) => {

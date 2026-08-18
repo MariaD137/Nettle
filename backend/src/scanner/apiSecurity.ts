@@ -281,9 +281,16 @@ export function scanApiSecurity(files: string[], targetRoot: string): { findings
     passed.push({ category: "Security", title: "No path traversal patterns detected" });
   }
 
-  // Unsafe deserialization detection
+  // Unsafe deserialization detection.
+  //
+  // Deliberately does NOT include plain JSON.parse(req.body) — unlike the
+  // patterns below, JSON.parse can't execute code or construct arbitrary
+  // objects/classes from its input, so it isn't "unsafe deserialization" in
+  // the RCE/object-injection sense this finding warns about. Flagging it
+  // the same as node-serialize or an unguarded eval would put a completely
+  // ordinary, safe Express pattern behind the same "can lead to remote code
+  // execution" wording as things that genuinely can.
   const deserializationPatterns = [
-    /JSON\.parse\s*\(\s*req\.(body|query|params)/,
     /unserialize\s*\(/,
     /deserialize\s*\([^)]*req\./,
     /node-serialize/,
@@ -304,7 +311,7 @@ export function scanApiSecurity(files: string[], targetRoot: string): { findings
           detail: "Deserializing untrusted data can lead to remote code execution if the deserialization library allows object construction or code execution.",
           file: rel,
           line: null,
-          remediation: "Avoid deserializing untrusted input. Use JSON.parse only with proper schema validation afterward. Never use eval or unserialize on user input. For YAML, use yaml.safeLoad instead of yaml.load.",
+          remediation: "Avoid deserializing untrusted input with libraries that can construct arbitrary objects or execute code (node-serialize, unserialize, eval, yaml.load). For YAML, use yaml.safeLoad instead of yaml.load. Plain JSON.parse is safe from this class of issue, but still validate the resulting data against a schema before trusting it.",
         });
         break;
       }
