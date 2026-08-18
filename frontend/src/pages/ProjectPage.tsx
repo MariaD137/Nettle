@@ -4,7 +4,7 @@ import {
   api, ApiError,
   type Alert, type AlertCounts, type AlertStatus, type BadgeState,
   type Finding, type FindingStatus, type Project, type ScanComparison,
-  type ScanReport, type StoredFindingStatus, type StoredScan,
+  type ScanReport, type Severity, type StoredFindingStatus, type StoredScan,
 } from "../api";
 import BadgePill from "../components/BadgePill";
 import NettleLogo from "../components/NettleLogo";
@@ -406,9 +406,16 @@ const FINDING_STATUS_LABELS: Record<FindingStatus, string> = {
   accepted_risk: "Accepted risk",
 };
 
+type FindingSort = "severity-desc" | "severity-asc" | "title-asc";
+const SEVERITY_RANK: Record<Severity, number> = { critical: 0, high: 1, medium: 2, low: 3, info: 4 };
+
 function FindingsTab({ projectId, latestScan }: { projectId: string; latestScan: StoredScan | null }) {
   const [statuses, setStatuses] = useState<StoredFindingStatus[] | null>(null);
-  const [filter, setFilter] = useState<FindingStatus | "all">("all");
+  const [statusFilter, setStatusFilter] = useState<FindingStatus | "all">("all");
+  const [severityFilter, setSeverityFilter] = useState<Severity | "all">("all");
+  const [categoryFilter, setCategoryFilter] = useState<string>("all");
+  const [search, setSearch] = useState("");
+  const [sort, setSort] = useState<FindingSort>("severity-desc");
 
   useEffect(() => {
     api.listFindingStatuses(projectId).then(({ findingStatuses }) => setStatuses(findingStatuses));
@@ -418,9 +425,18 @@ function FindingsTab({ projectId, latestScan }: { projectId: string; latestScan:
 
   async function updateStatus(findingHash: string, status: FindingStatus) {
     const { findingStatus } = await api.updateFindingStatus(projectId, findingHash, status);
+    applyStatus(findingStatus);
+  }
+
+  async function saveNote(findingHash: string, status: FindingStatus, note: string) {
+    const { findingStatus } = await api.updateFindingStatus(projectId, findingHash, status, note);
+    applyStatus(findingStatus);
+  }
+
+  function applyStatus(findingStatus: StoredFindingStatus) {
     setStatuses((prev) => {
       if (!prev) return [findingStatus];
-      const idx = prev.findIndex((s) => s.findingHash === findingHash);
+      const idx = prev.findIndex((s) => s.findingHash === findingStatus.findingHash);
       if (idx >= 0) return [...prev.slice(0, idx), findingStatus, ...prev.slice(idx + 1)];
       return [...prev, findingStatus];
     });
@@ -432,52 +448,155 @@ function FindingsTab({ projectId, latestScan }: { projectId: string; latestScan:
     return statuses.find((s) => s.findingHash === hash)?.status ?? "open";
   }
 
-  const filtered = filter === "all"
-    ? findings
-    : findings.filter((f) => getStatus(f) === filter);
+  function getNote(finding: Finding): string {
+    if (!statuses) return "";
+    const hash = hashFinding(finding.category, finding.title, finding.file);
+    return statuses.find((s) => s.findingHash === hash)?.notes ?? "";
+  }
+
+  const categories = Array.from(new Set(findings.map((f) => f.category))).sort();
+
+  let filtered = findings;
+  if (statusFilter !== "all") filtered = filtered.filter((f) => getStatus(f) === statusFilter);
+  if (severityFilter !== "all") filtered = filtered.filter((f) => f.severity === severityFilter);
+  if (categoryFilter !== "all") filtered = filtered.filter((f) => f.category === categoryFilter);
+  if (search.trim()) {
+    const q = search.trim().toLowerCase();
+    filtered = filtered.filter(
+      (f) => f.title.toLowerCase().includes(q) || f.detail.toLowerCase().includes(q) || (f.file ?? "").toLowerCase().includes(q)
+    );
+  }
+  filtered = [...filtered].sort((a, b) => {
+    if (sort === "title-asc") return a.title.localeCompare(b.title);
+    const diff = SEVERITY_RANK[a.severity] - SEVERITY_RANK[b.severity];
+    return sort === "severity-asc" ? -diff : diff;
+  });
 
   return (
     <div className="card">
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
-        <h2 style={{ margin: 0 }}>Findings ({findings.length})</h2>
-        <select className="filter-select" value={filter} onChange={(e) => setFilter(e.target.value as FindingStatus | "all")}>
-          <option value="all">All</option>
-          <option value="open">Open</option>
-          <option value="in_progress">In progress</option>
-          <option value="resolved">Resolved</option>
-          <option value="false_positive">False positive</option>
-          <option value="accepted_risk">Accepted risk</option>
+        <h2 style={{ margin: 0 }}>
+          Findings ({filtered.length}{filtered.length !== findings.length ? ` of ${findings.length}` : ""})
+        </h2>
+      </div>
+
+      {findings.length > 0 && (
+        <div className="findings-toolbar">
+          <input
+            type="search"
+            className="findings-search"
+            placeholder="Search findings…"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            aria-label="Search findings"
+          />
+          <select className="filter-select" value={severityFilter} onChange={(e) => setSeverityFilter(e.target.value as Severity | "all")} aria-label="Filter by severity">
+            <option value="all">All severities</option>
+            <option value="critical">Critical</option>
+            <option value="high">High</option>
+            <option value="medium">Medium</option>
+            <option value="low">Low</option>
+            <option value="info">Info</option>
+          </select>
+          <select className="filter-select" value={categoryFilter} onChange={(e) => setCategoryFilter(e.target.value)} aria-label="Filter by category">
+            <option value="all">All categories</option>
+            {categories.map((c) => (
+              <option key={c} value={c}>{c}</option>
+            ))}
+          </select>
+          <select className="filter-select" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value as FindingStatus | "all")} aria-label="Filter by status">
+            <option value="all">All statuses</option>
+            {Object.entries(FINDING_STATUS_LABELS).map(([v, l]) => (
+              <option key={v} value={v}>{l}</option>
+            ))}
+          </select>
+          <select className="filter-select" value={sort} onChange={(e) => setSort(e.target.value as FindingSort)} aria-label="Sort findings">
+            <option value="severity-desc">Severity: highest first</option>
+            <option value="severity-asc">Severity: lowest first</option>
+            <option value="title-asc">Title: A–Z</option>
+          </select>
+        </div>
+      )}
+
+      {findings.length === 0 && <p className="muted">No findings from the latest scan.</p>}
+      {findings.length > 0 && filtered.length === 0 && <p className="muted">No findings match your filters.</p>}
+      {filtered.map((f, i) => (
+        <FindingManagementRow
+          key={i}
+          finding={f}
+          status={getStatus(f)}
+          savedNote={getNote(f)}
+          onStatusChange={(status) => updateStatus(hashFinding(f.category, f.title, f.file), status)}
+          onSaveNote={(note) => saveNote(hashFinding(f.category, f.title, f.file), getStatus(f), note)}
+        />
+      ))}
+    </div>
+  );
+}
+
+function FindingManagementRow({
+  finding,
+  status,
+  savedNote,
+  onStatusChange,
+  onSaveNote,
+}: {
+  finding: Finding;
+  status: FindingStatus;
+  savedNote: string;
+  onStatusChange: (status: FindingStatus) => void;
+  onSaveNote: (note: string) => Promise<void>;
+}) {
+  const [note, setNote] = useState(savedNote);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    setNote(savedNote);
+  }, [savedNote]);
+
+  const dirty = note !== savedNote;
+
+  async function handleSaveNote() {
+    setSaving(true);
+    try {
+      await onSaveNote(note);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className={`finding finding-${finding.severity}`}>
+      <div className="finding-top">
+        <span className="finding-title">{finding.title}</span>
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <span className={`status-pill status-${status}`}>{FINDING_STATUS_LABELS[status]}</span>
+          <span className="finding-cat">{finding.category}</span>
+        </div>
+      </div>
+      <p className="finding-detail">{finding.detail}</p>
+      {finding.file && <p className="finding-file">{finding.file}{finding.line ? `:${finding.line}` : ""}</p>}
+      <div className="alert-actions">
+        <select className="filter-select" value={status} onChange={(e) => onStatusChange(e.target.value as FindingStatus)}>
+          {Object.entries(FINDING_STATUS_LABELS).map(([v, l]) => (
+            <option key={v} value={v}>{l}</option>
+          ))}
         </select>
       </div>
-      {findings.length === 0 && <p className="muted">No findings from the latest scan.</p>}
-      {filtered.map((f, i) => {
-        const hash = hashFinding(f.category, f.title, f.file);
-        const status = getStatus(f);
-        return (
-          <div key={i} className={`finding finding-${f.severity}`}>
-            <div className="finding-top">
-              <span className="finding-title">{f.title}</span>
-              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                <span className={`status-pill status-${status}`}>{FINDING_STATUS_LABELS[status]}</span>
-                <span className="finding-cat">{f.category}</span>
-              </div>
-            </div>
-            <p className="finding-detail">{f.detail}</p>
-            {f.file && <p className="finding-file">{f.file}{f.line ? `:${f.line}` : ""}</p>}
-            <div className="alert-actions">
-              <select
-                className="filter-select"
-                value={status}
-                onChange={(e) => updateStatus(hash, e.target.value as FindingStatus)}
-              >
-                {Object.entries(FINDING_STATUS_LABELS).map(([v, l]) => (
-                  <option key={v} value={v}>{l}</option>
-                ))}
-              </select>
-            </div>
-          </div>
-        );
-      })}
+      <div className="finding-notes">
+        <textarea
+          className="finding-notes-input"
+          placeholder="Add a note — context for your team, why this was accepted, a ticket link…"
+          value={note}
+          onChange={(e) => setNote(e.target.value)}
+          rows={2}
+        />
+        {dirty && (
+          <button type="button" className="small secondary" onClick={handleSaveNote} disabled={saving}>
+            {saving ? "Saving…" : "Save note"}
+          </button>
+        )}
+      </div>
     </div>
   );
 }
