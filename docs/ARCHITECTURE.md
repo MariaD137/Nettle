@@ -38,15 +38,21 @@ The platform has two tiers:
 - **Port**: `PORT` env var, defaults to 8080
 
 ### Route modules (`backend/src/routes/`)
+Full endpoint-by-endpoint reference: see `API.md` at the repo root.
+
 | Route file | Prefix | Purpose |
 |-----------|--------|---------|
-| `health.routes.ts` | `/health` | Health check for App Runner |
-| `auth.routes.ts` | `/api/auth/*` | Signup, login, logout, password reset |
-| `scans.routes.ts` | `/api/scans` | Upload zip, run scan, retrieve results |
-| `projects.routes.ts` | `/api/projects` | CRUD for monitored projects (Tier 2) |
-| `events.routes.ts` | `/api/events` | Ingest request events from customer middleware |
-| `badge.routes.ts` | `/api/badge/*` | Trust badge SVG and state endpoint |
+| `health.routes.ts` | `/health` | Health check |
+| `auth.routes.ts` | `/api/auth/*` | Signup, login, logout, password reset, sessions, account deletion |
+| `scans.routes.ts` | `/api/scans*` | Synchronous upload/repo/URL scans — the CLI's and any direct API integration's contract |
+| `scanJobs.routes.ts` | `/api/scans/jobs/*` | Async, worker_thread-backed counterpart used by the web dashboard (real progress + queuing) |
+| `projects.routes.ts` | `/api/projects/*`, `/api/overview` | CRUD for projects, alerts, scan history/comparison, finding statuses, dashboard summary |
+| `events.routes.ts` | `/api/events` | Ingest request events from customer middleware (Tier 2) |
+| `badge.routes.ts` | `/api/projects/:id/badge.svg`, `.json` | Public, unauthenticated trust badge |
 | `billing.routes.ts` | `/api/billing/*` | Stripe checkout sessions and webhook receiver |
+| `customRules.routes.ts` | `/api/custom-rules/:projectId/*` | User-defined detection rules |
+| `analytics.routes.ts` | `/api/analytics/:projectId/*` | ML baseline/anomaly analytics |
+| `integrations.routes.ts` | `/api/projects/:projectId/webhooks/*` | Webhook configuration and delivery history |
 
 ## Database
 

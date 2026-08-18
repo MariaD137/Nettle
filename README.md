@@ -28,6 +28,9 @@ they ship.
 - **`.github/workflows/`** — CI (lint + test on every PR touching
   `backend/` or `frontend/`) and deploy (build + push to ECR on push to
   `main`).
+- **`API.md`** — full REST API reference: every endpoint, auth scheme,
+  request/response shape, rate limit, and error format, written directly
+  against the route files rather than aspirationally.
 
 ## What's real vs. what's still a known gap
 
