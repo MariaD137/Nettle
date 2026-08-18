@@ -6,7 +6,7 @@ import multer from "multer";
 import { runScan, runUrlScan, SsrfBlockedError, UrlScanUnreachableError } from "../scanner";
 import { resolveScanRoot } from "../scanner/resolveScanRoot";
 import { cloneRepo } from "../scanner/gitAuth";
-import { findProjectByApiKey, getDecryptedRepoAccessToken } from "../patrol/projects";
+import { findProjectByApiKeyForScope, getDecryptedRepoAccessToken } from "../patrol/projects";
 import { recordScan } from "../patrol/scans";
 import { requireAuth, optionalAuth } from "../auth/middleware";
 import { requireSubscription } from "../billing/subscription";
@@ -71,7 +71,7 @@ scansRouter.post("/api/scans", optionalAuth, upload.single("codebase"), (req: Re
   // Resolve the billing account before doing any work — an over-quota
   // caller shouldn't get a scan run on their behalf and then be refused.
   const upfrontKey = req.header("x-nettle-api-key");
-  const upfrontProject = upfrontKey ? findProjectByApiKey(upfrontKey) : null;
+  const upfrontProject = upfrontKey ? findProjectByApiKeyForScope(upfrontKey, "scan") : null;
   const billedUserId = req.userId ?? upfrontProject?.userId;
   if (quotaExceeded(billedUserId, res)) {
     fs.unlinkSync(req.file.path);
@@ -138,7 +138,7 @@ scansRouter.post("/api/scans/repo", requireAuth, requireSubscription, (req: Requ
     return res.status(400).json({ error: "Only GitHub, GitLab, and Bitbucket HTTPS URLs are supported" });
   }
 
-  const repoProject = apiKey ? findProjectByApiKey(apiKey) : null;
+  const repoProject = apiKey ? findProjectByApiKeyForScope(apiKey, "scan") : null;
   const billedUserId = req.userId ?? repoProject?.userId;
   if (quotaExceeded(billedUserId, res)) return;
 
@@ -209,7 +209,7 @@ scansRouter.post("/api/scans/url", requireAuth, async (req: Request, res: Respon
   }
 
   const apiKey = typeof req.body?.apiKey === "string" ? req.body.apiKey.trim() : "";
-  const urlProject = apiKey ? findProjectByApiKey(apiKey) : null;
+  const urlProject = apiKey ? findProjectByApiKeyForScope(apiKey, "scan") : null;
   const billedUserId = req.userId ?? urlProject?.userId;
   if (quotaExceeded(billedUserId, res)) return;
 

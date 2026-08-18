@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { createProject, updateProject, getProject } from "../src/patrol/projects";
+import { createProject, updateProject, getProject, deleteProject, rotateApiKey, findProjectByApiKey } from "../src/patrol/projects";
+import { listApiKeys } from "../src/patrol/apiKeys";
 import { createUser } from "../src/auth/users";
 
 const PASSWORD = "correct horse battery staple";
@@ -50,4 +51,31 @@ test("updateProject can set, change, and clear repository info independently of 
 
   const cleared = updateProject(project.id, { repoUrl: "" });
   assert.equal(cleared?.repoUrl, "");
+});
+
+test("rotateApiKey (legacy, project-level) keeps projects.api_key and the default api_keys row in sync", async () => {
+  const userId = await testUserId();
+  const project = createProject(userId, "Rotate Sync Target");
+  const oldKey = project.apiKey;
+
+  const rotated = rotateApiKey(project.id);
+  assert.notEqual(rotated?.apiKey, oldKey);
+
+  const [defaultKey] = listApiKeys(project.id);
+  assert.equal(defaultKey.isDefault, true);
+  // listApiKeys returns the masked form — confirm the *value* changed by
+  // checking auth behavior instead of comparing strings directly.
+  assert.equal(findProjectByApiKey(oldKey), null, "the old key must stop working immediately");
+  assert.ok(findProjectByApiKey(rotated!.apiKey), "the new key (mirrored into both places) must work");
+});
+
+test("deleteProject removes its api_keys rows too — no orphaned keys left behind", async () => {
+  const userId = await testUserId();
+  const project = createProject(userId, "To Delete");
+  const key = project.apiKey;
+  assert.ok(findProjectByApiKey(key));
+
+  deleteProject(project.id);
+
+  assert.equal(findProjectByApiKey(key), null);
 });

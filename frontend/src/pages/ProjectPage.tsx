@@ -2,9 +2,9 @@ import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import {
   api, ApiError,
-  type Alert, type AlertCounts, type AlertStatus, type BadgeState,
+  type Alert, type AlertCounts, type AlertStatus, type ApiKeyScope, type BadgeState,
   type Finding, type FindingHistoryEntry, type FindingStatus, type Project, type ScanComparison,
-  type ScanReport, type Severity, type StoredFindingStatus, type StoredScan,
+  type ScanReport, type Severity, type StoredApiKey, type StoredFindingStatus, type StoredScan,
 } from "../api";
 import BadgePill from "../components/BadgePill";
 import NettleLogo from "../components/NettleLogo";
@@ -874,6 +874,156 @@ function HistoryTab({ projectId }: { projectId: string }) {
   );
 }
 
+const ALL_API_KEY_SCOPES: ApiKeyScope[] = ["scan", "events"];
+const API_KEY_SCOPE_LABELS: Record<ApiKeyScope, string> = { scan: "Scan", events: "Events" };
+
+function ApiKeysCard({ projectId }: { projectId: string }) {
+  const [keys, setKeys] = useState<StoredApiKey[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [showNew, setShowNew] = useState(false);
+  const [newName, setNewName] = useState("");
+  const [newScopes, setNewScopes] = useState<ApiKeyScope[]>(ALL_API_KEY_SCOPES);
+  const [creating, setCreating] = useState(false);
+  // The one moment a full secret is ever shown — right after create/rotate,
+  // and only until the user dismisses it. Every other read of a key
+  // (the list below) only ever has the masked form from the API.
+  const [revealed, setRevealed] = useState<{ id: string; key: string } | null>(null);
+
+  function refresh() {
+    api
+      .listApiKeys(projectId)
+      .then(({ apiKeys }) => setKeys(apiKeys))
+      .catch((err) => setError(err instanceof ApiError ? err.message : "Failed to load API keys"));
+  }
+  useEffect(refresh, [projectId]);
+
+  function toggleNewScope(scope: ApiKeyScope) {
+    setNewScopes((prev) => (prev.includes(scope) ? prev.filter((s) => s !== scope) : [...prev, scope]));
+  }
+
+  async function handleCreate(e: React.FormEvent) {
+    e.preventDefault();
+    setError(null);
+    setCreating(true);
+    try {
+      const { apiKey } = await api.createApiKey(projectId, newName, newScopes);
+      setRevealed({ id: apiKey.id, key: apiKey.key });
+      setNewName("");
+      setNewScopes(ALL_API_KEY_SCOPES);
+      setShowNew(false);
+      refresh();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Failed to create key");
+    } finally {
+      setCreating(false);
+    }
+  }
+
+  async function handleRotate(keyId: string) {
+    if (!confirm("Rotate this key? The old value will stop working immediately.")) return;
+    setError(null);
+    try {
+      const { apiKey } = await api.rotateApiKeyById(projectId, keyId);
+      setRevealed({ id: apiKey.id, key: apiKey.key });
+      refresh();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Failed to rotate key");
+    }
+  }
+
+  async function handleRevoke(keyId: string) {
+    if (!confirm("Revoke this key? Anything using it will stop working immediately.")) return;
+    setError(null);
+    try {
+      await api.revokeApiKey(projectId, keyId);
+      if (revealed?.id === keyId) setRevealed(null);
+      refresh();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Failed to revoke key");
+    }
+  }
+
+  return (
+    <div className="card">
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <h2>API keys</h2>
+        <button className="small secondary" onClick={() => setShowNew(!showNew)}>
+          {showNew ? "Cancel" : "New key"}
+        </button>
+      </div>
+      {error && <div className="error-banner">{error}</div>}
+
+      {revealed && (
+        <div className="api-key-reveal">
+          <p style={{ margin: "0 0 8px" }}>
+            <strong>Copy this now — for your security, it won't be shown again.</strong>
+          </p>
+          <div className="code-snippet" style={{ marginBottom: 10 }}>{revealed.key}</div>
+          <button type="button" className="small secondary" onClick={() => setRevealed(null)}>
+            I've saved it, hide it
+          </button>
+        </div>
+      )}
+
+      {showNew && (
+        <form onSubmit={handleCreate} style={{ marginTop: 14 }}>
+          <div className="field">
+            <label htmlFor="new-key-name">Name</label>
+            <input
+              id="new-key-name"
+              required
+              value={newName}
+              onChange={(e) => setNewName(e.target.value)}
+              placeholder="e.g. CI pipeline"
+            />
+          </div>
+          <div className="field">
+            <label>Scopes</label>
+            <div className="api-key-scopes-picker">
+              {ALL_API_KEY_SCOPES.map((scope) => (
+                <label key={scope} className="api-key-scope-checkbox">
+                  <input type="checkbox" checked={newScopes.includes(scope)} onChange={() => toggleNewScope(scope)} />
+                  {API_KEY_SCOPE_LABELS[scope]}
+                </label>
+              ))}
+            </div>
+          </div>
+          <button type="submit" disabled={creating || newScopes.length === 0}>
+            {creating ? "Creating…" : "Create key"}
+          </button>
+        </form>
+      )}
+
+      {keys === null && <p className="muted">Loading…</p>}
+      {keys?.map((k) => (
+        <div key={k.id} className={`api-key-row${k.revokedAt ? " api-key-revoked" : ""}`}>
+          <div>
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <strong>{k.name}</strong>
+              {k.isDefault && <span className="plan-badge">Default</span>}
+              {k.revokedAt && <span className="plan-badge" style={{ background: "#888" }}>Revoked</span>}
+            </div>
+            <div className="code-snippet" style={{ margin: "6px 0" }}>{k.key}</div>
+            <p className="muted api-key-meta">
+              {k.scopes.map((s) => API_KEY_SCOPE_LABELS[s]).join(", ") || "No scopes"}
+              {" · Last used "}
+              {k.lastUsedAt ? new Date(k.lastUsedAt).toLocaleString() : "never"}
+              {" · Created "}
+              {new Date(k.createdAt).toLocaleDateString()}
+            </p>
+          </div>
+          {!k.revokedAt && (
+            <div className="api-key-actions">
+              <button type="button" className="small secondary" onClick={() => handleRotate(k.id)}>Rotate</button>
+              <button type="button" className="small secondary" onClick={() => handleRevoke(k.id)}>Revoke</button>
+            </div>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function ProjectSettingsTab({
   project,
   onUpdated,
@@ -930,16 +1080,6 @@ function ProjectSettingsTab({
       onUpdated(updated);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Failed to remove token");
-    }
-  }
-
-  async function handleRotateKey() {
-    if (!confirm("Rotate the API key? The old key will stop working immediately.")) return;
-    try {
-      const updated = await api.rotateApiKey(project.id);
-      onUpdated(updated);
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Failed to rotate key");
     }
   }
 
@@ -1034,11 +1174,7 @@ function ProjectSettingsTab({
         </form>
       </div>
 
-      <div className="card">
-        <h2>API key</h2>
-        <div className="code-snippet" style={{ marginBottom: 12 }}>{project.apiKey}</div>
-        <button className="secondary" onClick={handleRotateKey}>Rotate key</button>
-      </div>
+      <ApiKeysCard projectId={project.id} />
 
       <div className="card">
         <h2>Danger zone</h2>

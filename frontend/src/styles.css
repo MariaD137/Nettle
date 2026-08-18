@@ -416,6 +416,47 @@ button.destructive {
   white-space: pre;
 }
 
+.api-key-reveal {
+  background: var(--accent-soft);
+  border-radius: 6px;
+  padding: 12px 14px;
+  margin: 12px 0;
+}
+.api-key-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--line);
+}
+.api-key-row:last-child {
+  border-bottom: none;
+}
+.api-key-row.api-key-revoked {
+  opacity: 0.55;
+}
+.api-key-meta {
+  margin: 0;
+  font-size: 12px;
+}
+.api-key-actions {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
+}
+.api-key-scopes-picker {
+  display: flex;
+  gap: 16px;
+}
+.api-key-scope-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 400;
+  cursor: pointer;
+}
+
 /* Score display */
 .score-num {
   font-family: var(--serif);

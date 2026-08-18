@@ -1,11 +1,12 @@
 import { Router } from "express";
-import { createProject, getProject, listProjectsByUser, updateProject, deleteProject, archiveProject, restoreProject, rotateApiKey, countProjectsByUser, setRepoAccessToken } from "../patrol/projects";
+import { createProject, getProject, listProjectsByUser, updateProject, deleteProject, archiveProject, restoreProject, rotateApiKey, countProjectsByUser, setRepoAccessToken, setDefaultApiKeyValue } from "../patrol/projects";
 import { MissingEncryptionKeyError } from "../security/tokenEncryption";
 import { listAlerts, getAlert, updateAlertStatus, countAlertsByStatus } from "../patrol/alerts";
 import { listScans, getLatestScan } from "../patrol/scans";
 import { computeBadgeState } from "../patrol/badge";
 import { hashFinding, upsertFindingStatus, listFindingStatuses } from "../patrol/findingStatuses";
 import { listFindingHistory } from "../patrol/findingHistory";
+import { createApiKey, listApiKeys, getApiKeyRecord, updateApiKey, revokeApiKey, rotateApiKeyById } from "../patrol/apiKeys";
 import { requireAuth } from "../auth/middleware";
 import { requireSubscription } from "../billing/subscription";
 import { getQuotaState } from "../billing/scanQuota";
@@ -128,6 +129,68 @@ projectsRouter.post("/api/projects/:id/rotate-key", ...paywalled, (req, res) => 
   if (!project) return;
   const updated = rotateApiKey(project.id);
   res.json(updated);
+});
+
+// Fetches a key and verifies it actually belongs to the project in the
+// URL — a valid keyId alone isn't sufficient to authorize access to it.
+function ownedApiKeyOr404(req: import("express").Request, res: import("express").Response, projectId: string) {
+  const key = getApiKeyRecord(req.params.keyId);
+  if (!key || key.projectId !== projectId) {
+    res.status(404).json({ error: "API key not found" });
+    return null;
+  }
+  return key;
+}
+
+projectsRouter.post("/api/projects/:id/api-keys", ...paywalled, (req, res) => {
+  const project = ownedProjectOr404(req, res);
+  if (!project) return;
+  const name = typeof req.body?.name === "string" ? req.body.name.trim() : "";
+  if (!name) {
+    return res.status(400).json({ error: "Provide a key 'name'" });
+  }
+  const created = createApiKey(project.id, name, req.body?.scopes);
+  res.status(201).json({ apiKey: created });
+});
+
+projectsRouter.get("/api/projects/:id/api-keys", ...paywalled, (req, res) => {
+  const project = ownedProjectOr404(req, res);
+  if (!project) return;
+  res.json({ apiKeys: listApiKeys(project.id) });
+});
+
+projectsRouter.patch("/api/projects/:id/api-keys/:keyId", ...paywalled, (req, res) => {
+  const project = ownedProjectOr404(req, res);
+  if (!project) return;
+  if (!ownedApiKeyOr404(req, res, project.id)) return;
+  const updates: { name?: string; scopes?: unknown } = {};
+  if (typeof req.body?.name === "string") updates.name = req.body.name;
+  if (req.body?.scopes !== undefined) updates.scopes = req.body.scopes;
+  const updated = updateApiKey(req.params.keyId, updates);
+  res.json({ apiKey: updated });
+});
+
+projectsRouter.post("/api/projects/:id/api-keys/:keyId/rotate", ...paywalled, (req, res) => {
+  const project = ownedProjectOr404(req, res);
+  if (!project) return;
+  const existing = ownedApiKeyOr404(req, res, project.id);
+  if (!existing) return;
+  const rotated = rotateApiKeyById(req.params.keyId);
+  // Keep the legacy single-key field in sync if this happened to be the
+  // project's default key — same mirroring rotateApiKey() (the
+  // project-level endpoint above) already does in the other direction.
+  if (rotated && existing.isDefault) {
+    setDefaultApiKeyValue(project.id, rotated.key);
+  }
+  res.json({ apiKey: rotated });
+});
+
+projectsRouter.post("/api/projects/:id/api-keys/:keyId/revoke", ...paywalled, (req, res) => {
+  const project = ownedProjectOr404(req, res);
+  if (!project) return;
+  if (!ownedApiKeyOr404(req, res, project.id)) return;
+  const revoked = revokeApiKey(req.params.keyId);
+  res.json({ apiKey: revoked });
 });
 
 projectsRouter.get("/api/projects/:id/alerts", ...paywalled, (req, res) => {

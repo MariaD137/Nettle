@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { findProjectByApiKey } from "../patrol/projects";
+import { findProjectByApiKeyForScope } from "../patrol/projects";
 import { recordEvent } from "../patrol/events";
 import { runDetection } from "../patrol/detection";
 import type { IncomingEvent } from "../patrol/types";
@@ -22,9 +22,9 @@ eventsRouter.post("/api/events", (req, res) => {
   if (!apiKey) {
     return res.status(401).json({ error: "Missing X-Nettle-Api-Key header" });
   }
-  const project = findProjectByApiKey(apiKey);
+  const project = findProjectByApiKeyForScope(apiKey, "events");
   if (!project) {
-    return res.status(401).json({ error: "Invalid API key" });
+    return res.status(401).json({ error: "Invalid API key, or this key isn't scoped to submit events" });
   }
   if (!isValidEvent(req.body)) {
     return res.status(400).json({ error: "Expected { ip, method, path, statusCode, userAgent? }" });

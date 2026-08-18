@@ -2,7 +2,7 @@ import { Router, type Request, type Response } from "express";
 import fs from "fs";
 import path from "path";
 import { createScanJob, getScanJob, getScanJobOwner, cancelScanJob } from "../jobs/scanJobs";
-import { findProjectByApiKey, getDecryptedRepoAccessToken } from "../patrol/projects";
+import { findProjectByApiKeyForScope, getDecryptedRepoAccessToken } from "../patrol/projects";
 import { recordScan } from "../patrol/scans";
 import { requireAuth } from "../auth/middleware";
 import { applyScanAccess } from "../billing/scanAccess";
@@ -61,7 +61,7 @@ scanJobsRouter.post("/api/scans/jobs/upload", requireAuth, upload.single("codeba
   }
 
   const apiKey = req.header("x-nettle-api-key");
-  const project = apiKey ? findProjectByApiKey(apiKey) : null;
+  const project = apiKey ? findProjectByApiKeyForScope(apiKey, "scan") : null;
   const billedUserId = req.userId;
   if (quotaExceeded(billedUserId, res)) {
     fs.unlinkSync(req.file.path);
@@ -95,7 +95,7 @@ scanJobsRouter.post("/api/scans/jobs/repo", requireAuth, (req: Request, res: Res
     return res.status(400).json({ error: "Only GitHub, GitLab, and Bitbucket HTTPS URLs are supported" });
   }
 
-  const project = apiKey ? findProjectByApiKey(apiKey) : null;
+  const project = apiKey ? findProjectByApiKeyForScope(apiKey, "scan") : null;
   const billedUserId = req.userId;
   if (quotaExceeded(billedUserId, res)) return;
 

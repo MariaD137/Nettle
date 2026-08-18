@@ -20,9 +20,10 @@ Two independent schemes are in use, for two different kinds of caller:
 | Project API key | `X-Nettle-Api-Key: <key>` | A single project | Scanning (to associate/bill a scan without logging in) and event ingestion |
 
 - Session tokens are issued by `POST /api/auth/signup` or `POST /api/auth/login` and never expire client-side — they're checked server-side against the `sessions` table (see `GET /api/auth/sessions` / revocation endpoints below).
-- A project's API key is shown at creation (`POST /api/projects`) and on rotation (`POST /api/projects/:id/rotate-key`); it is not otherwise retrievable through the API.
-- `POST /api/events` **requires** `X-Nettle-Api-Key` — there is no session-based way to ingest events.
-- `POST /api/scans`, `POST /api/scans/repo`, `POST /api/scans/url`, and their async `/api/scans/jobs/*` equivalents accept `X-Nettle-Api-Key` **optionally**, to attribute/bill an otherwise-anonymous scan to a project. Note the inconsistency in the codebase itself: the upload routes read it from the header, while `/repo` and `/url` additionally accept an `apiKey` field in the JSON body — both work, header and body aren't unified.
+- A project's default API key is shown at creation (`POST /api/projects`) and on rotation (`POST /api/projects/:id/rotate-key`); it is not otherwise retrievable through the API. Additional named/scoped keys can be created via `POST /api/projects/:id/api-keys` (see the API key management section below) — that response is likewise the only place the full value is ever returned.
+- A key that's been revoked (or, for scoped keys, doesn't carry the scope a route requires) fails authentication immediately — treated identically to an unknown key. Every successful authentication updates that key's `lastUsedAt`.
+- `POST /api/events` **requires** `X-Nettle-Api-Key` (scope: `events`) — there is no session-based way to ingest events.
+- `POST /api/scans`, `POST /api/scans/repo`, `POST /api/scans/url`, and their async `/api/scans/jobs/*` equivalents accept `X-Nettle-Api-Key` **optionally** (scope: `scan`), to attribute/bill an otherwise-anonymous scan to a project. Note the inconsistency in the codebase itself: the upload routes read it from the header, while `/repo` and `/url` additionally accept an `apiKey` field in the JSON body — both work, header and body aren't unified.
 - Routes with no auth at all: `GET /health`, `GET /api/projects/:id/badge.svg`, `GET /api/projects/:id/badge.json` (deliberately public — see their section below), and `POST /api/billing/webhook` (authenticated instead by a Stripe HMAC signature).
 
 ## Rate limiting
@@ -168,7 +169,30 @@ Body: any subset of `{ name, url, repoUrl, repoBranch, description, environment,
 → updated `Project`.
 
 ### `POST /api/projects/:id/rotate-key`
-Issues a new API key, invalidating the old one immediately. → updated `Project` (with the new key).
+Rotates the project's **default** key (see multi-key management below) and mirrors the new value into this legacy field — invalidates the old value immediately. → updated `Project` (with the new key).
+
+### API key management (`/api/projects/:id/api-keys*`)
+
+A project has one key per the legacy field above, plus any number of
+additional named, scoped, independently revocable keys — a real child
+table (`api_keys`), not just fields on `Project`. Every project's very
+first key (seeded at creation, or backfilled for older projects) is
+marked as its **default** key and stays mirrored into `Project.apiKey`
+and the legacy rotate-key endpoint above, so nothing that already reads
+`project.apiKey` breaks. `StoredApiKey` is `{ id, projectId, name, key, scopes: ("scan"|"events")[], isDefault, lastUsedAt, revokedAt, createdAt }`.
+
+Scopes gate what a key can actually do: `POST /api/events` requires the
+`events` scope, and `POST /api/scans` / `/repo` / `/url` (and their
+`/api/scans/jobs/*` equivalents) require `scan` to attribute a scan to
+the project — a key missing the needed scope is treated exactly like an
+unknown key (falls back to anonymous/unattributed, not a hard failure,
+except at `/api/events` where a key is mandatory so it's a `401`).
+
+- **`POST /api/projects/:id/api-keys`** — Body: `{ name, scopes? }` (`scopes` defaults to both if omitted/invalid). → `201 { apiKey: StoredApiKey }` with the **full, real key value** — the only response that ever includes it.
+- **`GET /api/projects/:id/api-keys`** — → `{ apiKeys: StoredApiKey[] }`, `key` masked on every entry (e.g. `nettle_a1b2…c3d4`).
+- **`PATCH /api/projects/:id/api-keys/:keyId`** — Body: any subset of `{ name, scopes }`. → `{ apiKey }` (masked).
+- **`POST /api/projects/:id/api-keys/:keyId/rotate`** — Regenerates just this key's secret, old value stops working immediately. → `{ apiKey }` with the full new value (once). Rotating the default key also updates `Project.apiKey`.
+- **`POST /api/projects/:id/api-keys/:keyId/revoke`** — Immediate, idempotent, permanent — there's no un-revoke. Doesn't delete the row; name/scopes/lastUsedAt stay visible as history. → `{ apiKey }` (masked) with `revokedAt` set.
 
 ### `GET /api/projects/:id/alerts`
 → `{ project: { id, name }, alerts: Alert[] }`.

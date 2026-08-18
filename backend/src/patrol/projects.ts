@@ -1,6 +1,7 @@
 import { db, newId, newApiKey } from "../db";
 import type { Project } from "./types";
 import { encryptToken, decryptToken } from "../security/tokenEncryption";
+import { seedDefaultApiKey, getDefaultApiKeyRow, resolveApiKey, type ApiKeyScope } from "./apiKeys";
 
 interface ProjectRow {
   id: string;
@@ -67,6 +68,7 @@ export function createProject(
     project.environment,
     project.createdAt
   );
+  seedDefaultApiKey(project.id, project.apiKey, project.createdAt);
   return project;
 }
 
@@ -119,6 +121,7 @@ export function deleteProject(id: string): void {
   db.prepare("DELETE FROM events WHERE project_id = ?").run(id);
   db.prepare("DELETE FROM scans WHERE project_id = ?").run(id);
   db.prepare("DELETE FROM finding_statuses WHERE project_id = ?").run(id);
+  db.prepare("DELETE FROM api_keys WHERE project_id = ?").run(id);
   db.prepare("DELETE FROM projects WHERE id = ?").run(id);
 }
 
@@ -132,15 +135,57 @@ export function restoreProject(id: string): Project | null {
   return getProject(id);
 }
 
+/**
+ * Rotates the project's default key. Mirrors the change into both the
+ * legacy `projects.api_key` column (what project creation and this
+ * endpoint have always returned, and what the dashboard's own scan/
+ * onboarding flows read directly) and the corresponding api_keys row, so
+ * the two stay in sync regardless of which surface — this endpoint or the
+ * newer per-key management UI — touches the default key next.
+ */
 export function rotateApiKey(id: string): Project | null {
   const key = newApiKey();
+  const defaultRow = getDefaultApiKeyRow(id);
+  if (defaultRow) {
+    db.prepare("UPDATE api_keys SET key = ?, last_used_at = NULL WHERE id = ?").run(key, defaultRow.id);
+  }
   db.prepare("UPDATE projects SET api_key = ? WHERE id = ?").run(key, id);
   return getProject(id);
 }
 
+/**
+ * The other direction of the same mirroring: called when the *default*
+ * api_keys row is rotated through the newer per-key endpoint
+ * (POST /api/projects/:id/api-keys/:keyId/rotate), so the legacy
+ * projects.api_key column reflects it too.
+ */
+export function setDefaultApiKeyValue(id: string, key: string): void {
+  db.prepare("UPDATE projects SET api_key = ? WHERE id = ?").run(key, id);
+}
+
+/**
+ * Resolves a raw API key to its owning project — revoked keys never
+ * match. Every existing caller (event ingestion, scan attribution) keeps
+ * calling this exact function with its exact signature, so revocation
+ * and last-used tracking (both handled inside resolveApiKey()) apply
+ * everywhere automatically. Use findProjectByApiKeyForScope() instead
+ * wherever the caller should also enforce what the key is allowed to do.
+ */
 export function findProjectByApiKey(apiKey: string): Project | null {
-  const row = db.prepare("SELECT * FROM projects WHERE api_key = ?").get(apiKey) as ProjectRow | undefined;
-  return row ? toProject(row) : null;
+  const resolved = resolveApiKey(apiKey);
+  return resolved ? getProject(resolved.projectId) : null;
+}
+
+/**
+ * Same as findProjectByApiKey(), but additionally requires the key to
+ * carry `scope` — a key missing it is treated exactly like an unknown
+ * key (null), matching how every caller already handles "no valid key"
+ * (fall back to anonymous/unattributed rather than hard-failing), not a
+ * distinct error path.
+ */
+export function findProjectByApiKeyForScope(apiKey: string, scope: ApiKeyScope): Project | null {
+  const resolved = resolveApiKey(apiKey, scope);
+  return resolved ? getProject(resolved.projectId) : null;
 }
 
 export function getProject(id: string): Project | null {

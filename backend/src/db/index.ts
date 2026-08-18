@@ -365,6 +365,30 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_finding_history_project ON finding_history(project_id);
 `);
 
+// Real multi-key API key management, additive alongside the single
+// `projects.api_key` column above (kept working forever — it's what
+// project creation and the legacy rotate-key endpoint return, and what
+// the dashboard's own scan/onboarding flows use directly). Every project
+// gets exactly one `is_default = 1` row mirroring `projects.api_key`
+// (seeded at creation, kept in sync by rotate); everything else here is
+// a genuinely new key, independently named, scoped, revocable, and
+// tracked. See patrol/apiKeys.ts.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS api_keys (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL,
+    name TEXT NOT NULL,
+    key TEXT NOT NULL UNIQUE,
+    scopes TEXT NOT NULL,
+    is_default INTEGER NOT NULL DEFAULT 0,
+    last_used_at TEXT,
+    revoked_at TEXT,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (project_id) REFERENCES projects(id)
+  );
+  CREATE INDEX IF NOT EXISTS idx_api_keys_project ON api_keys(project_id);
+`);
+
 export function newId(): string {
   return crypto.randomUUID();
 }

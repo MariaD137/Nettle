@@ -26,6 +26,22 @@ export interface Project {
   createdAt: string;
 }
 
+export type ApiKeyScope = "scan" | "events";
+
+export interface StoredApiKey {
+  id: string;
+  projectId: string;
+  name: string;
+  // The full secret only on the response from createApiKey/rotateApiKeyById
+  // — every other read (listApiKeys) returns this masked, e.g. "nettle_a1b2…c3d4".
+  key: string;
+  scopes: ApiKeyScope[];
+  isDefault: boolean;
+  lastUsedAt: string | null;
+  revokedAt: string | null;
+  createdAt: string;
+}
+
 export type Severity = "critical" | "high" | "medium" | "low" | "info";
 
 export interface Finding {
@@ -375,6 +391,29 @@ export const api = {
 
   rotateApiKey: (id: string) =>
     request<Project>(`/api/projects/${id}/rotate-key`, { method: "POST" }),
+
+  // Multi-key API key management (additive to the single legacy key
+  // above — see backend/src/patrol/apiKeys.ts).
+  listApiKeys: (projectId: string) =>
+    request<{ apiKeys: StoredApiKey[] }>(`/api/projects/${projectId}/api-keys`),
+
+  createApiKey: (projectId: string, name: string, scopes: ApiKeyScope[]) =>
+    request<{ apiKey: StoredApiKey }>(`/api/projects/${projectId}/api-keys`, {
+      method: "POST",
+      body: JSON.stringify({ name, scopes }),
+    }),
+
+  updateApiKey: (projectId: string, keyId: string, updates: { name?: string; scopes?: ApiKeyScope[] }) =>
+    request<{ apiKey: StoredApiKey }>(`/api/projects/${projectId}/api-keys/${keyId}`, {
+      method: "PATCH",
+      body: JSON.stringify(updates),
+    }),
+
+  rotateApiKeyById: (projectId: string, keyId: string) =>
+    request<{ apiKey: StoredApiKey }>(`/api/projects/${projectId}/api-keys/${keyId}/rotate`, { method: "POST" }),
+
+  revokeApiKey: (projectId: string, keyId: string) =>
+    request<{ apiKey: StoredApiKey }>(`/api/projects/${projectId}/api-keys/${keyId}/revoke`, { method: "POST" }),
 
   // Alerts
   getAlerts: (projectId: string) =>

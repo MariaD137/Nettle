@@ -14,6 +14,7 @@ import integrationsRouter from "./routes/integrations.routes";
 import { scanRateLimit, publicRateLimit, apiRateLimit } from "./middleware/rateLimit";
 import { initializeScanner } from "./scanner/initialization";
 import { backfillFindingHistory } from "./patrol/findingHistory";
+import { backfillApiKeys } from "./patrol/apiKeys";
 
 const app = express();
 const PORT = process.env.PORT || 8080;
@@ -62,6 +63,11 @@ initializeScanner();
 // before the server starts accepting requests so there's no window where
 // a fresh scan could race the backfill.
 backfillFindingHistory();
+
+// Same one-time-seed pattern: every project that predates the multi-key
+// api_keys table gets its existing projects.api_key mirrored in as its
+// default key, so revoke/scope/last-used tracking cover it too.
+backfillApiKeys();
 
 app.listen(PORT, () => {
   console.log(`Nettle backend listening on port ${PORT}`);
