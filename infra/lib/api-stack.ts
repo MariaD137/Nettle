@@ -1,6 +1,6 @@
 import { CfnOutput, RemovalPolicy, Stack, type StackProps } from "aws-cdk-lib";
 import { Repository, TagMutability } from "aws-cdk-lib/aws-ecr";
-import { CfnVpcConnector, CfnService } from "aws-cdk-lib/aws-apprunner";
+import { CfnVpcConnector, CfnService, CfnAutoScalingConfiguration } from "aws-cdk-lib/aws-apprunner";
 import { Role, ServicePrincipal, ManagedPolicy } from "aws-cdk-lib/aws-iam";
 import type { Vpc, SecurityGroup } from "aws-cdk-lib/aws-ec2";
 import type { Construct } from "constructs";
@@ -41,8 +41,26 @@ export class NettleApiStack extends Stack {
       vpcConnectorName: "nettle-api-connector",
     });
 
+    // maxSize is deliberately pinned at 1, not App Runner's own default
+    // ceiling of 25 — every account, session, project, scan, and alert is
+    // persisted to a local node:sqlite file on whichever single container
+    // is running (see NETTLE_DB_PATH in backend/src/db/index.ts), with no
+    // shared database or volume behind it. A second concurrent instance
+    // would boot its own empty database, and requests would silently see
+    // different data depending on which instance happened to serve them.
+    // This resource exists so scaling is ready to enable the moment that's
+    // no longer true (RDS, or any other shared store, replaces the
+    // per-instance SQLite file) — raise maxSize then, not before.
+    const autoScaling = new CfnAutoScalingConfiguration(this, "ApiAutoScaling", {
+      autoScalingConfigurationName: "nettle-api-autoscaling",
+      minSize: 1,
+      maxSize: 1,
+      maxConcurrency: 80,
+    });
+
     const service = new CfnService(this, "ApiService", {
       serviceName: "nettle-api",
+      autoScalingConfigurationArn: autoScaling.attrAutoScalingConfigurationArn,
       sourceConfiguration: {
         autoDeploymentsEnabled: true,
         authenticationConfiguration: {

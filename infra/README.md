@@ -8,11 +8,19 @@ a copy of a bigger app's infrastructure:
   should make outbound calls impossible by construction, not by convention.
 - **Nettle-Api** — an ECR repo + a single App Runner service running the
   API, with its egress routed through the isolated VPC (so: no internet
-  access) via a VPC connector. Still no RDS/Cognito — accounts, sessions,
-  projects, scans, and alerts are all real now, but persisted with
+  access) via a VPC connector, and an `AutoScalingConfiguration` resource
+  pinned to `minSize: 1, maxSize: 1`. Still no RDS/Cognito — accounts,
+  sessions, projects, scans, and alerts are all real now, but persisted with
   `node:sqlite` on the single container App Runner runs, not a managed
-  database. That's the actual trigger to add RDS: the day this needs to run
-  as more than one container.
+  database, with no shared volume behind it. **`maxSize` is capped at 1 on
+  purpose**: a second concurrent instance would boot its own empty SQLite
+  file, and requests would silently see different data depending on which
+  instance served them. The `AutoScalingConfiguration` resource exists so
+  raising the cap later is a one-line CDK change, not a new resource to
+  design — do that the same day a shared datastore (RDS, most likely)
+  replaces the per-instance SQLite file, not before. That's the actual
+  trigger to add RDS: the day this needs to run as more than one container
+  for real.
 - **Nettle-CI** — a GitHub OIDC provider + a deploy role scoped to exactly
   one permission set: push images to this one ECR repo. No AWS access keys
   are ever stored in GitHub.
@@ -22,6 +30,7 @@ a copy of a bigger app's infrastructure:
 | Checked | How |
 |---|---|
 | All three stacks synthesize to valid CloudFormation | Ran `cdk synth` — caught and fixed one real issue this way (a security group description containing an em-dash, which CloudFormation's validation pattern rejects) |
+| The `AutoScalingConfiguration` resource synthesizes and is wired to the service | Ran `cdk synth Nettle-Api` — confirmed `AWS::AppRunner::AutoScalingConfiguration` in the template and `ApiService.Properties.AutoScalingConfigurationArn` pointing at it |
 | The VPC has no NAT gateway or internet gateway | Inspected the synthesized template's resource list directly — confirmed absent |
 | Docker image build | **Not run** — no Docker daemon available in this sandbox, same limitation hit building RavelGo. Build it yourself once (`docker build -t nettle-api backend/`) before relying on the deploy workflow |
 | Actual `cdk deploy` / real AWS resources | **Not run** — needs a real AWS account and credentials, which should never be pasted into a chat session |
