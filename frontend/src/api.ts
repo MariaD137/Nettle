@@ -61,6 +61,29 @@ export interface ScanReport {
   summary: { critical: number; high: number; medium: number; low: number; info: number; clear: number };
 }
 
+export type ScanJobStatus = "queued" | "running" | "completed" | "failed" | "cancelled";
+export type ScanJobStepStatus = "pending" | "running" | "done";
+
+export interface ScanJobStep {
+  id: string;
+  label: string;
+  status: ScanJobStepStatus;
+}
+
+export interface ScanJob {
+  id: string;
+  status: ScanJobStatus;
+  source: "upload" | "repo" | "url";
+  steps: ScanJobStep[];
+  createdAt: string;
+  startedAt: string | null;
+  finishedAt: string | null;
+  report: ScanReport | null;
+  error: string | null;
+  friendlyError?: string;
+  queuePosition: number | null;
+}
+
 export interface StoredScan {
   id: string;
   projectId: string;
@@ -425,6 +448,29 @@ export const api = {
       signal: opts?.signal,
       body: JSON.stringify({ repoUrl, branch: opts?.branch, apiKey: opts?.apiKey }),
     }),
+
+  // Scan jobs — the async, real-progress counterpart to scanCodebase/scanRepo
+  // above (which stay as they are for anyone relying on the immediate-report
+  // response). A scan submitted this way runs in a background worker on the
+  // server, so the request returns a job id right away instead of blocking
+  // until the whole scan finishes.
+  startUploadScanJob: async (file: File, apiKey?: string): Promise<{ jobId: string }> => {
+    const form = new FormData();
+    form.append("codebase", file);
+    const headers: Record<string, string> = {};
+    if (apiKey) headers["X-Nettle-Api-Key"] = apiKey;
+    return request<{ jobId: string }>("/api/scans/jobs/upload", { method: "POST", body: form, headers });
+  },
+
+  startRepoScanJob: (repoUrl: string, opts?: { branch?: string; apiKey?: string }) =>
+    request<{ jobId: string }>("/api/scans/jobs/repo", {
+      method: "POST",
+      body: JSON.stringify({ repoUrl, branch: opts?.branch, apiKey: opts?.apiKey }),
+    }),
+
+  getScanJob: (jobId: string) => request<ScanJob>(`/api/scans/jobs/${jobId}`),
+
+  cancelScanJob: (jobId: string) => request<void>(`/api/scans/jobs/${jobId}/cancel`, { method: "POST" }),
 
   // Analytics
   getAnalyticsDashboard: (projectId: string, timeframe: string = "24h") =>

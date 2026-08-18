@@ -23,7 +23,7 @@ export const scansRouter = Router();
  * Returns true when the caller should stop. Anonymous, unauthenticated scans
  * have no account to meter and are preview-only, so they pass through.
  */
-function quotaExceeded(userId: string | undefined, res: Response): boolean {
+export function quotaExceeded(userId: string | undefined, res: Response): boolean {
   if (!userId) return false;
   const quota = getQuotaState(userId);
   if (!quota || !quota.exhausted) return false;
@@ -45,7 +45,7 @@ function quotaExceeded(userId: string | undefined, res: Response): boolean {
  * applies — so CI runs authenticated only by a project key still get the
  * full report the account pays for.
  */
-function planForScan(req: ExpressRequest, apiKeyProjectUserId?: string): string {
+export function planForScan(req: ExpressRequest, apiKeyProjectUserId?: string): string {
   if (req.userPlan) return req.userPlan;
   if (apiKeyProjectUserId) {
     const owner = getUserById(apiKeyProjectUserId);
@@ -54,7 +54,7 @@ function planForScan(req: ExpressRequest, apiKeyProjectUserId?: string): string 
   return "free";
 }
 
-const upload = multer({
+export const upload = multer({
   dest: os.tmpdir(),
   limits: { fileSize: 25 * 1024 * 1024 }, // 25MB — plenty for source code, not for asset-heavy repos
 });
@@ -124,7 +124,7 @@ scansRouter.post("/api/scans", optionalAuth, upload.single("codebase"), (req: Re
 });
 
 const ALLOWED_HOSTS = ["github.com", "gitlab.com", "bitbucket.org"];
-const REPO_URL_PATTERN = /^https:\/\/(github\.com|gitlab\.com|bitbucket\.org)\/[\w.\-]+\/[\w.\-]+(\.git)?$/;
+export const REPO_URL_PATTERN = /^https:\/\/(github\.com|gitlab\.com|bitbucket\.org)\/[\w.\-]+\/[\w.\-]+(\.git)?$/;
 
 scansRouter.post("/api/scans/repo", requireAuth, requireSubscription, (req: Request, res: Response) => {
   const repoUrl = typeof req.body?.repoUrl === "string" ? req.body.repoUrl.trim() : "";

@@ -1,7 +1,9 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { api, ApiError, type Project, type ScanReport } from "../api";
 import { useAuth } from "../AuthContext";
 import NettleLogo from "../components/NettleLogo";
+import ScanProgress from "../components/ScanProgress";
+import { useScanJob } from "../useScanJob";
 
 type Step = "welcome" | "intro" | "project" | "scan" | "score";
 const STEPS: Step[] = ["welcome", "intro", "project", "scan", "score"];
@@ -241,35 +243,15 @@ function ScanStep({
   const [method, setMethod] = useState<ScanMethod>("upload");
   const [file, setFile] = useState<File | null>(null);
   const [repoUrl, setRepoUrl] = useState("");
-  const [scanning, setScanning] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const controllerRef = useRef<AbortController | null>(null);
+  const { job, scanning, error: jobError, startUpload, startRepo, cancel } = useScanJob();
+  const [formError, setFormError] = useState<string | null>(null);
+  const error = formError || jobError;
 
   async function handleScan() {
-    setError(null);
-    setScanning(true);
-    const controller = new AbortController();
-    controllerRef.current = controller;
-    try {
-      const report =
-        method === "repo"
-          ? await api.scanRepo(repoUrl, { apiKey: project.apiKey, signal: controller.signal })
-          : await api.scanCodebase(file as File, project.apiKey, controller.signal);
-      onScanned(report);
-    } catch (err) {
-      if (err instanceof DOMException && err.name === "AbortError") {
-        setError("Scan cancelled.");
-      } else {
-        setError(err instanceof ApiError ? err.message : "Scan failed");
-      }
-    } finally {
-      controllerRef.current = null;
-      setScanning(false);
-    }
-  }
-
-  function handleCancel() {
-    controllerRef.current?.abort();
+    setFormError(null);
+    const report =
+      method === "repo" ? await startRepo(repoUrl, { apiKey: project.apiKey }) : await startUpload(file as File, project.apiKey);
+    if (report) onScanned(report);
   }
 
   return (
@@ -291,16 +273,19 @@ function ScanStep({
       {error && <div className="error-banner">{error}</div>}
 
       {method === "upload" ? (
-        <div className="scan-upload-row">
-          <input type="file" accept=".zip" onChange={(e) => setFile(e.target.files?.[0] ?? null)} disabled={scanning} />
-          <button onClick={handleScan} disabled={!file || scanning}>
-            {scanning ? "Scanning…" : "Scan"}
-          </button>
-          {scanning && (
-            <button type="button" className="secondary" onClick={handleCancel}>
-              Cancel
+        <div>
+          <div className="scan-upload-row">
+            <input type="file" accept=".zip" onChange={(e) => setFile(e.target.files?.[0] ?? null)} disabled={scanning} />
+            <button onClick={handleScan} disabled={!file || scanning}>
+              {scanning ? "Scanning…" : "Scan"}
             </button>
-          )}
+            {scanning && (
+              <button type="button" className="secondary" onClick={cancel}>
+                Cancel
+              </button>
+            )}
+          </div>
+          {scanning && <ScanProgress job={job} />}
         </div>
       ) : (
         <div>
@@ -318,11 +303,12 @@ function ScanStep({
               {scanning ? "Cloning & scanning…" : "Scan repository"}
             </button>
             {scanning && (
-              <button type="button" className="secondary" onClick={handleCancel}>
+              <button type="button" className="secondary" onClick={cancel}>
                 Cancel
               </button>
             )}
           </div>
+          {scanning && <ScanProgress job={job} />}
         </div>
       )}
 
@@ -331,7 +317,7 @@ function ScanStep({
         className="link-btn"
         style={{ marginTop: 14 }}
         onClick={() => {
-          controllerRef.current?.abort();
+          if (scanning) cancel();
           onSkip();
         }}
       >

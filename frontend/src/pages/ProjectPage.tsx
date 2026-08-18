@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import {
   api, ApiError,
@@ -9,7 +9,9 @@ import {
 import BadgePill from "../components/BadgePill";
 import NettleLogo from "../components/NettleLogo";
 import { AppBar, BottomNav, Icons, type TabItem } from "../components/MobileChrome";
+import ScanProgress from "../components/ScanProgress";
 import { useIsMobile } from "../useIsMobile";
+import { useScanJob } from "../useScanJob";
 
 type Tab = "overview" | "scan" | "findings" | "alerts" | "history" | "settings";
 
@@ -179,10 +181,6 @@ function OverviewTab({ project, latestScan }: { project: Project; latestScan: St
 
 type ScanMethod = "upload" | "repo";
 
-function isAbortError(err: unknown): boolean {
-  return err instanceof DOMException && err.name === "AbortError";
-}
-
 function ScanTab({ project, onScanned }: { project: Project; onScanned: (badge: BadgeState) => void }) {
   const [method, setMethod] = useState<ScanMethod>("upload");
   const [file, setFile] = useState<File | null>(null);
@@ -191,44 +189,24 @@ function ScanTab({ project, onScanned }: { project: Project; onScanned: (badge: 
   const [repoUrl, setRepoUrl] = useState(project.repoUrl ?? "");
   const [branch, setBranch] = useState(project.repoBranch ?? "");
   const [report, setReport] = useState<ScanReport | null>(null);
-  const [scanning, setScanning] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const controllerRef = useRef<AbortController | null>(null);
+  const { job, scanning, error: jobError, startUpload, startRepo, cancel } = useScanJob();
+  const [formError, setFormError] = useState<string | null>(null);
+  const error = formError || jobError;
 
   async function handleScan() {
-    setError(null);
-    setScanning(true);
-    const controller = new AbortController();
-    controllerRef.current = controller;
-    try {
-      let result: ScanReport;
-      if (method === "repo") {
-        if (!repoUrl) { setError("Enter a repository URL"); setScanning(false); return; }
-        result = await api.scanRepo(repoUrl, { branch: branch || undefined, apiKey: project.apiKey, signal: controller.signal });
-      } else {
-        if (!file) { setError("Select a file"); setScanning(false); return; }
-        result = await api.scanCodebase(file, project.apiKey, controller.signal);
-      }
+    setFormError(null);
+    let result: ScanReport | null;
+    if (method === "repo") {
+      if (!repoUrl) { setFormError("Enter a repository URL"); return; }
+      result = await startRepo(repoUrl, { branch: branch || undefined, apiKey: project.apiKey });
+    } else {
+      if (!file) { setFormError("Select a file"); return; }
+      result = await startUpload(file, project.apiKey);
+    }
+    if (result) {
       setReport(result);
       onScanned(await api.getBadge(project.id));
-    } catch (err) {
-      if (isAbortError(err)) {
-        // Stops the browser from waiting on the response; the zip/repo scan
-        // itself runs synchronously server-side and isn't preemptible, so
-        // it may still finish its work — this just means the result won't
-        // come back to this tab.
-        setError("Scan cancelled.");
-      } else {
-        setError(err instanceof ApiError ? err.message : "Scan failed");
-      }
-    } finally {
-      controllerRef.current = null;
-      setScanning(false);
     }
-  }
-
-  function handleCancel() {
-    controllerRef.current?.abort();
   }
 
   return (
@@ -263,11 +241,12 @@ function ScanTab({ project, onScanned }: { project: Project; onScanned: (badge: 
               {scanning ? "Scanning…" : "Scan"}
             </button>
             {scanning && (
-              <button type="button" className="secondary" onClick={handleCancel}>
+              <button type="button" className="secondary" onClick={cancel}>
                 Cancel
               </button>
             )}
           </div>
+          {scanning && <ScanProgress job={job} />}
         </div>
       )}
 
@@ -297,11 +276,12 @@ function ScanTab({ project, onScanned }: { project: Project; onScanned: (badge: 
               {scanning ? "Cloning & scanning…" : "Scan repository"}
             </button>
             {scanning && (
-              <button type="button" className="secondary" onClick={handleCancel}>
+              <button type="button" className="secondary" onClick={cancel}>
                 Cancel
               </button>
             )}
           </div>
+          {scanning && <ScanProgress job={job} />}
         </div>
       )}
 
