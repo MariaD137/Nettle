@@ -50,6 +50,24 @@ export interface DetectionSettings {
   updatedAt: string | null;
 }
 
+export interface AlertTimelineBucket {
+  hour: string;
+  count: number;
+  bySeverity: Record<"critical" | "high" | "medium" | "low", number>;
+}
+
+export interface RankedCount {
+  label: string;
+  count: number;
+}
+
+export interface AlertAnalytics {
+  timeline: AlertTimelineBucket[];
+  topAttackTypes: RankedCount[];
+  topEndpoints: RankedCount[];
+  topCountries: RankedCount[];
+}
+
 export type Severity = "critical" | "high" | "medium" | "low" | "info";
 
 export interface Finding {
@@ -479,6 +497,9 @@ export const api = {
       method: "PATCH",
       body: JSON.stringify({ status }),
     }),
+
+  getAlertAnalytics: (projectId: string, hours = 24) =>
+    request<{ analytics: AlertAnalytics }>(`/api/projects/${projectId}/alerts/analytics?hours=${hours}`),
 
   // Scans
   getScans: (projectId: string) =>

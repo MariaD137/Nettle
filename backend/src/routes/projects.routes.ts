@@ -2,6 +2,7 @@ import { Router } from "express";
 import { createProject, getProject, listProjectsByUser, updateProject, deleteProject, archiveProject, restoreProject, rotateApiKey, countProjectsByUser, setRepoAccessToken, setDefaultApiKeyValue } from "../patrol/projects";
 import { MissingEncryptionKeyError } from "../security/tokenEncryption";
 import { listAlerts, getAlert, updateAlertStatus, countAlertsByStatus } from "../patrol/alerts";
+import { getAlertAnalytics } from "../patrol/alertAnalytics";
 import { listScans, getLatestScan } from "../patrol/scans";
 import { computeBadgeState } from "../patrol/badge";
 import { hashFinding, upsertFindingStatus, listFindingStatuses } from "../patrol/findingStatuses";
@@ -216,6 +217,13 @@ projectsRouter.patch("/api/projects/:id/alerts/:alertId", ...paywalled, (req, re
 
   const updated = updateAlertStatus(alert.id, status);
   res.json({ alert: updated });
+});
+
+projectsRouter.get("/api/projects/:id/alerts/analytics", ...paywalled, (req, res) => {
+  const project = ownedProjectOr404(req, res);
+  if (!project) return;
+  const hours = Math.max(1, Math.min(720, parseInt(req.query.hours as string, 10) || 24));
+  res.json({ analytics: getAlertAnalytics(project.id, hours) });
 });
 
 projectsRouter.get("/api/projects/:id/detection-settings", ...paywalled, (req, res) => {

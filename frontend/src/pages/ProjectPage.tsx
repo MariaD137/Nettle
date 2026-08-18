@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import {
   api, ApiError,
-  type Alert, type AlertCounts, type AlertStatus, type ApiKeyScope, type BadgeState,
+  type Alert, type AlertAnalytics, type AlertCounts, type AlertStatus, type ApiKeyScope, type BadgeState,
   type DetectionSettings, type Finding, type FindingHistoryEntry, type FindingStatus, type Project, type ScanComparison,
   type ScanReport, type Severity, type StoredApiKey, type StoredFindingStatus, type StoredScan,
 } from "../api";
@@ -666,6 +666,8 @@ function AlertsTab({ projectId, onUpdate }: { projectId: string; onUpdate: (coun
     api.getAlerts(projectId).then(({ alerts }) => setAlerts(alerts));
   }, [projectId]);
 
+  const showAnalytics = alerts !== null && alerts.length > 0;
+
   async function changeStatus(alertId: string, status: AlertStatus) {
     const { alert } = await api.updateAlertStatus(projectId, alertId, status);
     setAlerts((prev) => prev?.map((a) => (a.id === alert.id ? alert : a)) ?? null);
@@ -676,7 +678,9 @@ function AlertsTab({ projectId, onUpdate }: { projectId: string; onUpdate: (coun
   const filtered = alerts?.filter((a) => filter === "all" || a.status === filter);
 
   return (
-    <div className="card">
+    <>
+      {showAnalytics && <AlertAnalyticsPanel projectId={projectId} />}
+      <div className="card">
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
         <h2 style={{ margin: 0 }}>Alerts</h2>
         <select className="filter-select" value={filter} onChange={(e) => setFilter(e.target.value as AlertStatus | "all")}>
@@ -716,6 +720,78 @@ function AlertsTab({ projectId, onUpdate }: { projectId: string; onUpdate: (coun
           )}
         </div>
       ))}
+      </div>
+    </>
+  );
+}
+
+function countryName(code: string): string {
+  try {
+    return new Intl.DisplayNames(["en"], { type: "region" }).of(code) ?? code;
+  } catch {
+    return code;
+  }
+}
+
+function AlertAnalyticsPanel({ projectId }: { projectId: string }) {
+  const [analytics, setAnalytics] = useState<AlertAnalytics | null>(null);
+
+  useEffect(() => {
+    api.getAlertAnalytics(projectId, 24).then(({ analytics }) => setAnalytics(analytics));
+  }, [projectId]);
+
+  if (!analytics) return null;
+
+  const maxCount = Math.max(1, ...analytics.timeline.map((b) => b.count));
+  const totalAlerts = analytics.timeline.reduce((sum, b) => sum + b.count, 0);
+
+  return (
+    <div className="card alert-analytics">
+      <h2 style={{ margin: "0 0 16px" }}>Attack activity (last 24h)</h2>
+
+      {totalAlerts === 0 ? (
+        <p className="muted">No alerts in the last 24 hours.</p>
+      ) : (
+        <div className="alert-timeline" role="img" aria-label={`${totalAlerts} alerts over the last 24 hours`}>
+          {analytics.timeline.map((bucket) => (
+            <div
+              key={bucket.hour}
+              className="alert-timeline-bar"
+              title={`${new Date(bucket.hour).toLocaleString(undefined, { hour: "numeric" })}: ${bucket.count} alert(s)`}
+              style={{ height: `${(bucket.count / maxCount) * 100}%` }}
+            />
+          ))}
+        </div>
+      )}
+
+      <div className="alert-rankings">
+        <RankedList title="Top attack types" items={analytics.topAttackTypes} />
+        <RankedList title="Top targeted endpoints" items={analytics.topEndpoints} />
+        <RankedList
+          title="Top source countries"
+          items={analytics.topCountries.map((c) => ({ label: countryName(c.label), count: c.count }))}
+        />
+      </div>
+    </div>
+  );
+}
+
+function RankedList({ title, items }: { title: string; items: { label: string; count: number }[] }) {
+  return (
+    <div className="ranked-list">
+      <h3>{title}</h3>
+      {items.length === 0 ? (
+        <p className="muted">No data yet.</p>
+      ) : (
+        <ul>
+          {items.map((item) => (
+            <li key={item.label}>
+              <span>{item.label}</span>
+              <span className="ranked-count">{item.count}</span>
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   );
 }

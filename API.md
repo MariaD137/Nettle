@@ -200,6 +200,13 @@ except at `/api/events` where a key is mandatory so it's a `401`).
 ### `PATCH /api/projects/:id/alerts/:alertId`
 Body: `{ status }` (one of `new`/`acknowledged`/`resolved`/`false_positive`). → `{ alert }`.
 
+### `GET /api/projects/:id/alerts/analytics`
+Query: `?hours=` (default 24, clamped to 1–720). Aggregates the project's own alerts within that window — nothing ML-derived, purely counting/grouping stored alert rows. → `{ analytics: AlertAnalytics }` where `AlertAnalytics` is:
+- `timeline: { hour, count, bySeverity: { critical, high, medium, low } }[]` — one zero-filled entry per hour in the window (oldest first), so a quiet hour shows `count: 0` rather than being omitted.
+- `topAttackTypes: { label, count }[]` — alert `rule` values collapsed back to their base attack type (e.g. `suspicious-path-203.0.113.5` → `suspicious-path`), ranked by count.
+- `topEndpoints: { label, count }[]` — the request path named in each alert's message, parsed from the quoted substring `detection.ts` always includes when a specific path triggered the rule. Alerts with no single associated path (`brute-force`, `high-request-rate`, `custom-rule-*`) aren't attributed to any endpoint.
+- `topCountries: { label, count }[]` — the ISO country code for the IP named in each alert (from the rule-name suffix or the message text), resolved via a bundled offline GeoIP database (`geoip-lite`, no network call). Alerts with no single attributable IP (`credential-stuffing-*`, `custom-rule-*`) or an unresolvable IP (private/reserved ranges) are excluded, not bucketed into a fake "unknown".
+
 ### Detection thresholds (`/api/projects/:id/detection-settings*`)
 
 Per-project overrides for the built-in `detection.ts` rule thresholds (brute-force failed-auth count, high-request-rate count, credential-stuffing distinct-IP count). No override row means the built-in defaults (5, 50, 5) apply — every project behaves identically until someone customizes it. `DetectionSettings` is `{ projectId, bruteForceThreshold, highRequestRateThreshold, credentialStuffingMinIps, updatedAt }` (`updatedAt: null` means still on defaults).
