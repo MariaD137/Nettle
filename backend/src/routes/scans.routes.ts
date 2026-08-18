@@ -4,7 +4,7 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 import multer from "multer";
-import { runScan } from "../scanner";
+import { runScan, runUrlScan, SsrfBlockedError, UrlScanUnreachableError } from "../scanner";
 import { resolveScanRoot } from "../scanner/resolveScanRoot";
 import { findProjectByApiKey } from "../patrol/projects";
 import { recordScan } from "../patrol/scans";
@@ -172,5 +172,64 @@ scansRouter.post("/api/scans/repo", requireAuth, requireSubscription, (req: Requ
     res.status(422).json({ error: "Couldn't clone or scan the repository", detail: msg });
   } finally {
     fs.rmSync(cloneDir, { recursive: true, force: true });
+  }
+});
+
+/**
+ * URL scanning is external, non-destructive, black-box observation only —
+ * it never sees source code, so it must never be presented as if it had.
+ * Because it makes Nettle's own infrastructure issue outbound requests to
+ * an address the caller supplies, this route requires a logged-in account
+ * (for abuse accountability and quota metering) and an explicit ownership/
+ * authorization confirmation, unlike the anonymous-friendly zip upload.
+ */
+scansRouter.post("/api/scans/url", requireAuth, async (req: Request, res: Response) => {
+  const targetUrl = typeof req.body?.url === "string" ? req.body.url.trim() : "";
+  const confirmed = req.body?.confirmed === true;
+
+  if (!targetUrl) {
+    return res.status(400).json({ error: "Provide a 'url' to scan" });
+  }
+  if (!confirmed) {
+    return res.status(400).json({
+      error: "You must confirm that you own or are authorized to assess this application before scanning it",
+    });
+  }
+
+  let parsed: URL;
+  try {
+    parsed = new URL(targetUrl);
+  } catch {
+    return res.status(400).json({ error: "That doesn't look like a valid URL" });
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    return res.status(400).json({ error: "Only http:// and https:// URLs are supported" });
+  }
+
+  const apiKey = typeof req.body?.apiKey === "string" ? req.body.apiKey.trim() : "";
+  const urlProject = apiKey ? findProjectByApiKey(apiKey) : null;
+  const billedUserId = req.userId ?? urlProject?.userId;
+  if (quotaExceeded(billedUserId, res)) return;
+
+  try {
+    const report = await runUrlScan(parsed.toString());
+
+    let ownerUserId: string | undefined;
+    if (urlProject) {
+      recordScan(urlProject.id, report);
+      ownerUserId = urlProject.userId;
+    }
+
+    if (billedUserId) recordScanUsage(billedUserId, urlProject?.id ?? null, "url");
+
+    res.json(applyScanAccess(report, planForScan(req, ownerUserId)));
+  } catch (err) {
+    if (err instanceof SsrfBlockedError) {
+      return res.status(400).json({ error: "That target cannot be scanned: it resolves to a private, reserved, or otherwise disallowed address" });
+    }
+    if (err instanceof UrlScanUnreachableError) {
+      return res.status(422).json({ error: "Couldn't reach that URL", detail: err.message });
+    }
+    res.status(422).json({ error: "Couldn't scan that URL", detail: (err as Error).message });
   }
 });

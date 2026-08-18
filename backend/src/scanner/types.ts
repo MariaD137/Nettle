@@ -97,9 +97,22 @@ export interface ScanAccess {
   message: string | null;
 }
 
+/**
+ * How the scan target was obtained. Optional and additive — reports
+ * created before this field existed simply don't have it, and existing
+ * scan types (zip upload, public-repo clone) are free to adopt it
+ * incrementally rather than all at once. Each scan type has a genuinely
+ * different evidence source and confidence scope: SOURCE and GITHUB read
+ * actual code, URL only observes an external HTTP response — findings
+ * should never be presented as if they came from a different scanType
+ * than the one that actually produced them.
+ */
+export type ScanType = "SOURCE" | "URL" | "GITHUB";
+
 export interface ScanReport {
   scannedAt: string;
   target: string;
+  scanType?: ScanType;
   scannerVersion: string;
   semgrepVersion?: string; // Version of Semgrep used (if available)
   score: number;

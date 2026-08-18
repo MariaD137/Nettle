@@ -60,7 +60,7 @@ export function currentPeriod(anchorIso: string, now = new Date()): { start: Dat
   return { start, end };
 }
 
-export function recordScanUsage(userId: string, projectId: string | null, source: "upload" | "repo"): void {
+export function recordScanUsage(userId: string, projectId: string | null, source: "upload" | "repo" | "url"): void {
   db.prepare(
     "INSERT INTO scan_usage (id, user_id, project_id, source, occurred_at) VALUES (?, ?, ?, ?, ?)"
   ).run(newId(), userId, projectId, source, new Date().toISOString());

@@ -16,7 +16,7 @@ import { scanApiSecurity } from "./apiSecurity";
 import { scanFrontendSecurity } from "./frontendSecurity";
 import { scanAiSecurity } from "./aiSecurity";
 import { scanSessionJwt } from "./sessionJwt";
-import { SCANNER_VERSION, type ScanReport } from "./types";
+import { SCANNER_VERSION, type ScanReport, type ScanType } from "./types";
 import { getSemgrepVersion } from "./initialization";
 import { SCORING_CONFIG, calculateScore, calculateConfidence } from "./scoringConfig";
 import { correlateAttackChains } from "./attackChains";
@@ -27,7 +27,7 @@ import { scanCicdSecurity } from "./cicdSecurity";
 
 const SCANNED_EXTENSIONS = [".js", ".ts", ".jsx", ".tsx", ".env", ".json", ".tf", ".yaml", ".yml", "dockerfile"];
 
-export function runScan(targetPath: string): ScanReport {
+export function runScan(targetPath: string, scanType?: ScanType): ScanReport {
   const targetRoot = path.resolve(targetPath);
   const files = walk(targetRoot, SCANNED_EXTENSIONS);
 
@@ -69,6 +69,7 @@ export function runScan(targetPath: string): ScanReport {
   return {
     scannedAt: new Date().toISOString(),
     target: path.basename(targetRoot),
+    scanType,
     scannerVersion: SCANNER_VERSION,
     semgrepVersion: getSemgrepVersion(),
     score,
@@ -87,4 +88,45 @@ export function runScan(targetPath: string): ScanReport {
   };
 }
 
-export type { ScanReport, Finding, Pass, Severity, AttackChain } from "./types";
+/**
+ * Runs the URL check set (external HTTP/TLS/header observation — see
+ * urlSecurity.ts) and wraps it in the same ScanReport shape as runScan,
+ * reusing the same score/summary pipeline. This is deliberately a
+ * separate function rather than a branch inside runScan: a URL scan has
+ * no filesystem to walk and no files array, so trying to force it through
+ * the same code path would mean threading a lot of "this doesn't apply
+ * here" special-casing through file-based scanner internals for no real
+ * benefit — reporting through one shared *shape* is what actually matters
+ * for the rest of the app (scoring, storage, comparison, badge).
+ */
+export async function runUrlScan(targetUrl: string): Promise<ScanReport> {
+  const { scanUrl } = await import("./urlSecurity");
+  const result = await scanUrl(targetUrl);
+
+  const score = calculateScore(result.findings, SCORING_CONFIG);
+  const attackChains = correlateAttackChains(result.findings);
+
+  return {
+    scannedAt: new Date().toISOString(),
+    target: result.finalUrl,
+    scanType: "URL",
+    scannerVersion: SCANNER_VERSION,
+    score,
+    scoreConfidence: 100,
+    findings: result.findings,
+    passed: result.passed,
+    attackChains,
+    summary: {
+      critical: result.findings.filter((f) => f.severity === "critical").length,
+      high: result.findings.filter((f) => f.severity === "high").length,
+      medium: result.findings.filter((f) => f.severity === "medium").length,
+      low: result.findings.filter((f) => f.severity === "low").length,
+      info: result.findings.filter((f) => f.severity === "info").length,
+      clear: result.passed.length,
+    },
+  };
+}
+
+export type { ScanReport, ScanType, Finding, Pass, Severity, AttackChain } from "./types";
+export { SsrfBlockedError } from "./ssrfSafeFetch";
+export { UrlScanUnreachableError } from "./urlSecurity";
