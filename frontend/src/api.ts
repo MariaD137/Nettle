@@ -245,6 +245,37 @@ export interface CustomRuleInput {
   enabled: boolean;
 }
 
+export type WebhookService = "slack" | "pagerduty" | "splunk" | "datadog" | "generic";
+
+// Every string a caller may currently subscribe a webhook to. "scan.completed"
+// fires from recordScan (backend/src/patrol/scans.ts); the rest fire from
+// alert creation (backend/src/patrol/alerts.ts#notifyAlertWebhooks).
+export const WEBHOOK_EVENT_TYPES = ["scan.completed", "incident_alert", "anomaly_alert"] as const;
+export type WebhookEventType = (typeof WEBHOOK_EVENT_TYPES)[number];
+
+export interface Webhook {
+  id: string;
+  project_id: string;
+  service: WebhookService;
+  webhook_url: string;
+  is_active: boolean;
+  event_types: string[];
+  created_at: string;
+  updated_at: string;
+}
+
+export interface WebhookEvent {
+  id: string;
+  webhook_id: string;
+  event_type: string;
+  payload: Record<string, unknown>;
+  status: "pending" | "sent" | "failed" | "retrying";
+  attempt_count: number;
+  last_error?: string;
+  created_at: string;
+  sent_at?: string;
+}
+
 export interface ScanComparison {
   from: { id: string; score: number; scannedAt: string };
   to: { id: string; score: number; scannedAt: string };
@@ -513,6 +544,35 @@ export const api = {
 
   deleteCustomRule: (projectId: string, ruleId: string) =>
     request<void>(`/api/custom-rules/${projectId}/${ruleId}`, { method: "DELETE" }),
+
+  // Integrations / webhooks
+  listWebhooks: (projectId: string) =>
+    request<Webhook[]>(`/api/projects/${projectId}/webhooks`),
+
+  createWebhook: (projectId: string, service: WebhookService, webhookUrl: string, eventTypes: string[]) =>
+    request<Webhook>(`/api/projects/${projectId}/webhooks`, {
+      method: "POST",
+      body: JSON.stringify({ service, webhook_url: webhookUrl, event_types: eventTypes }),
+    }),
+
+  updateWebhook: (
+    projectId: string,
+    webhookId: string,
+    updates: { webhook_url?: string; event_types?: string[]; is_active?: boolean }
+  ) =>
+    request<Webhook>(`/api/projects/${projectId}/webhooks/${webhookId}`, {
+      method: "PATCH",
+      body: JSON.stringify(updates),
+    }),
+
+  deleteWebhook: (projectId: string, webhookId: string) =>
+    request<void>(`/api/projects/${projectId}/webhooks/${webhookId}`, { method: "DELETE" }),
+
+  testWebhook: (projectId: string, webhookId: string) =>
+    request<{ message: string }>(`/api/projects/${projectId}/webhooks/${webhookId}/test`, { method: "POST" }),
+
+  getWebhookEvents: (projectId: string, webhookId: string, limit = 50) =>
+    request<WebhookEvent[]>(`/api/projects/${projectId}/webhooks/${webhookId}/events?limit=${limit}`),
 
   // Badge
   getBadge: (projectId: string) => request<BadgeState>(`/api/projects/${projectId}/badge.json`),

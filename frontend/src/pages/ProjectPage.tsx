@@ -93,6 +93,7 @@ export default function ProjectPage() {
         <div style={{ display: "flex", gap: "16px", alignItems: "center", marginLeft: "auto" }}>
           <Link to={`/projects/${id}/custom-rules`} className="settings-link">Rules</Link>
           <Link to={`/projects/${id}/analytics`} className="settings-link">Analytics</Link>
+          <Link to={`/projects/${id}/integrations`} className="settings-link">Integrations</Link>
           <BadgePill state={badge} />
         </div>
       </div>

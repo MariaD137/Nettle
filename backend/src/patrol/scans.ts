@@ -3,6 +3,7 @@ import type { ScanReport, ScanStatus } from "../scanner/types";
 import { getProject } from "./projects";
 import { hashFinding } from "./findingStatuses";
 import { recordFindingSeen } from "./findingHistory";
+import { sendWebhook } from "../integrations/webhooks";
 
 export interface StoredScan {
   id: string;
@@ -97,7 +98,29 @@ export function recordScan(projectId: string, report: ScanReport, status: ScanSt
     recordFindingSeen(projectId, hash, report.scannedAt);
   }
 
+  notifyScanCompleted(stored);
+
   return stored;
+}
+
+/**
+ * Fire-and-forget notification to every active webhook subscribed to
+ * "scan.completed", using the generic delivery path rather than any
+ * service-specific formatter (e.g. sendSlackAlert) — those hardcode their
+ * own event_type strings, which would silently never match a webhook whose
+ * configured event_types only lists "scan.completed".
+ */
+function notifyScanCompleted(scan: StoredScan): void {
+  sendWebhook(scan.projectId, "scan.completed", {
+    scan_id: scan.id,
+    project_id: scan.projectId,
+    status: scan.status,
+    score: scan.score,
+    critical_count: scan.criticalCount,
+    caution_count: scan.cautionCount,
+    clear_count: scan.clearCount,
+    scanned_at: scan.scannedAt,
+  }).catch((err) => console.error("scan.completed webhook delivery failed:", err));
 }
 
 export function listScans(projectId: string): StoredScan[] {

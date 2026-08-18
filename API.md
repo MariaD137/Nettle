@@ -396,7 +396,7 @@ Sends a real test delivery to the configured URL with `event_type: "test_event"`
 ### `GET /api/projects/:projectId/webhooks/:webhookId/events`
 Query: `?limit=` (default 50). → `WebhookEvent[]` (also a bare array), each `{ id, webhook_id, event_type, payload, status: "pending"|"sent"|"failed"|"retrying", attempt_count, last_error?, created_at, sent_at? }`.
 
-**Real event types** a webhook can be subscribed to (from the actual call sites, not aspirational): `incident_alert`, `incident_resolved` (PagerDuty), `anomaly_alert` (Datadog/Slack/Splunk), `metric_event`, `platform_event`, `log_event` (Datadog/Splunk), `notification` (Slack), and `test_event` (only from the `/test` endpoint above). A webhook only fires for event types listed in its own `event_types`.
+**Real event types** a webhook can be subscribed to (from the actual call sites, not aspirational): `scan.completed` (fires from every recorded scan — `recordScan()` — with `{ scan_id, project_id, status, score, critical_count, caution_count, clear_count, scanned_at }`, delivered generically to every active webhook subscribed to it regardless of service), `incident_alert`, `incident_resolved` (PagerDuty), `anomaly_alert` (Datadog/Slack/Splunk), `metric_event`, `platform_event`, `log_event` (Datadog/Splunk), `notification` (Slack), and `test_event` (only from the `/test` endpoint above). A webhook only fires for event types listed in its own `event_types`.
 
 ---
 
@@ -410,3 +410,8 @@ wrong path (missing the required `:projectId` segment), invented a
 this account's 13 auth endpoints beyond signup/login/me, and claimed a
 fictional `https://api.nettle.app` base URL. This rewrite was produced by
 reading all 11 route files directly rather than extending the old one.
+
+Since that rewrite, a real `scan.completed` webhook event was added
+(`recordScan()` in `backend/src/patrol/scans.ts`) — note the dot, not the
+old doc's invented underscore-separated `scan_complete`, which still does
+not exist and never fires.

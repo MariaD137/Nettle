@@ -1,0 +1,295 @@
+.integrations-page {
+  padding: 24px;
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+.integrations-page .page-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+  gap: 16px;
+}
+
+.integrations-page .page-header h1 {
+  margin: 0;
+  font-size: 28px;
+  font-weight: 600;
+  color: #1a1a1a;
+}
+
+.integrations-page .page-description {
+  margin: 0 0 24px 0;
+  color: #666;
+  font-size: 14px;
+  max-width: 640px;
+}
+
+.integrations-page .btn-primary {
+  padding: 10px 20px;
+  background: #0066cc;
+  color: white;
+  border: none;
+  border-radius: 6px;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.integrations-page .btn-primary:hover {
+  background: #0052a3;
+}
+
+.integrations-page .btn-primary:disabled {
+  background: #ccc;
+  cursor: not-allowed;
+}
+
+.integrations-page .btn-secondary {
+  padding: 8px 16px;
+  background: #f0f0f0;
+  color: #333;
+  border: 1px solid #ddd;
+  border-radius: 6px;
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.integrations-page .btn-secondary:hover {
+  background: #e8e8e8;
+  border-color: #999;
+}
+
+.integrations-page .btn-danger {
+  padding: 8px 16px;
+  background: #ff4444;
+  color: white;
+  border: none;
+  border-radius: 6px;
+  font-size: 13px;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.integrations-page .btn-danger:hover {
+  background: #cc0000;
+}
+
+.integrations-page .error-message {
+  padding: 12px 16px;
+  background: #ffe6e6;
+  color: #cc0000;
+  border-radius: 6px;
+  margin-bottom: 16px;
+  font-size: 14px;
+}
+
+.integrations-page .loading {
+  text-align: center;
+  padding: 40px;
+  color: #666;
+  font-size: 16px;
+}
+
+.webhooks-list {
+  display: grid;
+  gap: 16px;
+}
+
+.integrations-page .empty-state {
+  text-align: center;
+  padding: 60px 24px;
+  background: #f9f9f9;
+  border-radius: 8px;
+  color: #666;
+}
+
+.webhook-card {
+  background: white;
+  border: 1px solid #e0e0e0;
+  border-radius: 8px;
+  padding: 16px;
+  transition: all 0.2s;
+}
+
+.webhook-card:hover {
+  border-color: #0066cc;
+  box-shadow: 0 2px 8px rgba(0, 102, 204, 0.1);
+}
+
+.webhook-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+  margin-bottom: 12px;
+}
+
+.webhook-header h3 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: #1a1a1a;
+  text-transform: capitalize;
+}
+
+.webhook-url {
+  margin: 4px 0 0 0;
+  font-size: 13px;
+  color: #666;
+  word-break: break-all;
+}
+
+.webhook-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.webhook-actions .toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  font-size: 13px;
+  color: #666;
+}
+
+.webhook-actions .toggle input {
+  margin: 0;
+  cursor: pointer;
+}
+
+.webhook-details {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.webhook-details .badge {
+  display: inline-block;
+  padding: 4px 8px;
+  background: #e6f2ff;
+  color: #0066cc;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.test-result {
+  margin: 12px 0 0 0;
+  font-size: 13px;
+  color: #666;
+}
+
+/* Webhook form modal */
+.webhook-form-modal {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  padding: 16px;
+}
+
+.webhook-form-modal .modal-content {
+  background: white;
+  border-radius: 8px;
+  padding: 32px;
+  max-width: 480px;
+  width: 100%;
+  max-height: 90vh;
+  overflow-y: auto;
+}
+
+.webhook-form-modal h2 {
+  margin: 0 0 24px 0;
+  font-size: 20px;
+  font-weight: 600;
+}
+
+.webhook-form-modal form {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.webhook-form-modal .form-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.webhook-form-modal .form-group label {
+  font-size: 14px;
+  font-weight: 500;
+  color: #333;
+}
+
+.webhook-form-modal .form-group input,
+.webhook-form-modal .form-group select {
+  padding: 10px 12px;
+  border: 1px solid #ddd;
+  border-radius: 6px;
+  font-size: 14px;
+  font-family: inherit;
+}
+
+.webhook-form-modal .form-group input:focus,
+.webhook-form-modal .form-group select:focus {
+  outline: none;
+  border-color: #0066cc;
+  box-shadow: 0 0 0 3px rgba(0, 102, 204, 0.1);
+}
+
+.webhook-form-modal label.checkbox {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 400;
+  font-size: 14px;
+  color: #333;
+}
+
+.webhook-form-modal label.checkbox input {
+  margin: 0;
+  width: auto;
+  cursor: pointer;
+}
+
+.webhook-form-modal .form-actions {
+  display: flex;
+  gap: 12px;
+  justify-content: flex-end;
+  margin-top: 8px;
+}
+
+@media (max-width: 768px) {
+  .integrations-page .page-header {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .integrations-page .btn-primary {
+    width: 100%;
+  }
+
+  .webhook-header {
+    flex-direction: column;
+  }
+
+  .webhook-actions {
+    width: 100%;
+    justify-content: space-between;
+  }
+}
