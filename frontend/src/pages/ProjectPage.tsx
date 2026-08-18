@@ -396,6 +396,21 @@ function FindingRow({ finding }: { finding: Finding }) {
           <strong>How to fix:</strong> {finding.remediation}
         </div>
       )}
+      {expanded && finding.dependencyPaths && finding.dependencyPaths.length > 0 && (
+        <div className="dependency-paths">
+          <strong>Pulled in via:</strong>
+          {finding.dependencyPaths.map((depPath, i) => (
+            <div key={i} className="dependency-path-row">
+              {depPath.map((step, j) => (
+                <span key={j}>
+                  {j > 0 && <span className="dependency-path-arrow"> {"→"} </span>}
+                  {step}
+                </span>
+              ))}
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

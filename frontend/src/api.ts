@@ -36,6 +36,9 @@ export interface Finding {
   file: string | null;
   line: number | null;
   remediation: string | null;
+  // How a vulnerable dependency was actually pulled in, root to leaf.
+  // Only ever set on dependency findings when a lockfile was present.
+  dependencyPaths?: string[][];
 }
 
 export interface ScanAccess {

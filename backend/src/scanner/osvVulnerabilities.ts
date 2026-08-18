@@ -2,6 +2,7 @@ import { DatabaseSync } from "node:sqlite";
 import fs from "fs";
 import path from "path";
 import type { Finding, Pass } from "./types";
+import { loadLockfileGraph, findDependencyPaths } from "./lockfileGraph";
 
 const DB_PATH = path.join(__dirname, "osv-data", "npm-vulnerabilities.db");
 
@@ -79,6 +80,12 @@ export function scanOSVVulnerabilities(targetRoot: string): { findings: Finding[
   const db = new DatabaseSync(DB_PATH, { readOnly: true });
   const query = db.prepare("SELECT * FROM vulnerabilities WHERE package = ?");
 
+  // Additive only: enriches findings with how a vulnerable package was
+  // actually pulled in, root to leaf. Detection above is unaffected either
+  // way — a missing or unsupported-format lockfile just means no paths get
+  // attached, not that findings are dropped or re-evaluated.
+  const lockfileGraph = loadLockfileGraph(path.join(targetRoot, "package-lock.json"));
+
   const findings: Finding[] = [];
   let anyFound = false;
 
@@ -94,6 +101,8 @@ export function scanOSVVulnerabilities(targetRoot: string): { findings: Finding[
     const representative = matches.find((m) => m.severity === worst) ?? matches[0];
     const fixedVersion = representative.fixed;
 
+    const dependencyPaths = lockfileGraph ? findDependencyPaths(lockfileGraph, name) : [];
+
     findings.push({
       severity,
       category: "Dependencies",
@@ -104,6 +113,7 @@ export function scanOSVVulnerabilities(targetRoot: string): { findings: Finding[
       remediation: fixedVersion
         ? `Upgrade ${name} to version ${fixedVersion} or later: npm install ${name}@${fixedVersion}`
         : `Check for a patched version of ${name} or evaluate an alternative package.`,
+      ...(dependencyPaths.length > 0 ? { dependencyPaths } : {}),
     });
   }
 

@@ -52,6 +52,15 @@ export interface Finding {
   file: string | null;
   line: number | null;
   remediation: string | null;
+  /**
+   * How a vulnerable dependency was actually pulled in, root to leaf — e.g.
+   * ["your-app", "express@4.18.0", "send@0.17.1", "vulnerable-pkg@1.2.0"].
+   * Only ever populated by the dependency scanner (from a parsed
+   * package-lock.json); every other finding simply omits it. A package can
+   * be reachable via more than one route, so this is a list of paths, not
+   * a single one.
+   */
+  dependencyPaths?: string[][];
 }
 
 /**
