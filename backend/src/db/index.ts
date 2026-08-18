@@ -340,6 +340,24 @@ db.exec(`
     ON webhook_events(created_at DESC);
 `);
 
+// Per-finding detection timeline: when a given finding (identified by its
+// stable hash, see patrol/findingStatuses.ts#hashFinding) was first and
+// most recently seen across a project's scan history. Updated on every
+// recordScan() call (patrol/scans.ts) and, for scans that predate this
+// table, backfilled once from stored report_json blobs — see
+// patrol/findingHistory.ts#backfillFindingHistory.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS finding_history (
+    project_id TEXT NOT NULL,
+    finding_hash TEXT NOT NULL,
+    first_seen_at TEXT NOT NULL,
+    last_seen_at TEXT NOT NULL,
+    PRIMARY KEY (project_id, finding_hash),
+    FOREIGN KEY (project_id) REFERENCES projects(id)
+  );
+  CREATE INDEX IF NOT EXISTS idx_finding_history_project ON finding_history(project_id);
+`);
+
 export function newId(): string {
   return crypto.randomUUID();
 }

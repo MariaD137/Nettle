@@ -39,6 +39,13 @@ export interface Finding {
   // How a vulnerable dependency was actually pulled in, root to leaf.
   // Only ever set on dependency findings when a lockfile was present.
   dependencyPaths?: string[][];
+  // A stable reference to the detection rule that produced this finding —
+  // the real Semgrep check_id for Semgrep-sourced findings, a generated
+  // (but still stable) ID for everything else.
+  ruleId?: string | null;
+  // A short, redacted snippet of the actual source line that triggered
+  // this finding, when available.
+  codeContext?: string | null;
 }
 
 export interface ScanAccess {
@@ -168,6 +175,14 @@ export interface StoredFindingStatus {
   status: FindingStatus;
   notes: string | null;
   updatedAt: string;
+}
+
+// When a given finding (by its stable hash) was first and most recently
+// observed across a project's scan history.
+export interface FindingHistoryEntry {
+  findingHash: string;
+  firstSeenAt: string;
+  lastSeenAt: string;
 }
 
 export interface SessionInfo {
@@ -405,7 +420,7 @@ export const api = {
 
   // Findings
   listFindingStatuses: (projectId: string) =>
-    request<{ findingStatuses: StoredFindingStatus[] }>(`/api/projects/${projectId}/findings`),
+    request<{ findingStatuses: StoredFindingStatus[]; findingHistory: FindingHistoryEntry[] }>(`/api/projects/${projectId}/findings`),
 
   updateFindingStatus: (projectId: string, findingHash: string, status: FindingStatus, notes?: string) =>
     request<{ findingStatus: StoredFindingStatus }>(`/api/projects/${projectId}/findings/${findingHash}`, {

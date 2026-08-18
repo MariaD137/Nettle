@@ -5,6 +5,7 @@ import { listAlerts, getAlert, updateAlertStatus, countAlertsByStatus } from "..
 import { listScans, getLatestScan } from "../patrol/scans";
 import { computeBadgeState } from "../patrol/badge";
 import { hashFinding, upsertFindingStatus, listFindingStatuses } from "../patrol/findingStatuses";
+import { listFindingHistory } from "../patrol/findingHistory";
 import { requireAuth } from "../auth/middleware";
 import { requireSubscription } from "../billing/subscription";
 import { getQuotaState } from "../billing/scanQuota";
@@ -197,7 +198,8 @@ projectsRouter.get("/api/projects/:id/findings", ...paywalled, (req, res) => {
   const project = ownedProjectOr404(req, res);
   if (!project) return;
   const statuses = listFindingStatuses(project.id);
-  res.json({ findingStatuses: statuses });
+  const history = listFindingHistory(project.id);
+  res.json({ findingStatuses: statuses, findingHistory: history });
 });
 
 projectsRouter.patch("/api/projects/:id/findings/:findingHash", ...paywalled, (req, res) => {

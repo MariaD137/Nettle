@@ -3,6 +3,11 @@
  * Shows the user *what* triggered a finding without exposing secrets.
  */
 
+import fs from "fs";
+import path from "path";
+import type { Finding } from "./types";
+import { generateCheckId } from "./threeStateModel";
+
 const SECRET_PATTERNS = [
   /[Aa]pi[_-]?key|apikey|api_secret/i,
   /[Pp]assword|passwd|pwd/i,
@@ -104,4 +109,47 @@ export function generateEvidenceForFinding(
   }
 
   return evidence || undefined;
+}
+
+/**
+ * Reads the given line out of a file on disk and returns a redacted,
+ * truncated snippet of it (via extractLineEvidence) — or undefined if the
+ * file can't be read, the line number is out of range, or the resolved
+ * path would escape targetRoot.
+ *
+ * `relativeFile` may carry a Semgrep-style trailing ":<line>" (see
+ * semgrepScanner.ts's scanWithSemgrep, which bakes the line into `file`
+ * for historical/hash-stability reasons) — that suffix is stripped before
+ * resolving the path so those findings still get real context.
+ */
+export function extractCodeContext(targetRoot: string, relativeFile: string, line: number): string | undefined {
+  try {
+    const cleanFile = relativeFile.replace(/:\d+$/, "");
+    const root = path.resolve(targetRoot);
+    const resolved = path.resolve(root, cleanFile);
+    if (resolved !== root && !resolved.startsWith(root + path.sep)) return undefined;
+    const lines = fs.readFileSync(resolved, "utf8").split("\n");
+    if (line < 1 || line > lines.length) return undefined;
+    return extractLineEvidence(lines[line - 1]);
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Backfills `ruleId` and `codeContext` on findings that don't already have
+ * them. Mutates and returns the same array — Semgrep findings already set
+ * their own real `ruleId` (the actual Semgrep check_id) before this runs,
+ * so this only fills in a stable generated one for everyone else. Code
+ * context is only attempted when `targetRoot` is supplied (a URL scan has
+ * no filesystem to read from) and the finding has both `file` and `line`.
+ */
+export function enrichFindings(findings: Finding[], targetRoot?: string): Finding[] {
+  for (const f of findings) {
+    if (!f.ruleId) f.ruleId = generateCheckId(f.category, f.title);
+    if (!f.codeContext && targetRoot && f.file && f.line) {
+      f.codeContext = extractCodeContext(targetRoot, f.file, f.line) ?? null;
+    }
+  }
+  return findings;
 }

@@ -3,7 +3,7 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import {
   api, ApiError,
   type Alert, type AlertCounts, type AlertStatus, type BadgeState,
-  type Finding, type FindingStatus, type Project, type ScanComparison,
+  type Finding, type FindingHistoryEntry, type FindingStatus, type Project, type ScanComparison,
   type ScanReport, type Severity, type StoredFindingStatus, type StoredScan,
 } from "../api";
 import BadgePill from "../components/BadgePill";
@@ -360,6 +360,18 @@ function FindingGroup({ title, findings }: { title: string; findings: Finding[] 
   );
 }
 
+// Some scanners (Semgrep) bake the line number into `file` itself
+// ("src/app.js:42") for finding-identity/hash-stability reasons, while
+// still populating `line` separately for display — appending ":line"
+// unconditionally would then show "src/app.js:42:42". Only append it when
+// `file` doesn't already end with it.
+function formatFileLocation(finding: Finding): string {
+  if (!finding.file) return "";
+  if (!finding.line) return finding.file;
+  const suffix = `:${finding.line}`;
+  return finding.file.endsWith(suffix) ? finding.file : `${finding.file}${suffix}`;
+}
+
 function FindingRow({ finding }: { finding: Finding }) {
   const [expanded, setExpanded] = useState(false);
   return (
@@ -369,11 +381,9 @@ function FindingRow({ finding }: { finding: Finding }) {
         <span className="finding-cat">{finding.category}</span>
       </div>
       <p className="finding-detail">{finding.detail}</p>
-      {finding.file && (
-        <p className="finding-file">
-          {finding.file}{finding.line ? `:${finding.line}` : ""}
-        </p>
-      )}
+      {finding.file && <p className="finding-file">{formatFileLocation(finding)}</p>}
+      {finding.codeContext && <pre className="finding-context">{finding.codeContext}</pre>}
+      {finding.ruleId && <p className="finding-rule">Detection: <code>{finding.ruleId}</code></p>}
       {expanded && finding.remediation && (
         <div className="remediation">
           <strong>How to fix:</strong> {finding.remediation}
@@ -411,6 +421,7 @@ const SEVERITY_RANK: Record<Severity, number> = { critical: 0, high: 1, medium: 
 
 function FindingsTab({ projectId, latestScan }: { projectId: string; latestScan: StoredScan | null }) {
   const [statuses, setStatuses] = useState<StoredFindingStatus[] | null>(null);
+  const [history, setHistory] = useState<FindingHistoryEntry[]>([]);
   const [statusFilter, setStatusFilter] = useState<FindingStatus | "all">("all");
   const [severityFilter, setSeverityFilter] = useState<Severity | "all">("all");
   const [categoryFilter, setCategoryFilter] = useState<string>("all");
@@ -418,7 +429,10 @@ function FindingsTab({ projectId, latestScan }: { projectId: string; latestScan:
   const [sort, setSort] = useState<FindingSort>("severity-desc");
 
   useEffect(() => {
-    api.listFindingStatuses(projectId).then(({ findingStatuses }) => setStatuses(findingStatuses));
+    api.listFindingStatuses(projectId).then(({ findingStatuses, findingHistory }) => {
+      setStatuses(findingStatuses);
+      setHistory(findingHistory);
+    });
   }, [projectId]);
 
   const findings = latestScan?.report.findings ?? [];
@@ -452,6 +466,11 @@ function FindingsTab({ projectId, latestScan }: { projectId: string; latestScan:
     if (!statuses) return "";
     const hash = hashFinding(finding.category, finding.title, finding.file);
     return statuses.find((s) => s.findingHash === hash)?.notes ?? "";
+  }
+
+  function getHistory(finding: Finding): FindingHistoryEntry | undefined {
+    const hash = hashFinding(finding.category, finding.title, finding.file);
+    return history.find((h) => h.findingHash === hash);
   }
 
   const categories = Array.from(new Set(findings.map((f) => f.category))).sort();
@@ -526,6 +545,7 @@ function FindingsTab({ projectId, latestScan }: { projectId: string; latestScan:
           finding={f}
           status={getStatus(f)}
           savedNote={getNote(f)}
+          history={getHistory(f)}
           onStatusChange={(status) => updateStatus(hashFinding(f.category, f.title, f.file), status)}
           onSaveNote={(note) => saveNote(hashFinding(f.category, f.title, f.file), getStatus(f), note)}
         />
@@ -538,12 +558,14 @@ function FindingManagementRow({
   finding,
   status,
   savedNote,
+  history,
   onStatusChange,
   onSaveNote,
 }: {
   finding: Finding;
   status: FindingStatus;
   savedNote: string;
+  history?: FindingHistoryEntry;
   onStatusChange: (status: FindingStatus) => void;
   onSaveNote: (note: string) => Promise<void>;
 }) {
@@ -575,7 +597,17 @@ function FindingManagementRow({
         </div>
       </div>
       <p className="finding-detail">{finding.detail}</p>
-      {finding.file && <p className="finding-file">{finding.file}{finding.line ? `:${finding.line}` : ""}</p>}
+      {finding.file && <p className="finding-file">{formatFileLocation(finding)}</p>}
+      {finding.codeContext && <pre className="finding-context">{finding.codeContext}</pre>}
+      <div className="finding-meta">
+        {finding.ruleId && <span className="finding-rule">Detection: <code>{finding.ruleId}</code></span>}
+        {history && (
+          <span className="finding-dates">
+            First detected {new Date(history.firstSeenAt).toLocaleDateString()}
+            {history.lastSeenAt !== history.firstSeenAt && ` · last seen ${new Date(history.lastSeenAt).toLocaleDateString()}`}
+          </span>
+        )}
+      </div>
       <div className="alert-actions">
         <select className="filter-select" value={status} onChange={(e) => onStatusChange(e.target.value as FindingStatus)}>
           {Object.entries(FINDING_STATUS_LABELS).map(([v, l]) => (
@@ -601,7 +633,7 @@ function FindingManagementRow({
   );
 }
 
-function hashFinding(category: string, title: string, file: string | null): string {
+export function hashFinding(category: string, title: string, file: string | null): string {
   const key = `${category}::${title}::${file ?? ""}`;
   let hash = 0;
   for (let i = 0; i < key.length; i++) {

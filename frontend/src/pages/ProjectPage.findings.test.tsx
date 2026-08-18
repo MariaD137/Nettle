@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, waitFor, fireEvent } from "@testing-library/react";
 import { MemoryRouter, Routes, Route } from "react-router-dom";
-import ProjectPage from "./ProjectPage";
+import ProjectPage, { hashFinding } from "./ProjectPage";
 
 // jsdom doesn't implement matchMedia — ProjectPage's useIsMobile() needs it
 // to decide between the mobile/desktop layouts (this suite exercises the
@@ -35,11 +35,17 @@ const mockProject = {
 };
 
 const findings = [
-  { severity: "critical", category: "Security", title: "Hardcoded API key", detail: "Found a hardcoded key in source.", file: "src/config.js", line: 12, remediation: null },
+  {
+    severity: "critical", category: "Security", title: "Hardcoded API key", detail: "Found a hardcoded key in source.",
+    file: "src/config.js", line: 12, remediation: null,
+    ruleId: "abc123def456", codeContext: "const API_KEY = '[REDACTED]';",
+  },
   { severity: "high", category: "Dependencies", title: "Vulnerable dependency: lodash", detail: "Known prototype pollution issue.", file: "package.json", line: null, remediation: null },
   { severity: "medium", category: "Security", title: "Missing CSP header", detail: "No Content-Security-Policy header set.", file: null, line: null, remediation: null },
   { severity: "low", category: "Legal & Policy", title: "No cookie policy found", detail: "Consider adding one.", file: null, line: null, remediation: null },
 ];
+
+const HARDCODED_API_KEY_HASH = hashFinding("Security", "Hardcoded API key", "src/config.js");
 
 const mockScan = {
   id: "scan-1",
@@ -105,6 +111,9 @@ describe("ProjectPage Findings tab", () => {
           updatedAt: "2026-01-01T00:00:00.000Z",
         },
       ],
+      findingHistory: [
+        { findingHash: HARDCODED_API_KEY_HASH, firstSeenAt: "2026-01-01T00:00:00.000Z", lastSeenAt: "2026-01-02T00:00:00.000Z" },
+      ],
     });
     vi.mocked(api.updateFindingStatus).mockReset();
   });
@@ -123,6 +132,16 @@ describe("ProjectPage Findings tab", () => {
     expect(screen.getByText("Missing CSP header")).toBeInTheDocument();
     expect(screen.getByText("No cookie policy found")).toBeInTheDocument();
     expect(screen.getByText("Findings (4)")).toBeInTheDocument();
+  });
+
+  it("shows line number, code context, rule reference, and first/last-detected dates when available", async () => {
+    await openFindingsTab();
+
+    expect(screen.getByText("src/config.js:12")).toBeInTheDocument();
+    expect(screen.getByText("const API_KEY = '[REDACTED]';")).toBeInTheDocument();
+    expect(screen.getByText("abc123def456")).toBeInTheDocument();
+    expect(screen.getByText(/First detected/)).toBeInTheDocument();
+    expect(screen.getByText(/last seen/)).toBeInTheDocument();
   });
 
   it("search filters findings by title text", async () => {

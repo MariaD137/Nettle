@@ -1,6 +1,8 @@
 import { db, newId } from "../db";
 import type { ScanReport, ScanStatus } from "../scanner/types";
 import { getProject } from "./projects";
+import { hashFinding } from "./findingStatuses";
+import { recordFindingSeen } from "./findingHistory";
 
 export interface StoredScan {
   id: string;
@@ -75,6 +77,12 @@ export function recordScan(projectId: string, report: ScanReport, status: ScanSt
     stored.status,
     JSON.stringify(report)
   );
+
+  for (const finding of report.findings) {
+    const hash = hashFinding(finding.category, finding.title, finding.file);
+    recordFindingSeen(projectId, hash, report.scannedAt);
+  }
+
   return stored;
 }
 

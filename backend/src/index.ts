@@ -13,6 +13,7 @@ import analyticsRouter from "./routes/analytics.routes";
 import integrationsRouter from "./routes/integrations.routes";
 import { scanRateLimit, publicRateLimit, apiRateLimit } from "./middleware/rateLimit";
 import { initializeScanner } from "./scanner/initialization";
+import { backfillFindingHistory } from "./patrol/findingHistory";
 
 const app = express();
 const PORT = process.env.PORT || 8080;
@@ -55,6 +56,12 @@ app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
 
 // Initialize scanner at startup
 initializeScanner();
+
+// One-time seed of first/last-detected history for scans recorded before
+// this table existed — a no-op after the first successful run. Runs
+// before the server starts accepting requests so there's no window where
+// a fresh scan could race the backfill.
+backfillFindingHistory();
 
 app.listen(PORT, () => {
   console.log(`Nettle backend listening on port ${PORT}`);

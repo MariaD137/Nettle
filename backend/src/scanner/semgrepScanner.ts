@@ -106,15 +106,22 @@ export function scanWithSemgrep(targetRoot: string): { findings: Finding[]; pass
   }
 
   const findings: Finding[] = output.results.map((r) => {
-    const ruleId = (r.check_id.split(".").pop() ?? "").replace(/^nettle-/, "");
+    const ruleSlug = (r.check_id.split(".").pop() ?? "").replace(/^nettle-/, "");
     return {
       severity: severityFor(r.extra.severity),
       category: "Security" as const,
       title: titleFor(r.check_id),
       detail: r.extra.message.trim(),
+      // `file` keeps the historical "path:line" shape (not just `path`) so
+      // that existing finding hashes/statuses for Semgrep findings don't
+      // shift when `line` was added here — hashFinding() is keyed off this
+      // string. `line` is still populated properly below for real use
+      // (rendering, code-context extraction); frontend rendering guards
+      // against double-appending it.
       file: `${path.relative(targetRoot, r.path)}:${r.start.line}`,
-      line: null,
-      remediation: REMEDIATION_BY_RULE[ruleId] ?? null,
+      line: r.start.line,
+      remediation: REMEDIATION_BY_RULE[ruleSlug] ?? null,
+      ruleId: r.check_id,
     };
   });
 

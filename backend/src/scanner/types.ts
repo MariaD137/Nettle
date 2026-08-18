@@ -61,6 +61,27 @@ export interface Finding {
    * a single one.
    */
   dependencyPaths?: string[][];
+  /**
+   * A stable reference identifying which detection rule produced this
+   * finding, independent of which file/line it fired on — the same rule
+   * firing in two files gets the same ruleId. For Semgrep-sourced findings
+   * this is the real Semgrep check_id (e.g. "nettle-js-rules.eval-usage"),
+   * traceable back to scanner/semgrep-rules/nettle-js-rules.yaml. Every
+   * other scanner gets one backfilled automatically (see
+   * scanner/evidence.ts#enrichFindings) — a stable, deterministic ID
+   * derived from category+title, useful for search/filtering even though
+   * it isn't tied to a published rule catalog entry.
+   */
+  ruleId?: string | null;
+  /**
+   * A short, redacted snippet of the actual source line that triggered
+   * this finding (when the file is available on disk at scan time) — not
+   * a description of the issue, the real matched code. Backfilled
+   * automatically wherever `file` and `line` are both known; absent for
+   * findings with no on-disk location (e.g. URL scans, or checks that
+   * can't isolate a specific line).
+   */
+  codeContext?: string | null;
 }
 
 /**

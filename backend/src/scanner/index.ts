@@ -24,6 +24,7 @@ import { scanTerraformSecurity } from "./terraformSecurity";
 import { scanDockerSecurity } from "./dockerSecurity";
 import { scanKubernetesSecurity } from "./kubernetesSecurity";
 import { scanCicdSecurity } from "./cicdSecurity";
+import { enrichFindings } from "./evidence";
 
 const SCANNED_EXTENSIONS = [".js", ".ts", ".jsx", ".tsx", ".env", ".json", ".tf", ".yaml", ".yml", "dockerfile"];
 
@@ -89,7 +90,7 @@ export function runScan(targetPath: string, scanType?: ScanType, onProgress?: Sc
     onProgress?.({ type: "step-complete", stepId: step.id, stepLabel: step.label, index: i, total: steps.length });
   }
 
-  const findings = results.flatMap((r) => r.findings);
+  const findings = enrichFindings(results.flatMap((r) => r.findings), targetRoot);
   const passed = results.flatMap((r) => r.passed);
   const attackChains = correlateAttackChains(findings);
 
@@ -143,6 +144,9 @@ export async function runUrlScan(targetUrl: string, onProgress?: ScanProgressCal
   const result = await scanUrl(targetUrl);
   onProgress?.({ type: "step-complete", stepId, stepLabel, index: 0, total: 1 });
 
+  // No targetRoot: a URL scan has no filesystem to read code context from,
+  // but every finding still gets a stable ruleId for search/filtering.
+  enrichFindings(result.findings);
   const score = calculateScore(result.findings, SCORING_CONFIG);
   const attackChains = correlateAttackChains(result.findings);
 
