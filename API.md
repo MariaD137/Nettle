@@ -132,6 +132,15 @@ Auth required. Body: `{ currentPassword, newPassword }`. → `{ message }`. `401
 ### `PATCH /api/auth/email`
 Auth required. Body: `{ email, password }` — password confirms the change. → `{ user }`. `409` if the new email's taken.
 
+Session tokens are hashed (SHA-256) before they're ever written to the
+database — the `sessions` table holds `SHA-256(token)`, never the token
+itself, so DB read access alone can't be used to impersonate a live
+session. `createSession()` still returns the real token to the caller
+exactly as before; only what gets persisted changed. `tokenPrefix` below
+is now a prefix of that hash rather than the real token, which changes
+nothing about how it's used (still just a stable per-session display
+identifier for revoking one specific session by prefix).
+
 ### `GET /api/auth/sessions`
 Auth required. → `{ sessions: SessionInfo[] }` where `SessionInfo` is `{ tokenPrefix, createdAt, expiresAt, current }` — `tokenPrefix` is the first 8 characters plus `…`, never the full token.
 
@@ -142,7 +151,7 @@ Auth required. Revokes one session by its prefix (from the list above). → `204
 Auth required. Revokes every session for the account **including the one making the request**, then issues a fresh token. → `{ token, message }` — the caller must swap in the new token immediately.
 
 ### `DELETE /api/auth/account`
-Auth required. Body: `{ password }`. Permanently deletes the account and everything under it. → `204`, or `401` if the password's wrong.
+Auth required. Body: `{ password }`. Permanently deletes the account and everything under it — every project the account owns, and every row keyed to those projects: scans, alerts, events, finding statuses/history, custom rules (with their versions and test results), api_keys, webhooks (with their queued events), notification_channels, detection_settings, and the ml_* tables, plus the account's own sessions, password_resets, and scan_usage rows. This list previously drifted behind newly-added feature tables — several of the tables above were only added to the purge after the fact — so if you're adding a new table keyed off `project_id` or `user_id`, add its purge in `deleteUser()` (`backend/src/auth/users.ts`) too. → `204`, or `401` if the password's wrong.
 
 ## Projects (`/api/projects/*`, `/api/overview`)
 
@@ -192,6 +201,17 @@ except at `/api/events` where a key is mandatory so it's a `401`).
 - **`GET /api/projects/:id/api-keys`** — → `{ apiKeys: StoredApiKey[] }`, `key` masked on every entry (e.g. `nettle_a1b2…c3d4`).
 - **`PATCH /api/projects/:id/api-keys/:keyId`** — Body: any subset of `{ name, scopes }`. → `{ apiKey }` (masked).
 - **`POST /api/projects/:id/api-keys/:keyId/rotate`** — Regenerates just this key's secret, old value stops working immediately. → `{ apiKey }` with the full new value (once). Rotating the default key also updates `Project.apiKey`.
+
+**At-rest storage**: every key created through this endpoint (or rotated
+through it) is stored as `SHA-256(key)`, not the real secret — same
+reasoning as session tokens above. The one exception is a project's
+**default** key: `Project.apiKey` is, by design, always redisplayable from
+a project's settings (not reveal-once like every other key), so its
+`api_keys` row keeps storing that same value in plain — hashing it there
+while `Project.apiKey` mirrors it in the clear elsewhere wouldn't protect
+anything. A project's original key, in other words, is the one key that
+still sits in the database in plain; every additional key created after
+it does not.
 - **`POST /api/projects/:id/api-keys/:keyId/revoke`** — Immediate, idempotent, permanent — there's no un-revoke. Doesn't delete the row; name/scopes/lastUsedAt stay visible as history. → `{ apiKey }` (masked) with `revokedAt` set.
 
 ### `GET /api/projects/:id/alerts`

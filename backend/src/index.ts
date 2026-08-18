@@ -15,7 +15,7 @@ import { internalRouter } from "./routes/internal.routes";
 import { scanRateLimit, publicRateLimit, apiRateLimit } from "./middleware/rateLimit";
 import { initializeScanner } from "./scanner/initialization";
 import { backfillFindingHistory } from "./patrol/findingHistory";
-import { backfillApiKeys } from "./patrol/apiKeys";
+import { backfillApiKeys, backfillHashedApiKeys } from "./patrol/apiKeys";
 
 const app = express();
 const PORT = process.env.PORT || 8080;
@@ -70,6 +70,12 @@ backfillFindingHistory();
 // api_keys table gets its existing projects.api_key mirrored in as its
 // default key, so revoke/scope/last-used tracking cover it too.
 backfillApiKeys();
+
+// Migrates any api_keys row created before key hashing existed — replaces
+// a non-default row's plaintext key with its hash and fills in every row's
+// precomputed masked display form. Runs after backfillApiKeys() so rows it
+// just seeded for pre-existing projects get covered in the same pass.
+backfillHashedApiKeys();
 
 app.listen(PORT, () => {
   console.log(`Nettle backend listening on port ${PORT}`);

@@ -389,6 +389,16 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_api_keys_project ON api_keys(project_id);
 `);
 
+// A precomputed "nettle_a1b2…c3d4" display form, populated at creation —
+// added so `key` can hold a hash instead of the real secret for
+// non-default keys (see patrol/apiKeys.ts) without losing the ability to
+// redisplay a masked form on every later list/get. columnExists rather
+// than a fresh CREATE TABLE column list since api_keys already existed
+// before this.
+if (!columnExists("api_keys", "key_masked")) {
+  db.exec("ALTER TABLE api_keys ADD COLUMN key_masked TEXT");
+}
+
 // Per-project overrides for the built-in detection.ts thresholds, which
 // were previously hardcoded module constants (5 failed auths, 50 req/10s,
 // 5 distinct IPs for credential-stuffing). No row means "use the

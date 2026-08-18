@@ -159,11 +159,43 @@ export function updateEmail(userId: string, newEmail: string): User | null {
   return getUserById(userId);
 }
 
+/**
+ * Every table with a project_id/user_id foreign key back to this account
+ * gets purged here — this list has drifted behind new feature tables
+ * before (webhooks, notification channels, custom rules, api_keys,
+ * detection_settings, finding_history, the ml_* tables, and scan_usage
+ * were all added without ever being added here), leaving orphaned rows in
+ * the database after "deletion". When adding a new table keyed off
+ * project_id or user_id, add its purge here too.
+ */
 export function deleteUser(userId: string): void {
   db.prepare("DELETE FROM password_resets WHERE user_id = ?").run(userId);
   db.prepare("DELETE FROM sessions WHERE user_id = ?").run(userId);
+  db.prepare("DELETE FROM scan_usage WHERE user_id = ?").run(userId);
+
   const projectIds = db.prepare("SELECT id FROM projects WHERE user_id = ?").all(userId) as unknown as { id: string }[];
   for (const p of projectIds) {
+    const webhookIds = db.prepare("SELECT id FROM webhooks WHERE project_id = ?").all(p.id) as unknown as { id: string }[];
+    for (const w of webhookIds) {
+      db.prepare("DELETE FROM webhook_events WHERE webhook_id = ?").run(w.id);
+    }
+    db.prepare("DELETE FROM webhooks WHERE project_id = ?").run(p.id);
+    db.prepare("DELETE FROM notification_channels WHERE project_id = ?").run(p.id);
+
+    const ruleIds = db.prepare("SELECT id FROM custom_rules WHERE project_id = ?").all(p.id) as unknown as { id: string }[];
+    for (const r of ruleIds) {
+      db.prepare("DELETE FROM rule_versions WHERE rule_id = ?").run(r.id);
+      db.prepare("DELETE FROM rule_test_results WHERE rule_id = ?").run(r.id);
+    }
+    db.prepare("DELETE FROM custom_rules WHERE project_id = ?").run(p.id);
+
+    db.prepare("DELETE FROM api_keys WHERE project_id = ?").run(p.id);
+    db.prepare("DELETE FROM detection_settings WHERE project_id = ?").run(p.id);
+    db.prepare("DELETE FROM finding_history WHERE project_id = ?").run(p.id);
+    db.prepare("DELETE FROM ml_baselines WHERE project_id = ?").run(p.id);
+    db.prepare("DELETE FROM anomaly_scores WHERE project_id = ?").run(p.id);
+    db.prepare("DELETE FROM ml_model_status WHERE project_id = ?").run(p.id);
+
     db.prepare("DELETE FROM alerts WHERE project_id = ?").run(p.id);
     db.prepare("DELETE FROM events WHERE project_id = ?").run(p.id);
     db.prepare("DELETE FROM scans WHERE project_id = ?").run(p.id);

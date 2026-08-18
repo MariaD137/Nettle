@@ -1,7 +1,7 @@
 import { db, newId, newApiKey } from "../db";
 import type { Project } from "./types";
 import { encryptToken, decryptToken } from "../security/tokenEncryption";
-import { seedDefaultApiKey, getDefaultApiKeyRow, resolveApiKey, type ApiKeyScope } from "./apiKeys";
+import { seedDefaultApiKey, getDefaultApiKeyRow, resolveApiKey, maskKey, type ApiKeyScope } from "./apiKeys";
 
 interface ProjectRow {
   id: string;
@@ -147,7 +147,10 @@ export function rotateApiKey(id: string): Project | null {
   const key = newApiKey();
   const defaultRow = getDefaultApiKeyRow(id);
   if (defaultRow) {
-    db.prepare("UPDATE api_keys SET key = ?, last_used_at = NULL WHERE id = ?").run(key, defaultRow.id);
+    // Stored in plain, same as seedDefaultApiKey — see the module comment
+    // in patrol/apiKeys.ts on why the default row can't be hashed while
+    // projects.api_key mirrors it in the clear.
+    db.prepare("UPDATE api_keys SET key = ?, key_masked = ?, last_used_at = NULL WHERE id = ?").run(key, maskKey(key), defaultRow.id);
   }
   db.prepare("UPDATE projects SET api_key = ? WHERE id = ?").run(key, id);
   return getProject(id);
