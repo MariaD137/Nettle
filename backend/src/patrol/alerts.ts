@@ -5,6 +5,7 @@ import { sendSlackAlert } from "../integrations/slack";
 import { sendPagerDutyAlert } from "../integrations/pagerduty";
 import { sendSplunkAlert } from "../integrations/splunk";
 import { sendDatadogAlert } from "../integrations/datadog";
+import { notifyChannels } from "./notificationChannels";
 
 interface AlertRow {
   id: string;
@@ -42,6 +43,7 @@ export function createAlert(projectId: string, severity: AlertSeverity, rule: st
     "INSERT INTO alerts (id, project_id, occurred_at, severity, rule, message, status) VALUES (?, ?, ?, ?, ?, ?, ?)"
   ).run(alert.id, alert.projectId, alert.occurredAt, alert.severity, alert.rule, alert.message, alert.status);
   notifyAlertWebhooks(alert);
+  notifyChannels(alert.projectId, "incident_alert", `Nettle alert (${alert.severity}): ${alert.rule}`, alert.message);
   return alert;
 }
 

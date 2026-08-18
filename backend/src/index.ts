@@ -11,6 +11,7 @@ import { billingRouter, billingWebhookRouter } from "./routes/billing.routes";
 import customRulesRouter from "./routes/customRules.routes";
 import analyticsRouter from "./routes/analytics.routes";
 import integrationsRouter from "./routes/integrations.routes";
+import { internalRouter } from "./routes/internal.routes";
 import { scanRateLimit, publicRateLimit, apiRateLimit } from "./middleware/rateLimit";
 import { initializeScanner } from "./scanner/initialization";
 import { backfillFindingHistory } from "./patrol/findingHistory";
@@ -45,6 +46,7 @@ app.use(billingRouter);
 app.use('/api/custom-rules', customRulesRouter);
 app.use('/api/analytics', analyticsRouter);
 app.use('/api/projects', integrationsRouter);
+app.use(internalRouter);
 
 app.use((_req: Request, res: Response) => {
   res.status(404).json({ error: "Not found" });

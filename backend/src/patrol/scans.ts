@@ -4,6 +4,7 @@ import { getProject } from "./projects";
 import { hashFinding } from "./findingStatuses";
 import { recordFindingSeen } from "./findingHistory";
 import { sendWebhook } from "../integrations/webhooks";
+import { notifyChannels } from "./notificationChannels";
 
 export interface StoredScan {
   id: string;
@@ -121,6 +122,10 @@ function notifyScanCompleted(scan: StoredScan): void {
     clear_count: scan.clearCount,
     scanned_at: scan.scannedAt,
   }).catch((err) => console.error("scan.completed webhook delivery failed:", err));
+
+  const projectName = getProject(scan.projectId)?.name ?? "your project";
+  const summary = `Scan of ${projectName} finished with score ${scan.score} (${scan.criticalCount} critical, ${scan.cautionCount} caution).`;
+  notifyChannels(scan.projectId, "scan.completed", `Nettle: scan completed for ${projectName}`, summary);
 }
 
 export function listScans(projectId: string): StoredScan[] {

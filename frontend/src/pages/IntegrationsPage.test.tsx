@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, waitFor, fireEvent } from "@testing-library/react";
 import { MemoryRouter, Routes, Route } from "react-router-dom";
 import { IntegrationsPage } from "./IntegrationsPage";
-import type { Webhook } from "../api";
+import type { Webhook, NotificationChannel } from "../api";
 
 window.confirm = vi.fn(() => true);
 
@@ -17,6 +17,17 @@ const slackWebhook: Webhook = {
   updated_at: "2026-01-01T00:00:00.000Z",
 };
 
+const emailChannel: NotificationChannel = {
+  id: "ch-email",
+  project_id: "proj-1",
+  channel: "email",
+  destination: "ops@example.com",
+  is_active: true,
+  event_types: ["scan.completed"],
+  created_at: "2026-01-01T00:00:00.000Z",
+  updated_at: "2026-01-01T00:00:00.000Z",
+};
+
 vi.mock("../api", async () => {
   const actual = await vi.importActual<typeof import("../api")>("../api");
   return {
@@ -27,6 +38,10 @@ vi.mock("../api", async () => {
       updateWebhook: vi.fn(),
       deleteWebhook: vi.fn(),
       testWebhook: vi.fn(),
+      listNotificationChannels: vi.fn(),
+      createNotificationChannel: vi.fn(),
+      updateNotificationChannel: vi.fn(),
+      deleteNotificationChannel: vi.fn(),
     },
   };
 });
@@ -50,6 +65,13 @@ describe("IntegrationsPage", () => {
     vi.mocked(api.updateWebhook).mockReset();
     vi.mocked(api.deleteWebhook).mockReset();
     vi.mocked(api.testWebhook).mockReset();
+    // Empty by default so existing webhook-only assertions (getByText, etc.)
+    // don't collide with badges/labels the notification-channels section
+    // would otherwise also render — tests that care about it override this.
+    vi.mocked(api.listNotificationChannels).mockReset().mockResolvedValue([]);
+    vi.mocked(api.createNotificationChannel).mockReset();
+    vi.mocked(api.updateNotificationChannel).mockReset();
+    vi.mocked(api.deleteNotificationChannel).mockReset();
   });
 
   it("lists configured webhooks with their service, url, and subscribed events", async () => {
@@ -132,5 +154,65 @@ describe("IntegrationsPage", () => {
 
     await waitFor(() => expect(screen.getByText("Test webhook sent successfully")).toBeInTheDocument());
     expect(api.testWebhook).toHaveBeenCalledWith("proj-1", "wh-slack");
+  });
+
+  describe("notification channels (email/SMS)", () => {
+    beforeEach(() => {
+      vi.mocked(api.listWebhooks).mockReset().mockResolvedValue([]);
+      vi.mocked(api.listNotificationChannels).mockReset().mockResolvedValue([emailChannel]);
+    });
+
+    it("lists configured channels with their type, destination, and subscribed events", async () => {
+      renderPage();
+      await waitFor(() => expect(screen.getByText("email")).toBeInTheDocument());
+      expect(screen.getByText("ops@example.com")).toBeInTheDocument();
+      expect(screen.getByText("scan.completed")).toBeInTheDocument();
+    });
+
+    it("shows an empty state when no channels are configured", async () => {
+      vi.mocked(api.listNotificationChannels).mockResolvedValue([]);
+      renderPage();
+      await waitFor(() => expect(screen.getByText(/No email or SMS channels configured yet/i)).toBeInTheDocument());
+    });
+
+    it("creating an SMS channel sends the selected type, destination, and event types", async () => {
+      vi.mocked(api.listNotificationChannels).mockResolvedValueOnce([]).mockResolvedValueOnce([emailChannel]);
+      vi.mocked(api.createNotificationChannel).mockResolvedValue(emailChannel);
+      renderPage();
+      await waitFor(() => expect(screen.getByText(/No email or SMS channels configured yet/i)).toBeInTheDocument());
+
+      fireEvent.click(screen.getByRole("button", { name: /add channel/i }));
+      fireEvent.change(screen.getByLabelText(/channel/i), { target: { value: "sms" } });
+      fireEvent.change(screen.getByLabelText(/phone number/i), { target: { value: "+15551234567" } });
+      fireEvent.click(screen.getByRole("button", { name: /^save channel$/i }));
+
+      await waitFor(() =>
+        expect(api.createNotificationChannel).toHaveBeenCalledWith("proj-1", "sms", "+15551234567", ["scan.completed"])
+      );
+    });
+
+    it("toggling active calls updateNotificationChannel with the flipped state", async () => {
+      vi.mocked(api.updateNotificationChannel).mockResolvedValue({ ...emailChannel, is_active: false });
+      renderPage();
+      await waitFor(() => expect(screen.getByText("email")).toBeInTheDocument());
+
+      fireEvent.click(screen.getByRole("checkbox", { name: /active/i }));
+
+      await waitFor(() =>
+        expect(api.updateNotificationChannel).toHaveBeenCalledWith("proj-1", "ch-email", { is_active: false })
+      );
+    });
+
+    it("removing a channel confirms, then deletes it and drops it from the list", async () => {
+      vi.mocked(api.deleteNotificationChannel).mockResolvedValue(undefined);
+      renderPage();
+      await waitFor(() => expect(screen.getByText("email")).toBeInTheDocument());
+
+      fireEvent.click(screen.getByRole("button", { name: /remove/i }));
+
+      expect(window.confirm).toHaveBeenCalled();
+      await waitFor(() => expect(api.deleteNotificationChannel).toHaveBeenCalledWith("proj-1", "ch-email"));
+      await waitFor(() => expect(screen.queryByText("ops@example.com")).not.toBeInTheDocument());
+    });
   });
 });

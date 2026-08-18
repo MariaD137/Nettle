@@ -16,6 +16,7 @@ import {
 import { createSession, destroySession, listSessions, destroyAllSessions, destroySessionByPrefix } from "../auth/sessions";
 import { requireAuth } from "../auth/middleware";
 import { rateLimit } from "../middleware/rateLimit";
+import { sendEmail } from "../integrations/email";
 
 export const authRouter = Router();
 
@@ -90,7 +91,18 @@ authRouter.post("/api/auth/forgot-password", authLimiter, (req, res) => {
   const user = getUserByEmail(email);
   if (user) {
     const resetToken = createPasswordResetToken(user.id);
-    console.log(`[password-reset] token for ${email}: ${resetToken}`);
+    const resetUrl = `${process.env.FRONTEND_URL || "http://localhost:5173"}/reset-password?token=${resetToken}`;
+    // Fire-and-forget: a slow/failing mail provider must not delay or
+    // change this endpoint's response, which is deliberately identical
+    // whether or not the email exists (see the generic message below).
+    sendEmail(
+      email,
+      "Reset your Nettle password",
+      `We received a request to reset your Nettle password. Reset it here: ${resetUrl}\n\nIf you didn't request this, you can ignore this email.`,
+      `<p>We received a request to reset your Nettle password.</p><p><a href="${resetUrl}">Reset your password</a></p><p>If you didn't request this, you can ignore this email.</p>`
+    ).then((result) => {
+      if (!result.sent) console.error(`Password reset email to ${email} failed:`, result.error);
+    });
   }
 
   res.json({ message: "If that email is registered, a reset link has been sent" });

@@ -282,6 +282,22 @@ export interface Webhook {
   updated_at: string;
 }
 
+export type NotificationChannelType = "email" | "sms";
+
+export const NOTIFICATION_EVENT_TYPES = ["scan.completed", "incident_alert", "digest.daily", "digest.weekly"] as const;
+export type NotificationEventType = (typeof NOTIFICATION_EVENT_TYPES)[number];
+
+export interface NotificationChannel {
+  id: string;
+  project_id: string;
+  channel: NotificationChannelType;
+  destination: string;
+  is_active: boolean;
+  event_types: string[];
+  created_at: string;
+  updated_at: string;
+}
+
 export interface WebhookEvent {
   id: string;
   webhook_id: string;
@@ -594,6 +610,28 @@ export const api = {
 
   getWebhookEvents: (projectId: string, webhookId: string, limit = 50) =>
     request<WebhookEvent[]>(`/api/projects/${projectId}/webhooks/${webhookId}/events?limit=${limit}`),
+
+  listNotificationChannels: (projectId: string) =>
+    request<NotificationChannel[]>(`/api/projects/${projectId}/notification-channels`),
+
+  createNotificationChannel: (projectId: string, channel: NotificationChannelType, destination: string, eventTypes: string[]) =>
+    request<NotificationChannel>(`/api/projects/${projectId}/notification-channels`, {
+      method: "POST",
+      body: JSON.stringify({ channel, destination, event_types: eventTypes }),
+    }),
+
+  updateNotificationChannel: (
+    projectId: string,
+    channelId: string,
+    updates: { destination?: string; event_types?: string[]; is_active?: boolean }
+  ) =>
+    request<NotificationChannel>(`/api/projects/${projectId}/notification-channels/${channelId}`, {
+      method: "PATCH",
+      body: JSON.stringify(updates),
+    }),
+
+  deleteNotificationChannel: (projectId: string, channelId: string) =>
+    request<void>(`/api/projects/${projectId}/notification-channels/${channelId}`, { method: "DELETE" }),
 
   // Badge
   getBadge: (projectId: string) => request<BadgeState>(`/api/projects/${projectId}/badge.json`),

@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import express from "express";
 import type { Server } from "http";
 import { AddressInfo } from "net";
+import { SMTPServer } from "smtp-server";
 import { authRouter } from "../src/routes/auth.routes";
 import { createUser, verifyCredentials, EmailAlreadyRegisteredError } from "../src/auth/users";
 import { hashPassword, verifyPassword } from "../src/auth/passwords";
@@ -112,5 +113,107 @@ test("HTTP login fails with the wrong password", async () => {
     assert.equal(res.status, 401);
   } finally {
     server.close();
+  }
+});
+
+test("forgot-password sends a real reset email containing a working reset link, for a registered account", async () => {
+  const received: string[] = [];
+  const smtp = new SMTPServer({
+    disabledCommands: ["AUTH", "STARTTLS"],
+    onData(stream, _session, callback) {
+      const chunks: Buffer[] = [];
+      stream.on("data", (c) => chunks.push(c));
+      stream.on("end", () => {
+        received.push(Buffer.concat(chunks).toString("utf8"));
+        callback();
+      });
+    },
+  });
+  await new Promise<void>((resolve) => smtp.listen(0, resolve));
+  const smtpPort = (smtp.server.address() as AddressInfo).port;
+
+  const originalHost = process.env.SMTP_HOST;
+  const originalPort = process.env.SMTP_PORT;
+  const originalFrontend = process.env.FRONTEND_URL;
+  process.env.SMTP_HOST = "localhost";
+  process.env.SMTP_PORT = String(smtpPort);
+  process.env.FRONTEND_URL = "https://app.nettle.example";
+
+  const app = express();
+  app.use(express.json());
+  app.use(authRouter);
+  const { server, base } = await listen(app);
+
+  try {
+    await fetch(`${base}/api/auth/signup`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email: "forgot-password-real@example.com", password: "correct horse battery staple" }),
+    });
+
+    const res = await fetch(`${base}/api/auth/forgot-password`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email: "forgot-password-real@example.com" }),
+    });
+    assert.equal(res.status, 200);
+
+    await new Promise((resolve) => setTimeout(resolve, 300));
+
+    assert.equal(received.length, 1);
+    assert.ok(received[0].includes("Subject: Reset your Nettle password"));
+    assert.ok(received[0].includes("https://app.nettle.example/reset-password?token="));
+  } finally {
+    server.close();
+    await new Promise((resolve) => smtp.close(resolve as any));
+    process.env.SMTP_HOST = originalHost;
+    process.env.SMTP_PORT = originalPort;
+    process.env.FRONTEND_URL = originalFrontend;
+  }
+});
+
+test("forgot-password for an unregistered email sends no mail but still returns the generic message", async () => {
+  const received: string[] = [];
+  const smtp = new SMTPServer({
+    disabledCommands: ["AUTH", "STARTTLS"],
+    onData(stream, _session, callback) {
+      const chunks: Buffer[] = [];
+      stream.on("data", (c) => chunks.push(c));
+      stream.on("end", () => {
+        received.push(Buffer.concat(chunks).toString("utf8"));
+        callback();
+      });
+    },
+  });
+  await new Promise<void>((resolve) => smtp.listen(0, resolve));
+  const smtpPort = (smtp.server.address() as AddressInfo).port;
+
+  const originalHost = process.env.SMTP_HOST;
+  const originalPort = process.env.SMTP_PORT;
+  process.env.SMTP_HOST = "localhost";
+  process.env.SMTP_PORT = String(smtpPort);
+
+  const app = express();
+  app.use(express.json());
+  app.use(authRouter);
+  const { server, base } = await listen(app);
+
+  try {
+    const res = await fetch(`${base}/api/auth/forgot-password`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email: "never-registered@example.com" }),
+    });
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.equal(body.message, "If that email is registered, a reset link has been sent");
+
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    assert.equal(received.length, 0);
+  } finally {
+    server.close();
+    await new Promise((resolve) => smtp.close(resolve as any));
+    process.env.SMTP_HOST = originalHost;
+    process.env.SMTP_PORT = originalPort;
   }
 });

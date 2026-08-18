@@ -8,6 +8,13 @@ import {
   sendWebhook,
   WebhookEvent,
 } from '../integrations/webhooks';
+import {
+  createNotificationChannel,
+  getNotificationChannels,
+  updateNotificationChannel,
+  deleteNotificationChannel,
+  NotificationChannelType,
+} from '../patrol/notificationChannels';
 
 const router = Router();
 router.use(requireAuth);
@@ -243,6 +250,141 @@ router.get('/:projectId/webhooks/:webhookId/events', async (req: Request, res: R
   } catch (error) {
     console.error('Error fetching webhook events:', error);
     res.status(500).json({ error: 'Failed to fetch webhook events' });
+  }
+});
+
+const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const E164_PATTERN = /^\+[1-9]\d{1,14}$/;
+const VALID_CHANNELS: NotificationChannelType[] = ['email', 'sms'];
+
+function isValidDestination(channel: NotificationChannelType, destination: string): boolean {
+  return channel === 'email' ? EMAIL_PATTERN.test(destination) : E164_PATTERN.test(destination);
+}
+
+// Serialized the same snake_case shape as the webhook endpoints above, for
+// consistency within this route file — createNotificationChannel /
+// updateNotificationChannel return the camelCase NotificationChannel type
+// used internally (scans.ts, alerts.ts, digest.ts), but the wire format
+// here matches its sibling endpoints.
+function serializeChannel(channel: ReturnType<typeof createNotificationChannel>) {
+  return {
+    id: channel.id,
+    project_id: channel.projectId,
+    channel: channel.channel,
+    destination: channel.destination,
+    is_active: channel.isActive,
+    event_types: channel.eventTypes,
+    created_at: channel.createdAt,
+    updated_at: channel.updatedAt,
+  };
+}
+
+// Create notification channel
+router.post('/:projectId/notification-channels', async (req: Request, res: Response) => {
+  try {
+    const { projectId } = req.params;
+    const { channel, destination, event_types } = req.body;
+    const userId = req.userId as string;
+
+    const project = db.prepare('SELECT * FROM projects WHERE id = ? AND user_id = ?').get(projectId, userId) as any;
+    if (!project) {
+      return res.status(404).json({ error: 'Project not found' });
+    }
+
+    if (!channel || !destination || !event_types || !Array.isArray(event_types)) {
+      return res.status(400).json({ error: 'Missing or invalid required fields' });
+    }
+    if (!VALID_CHANNELS.includes(channel)) {
+      return res.status(400).json({ error: `Invalid channel: ${channel}` });
+    }
+    if (!isValidDestination(channel, destination)) {
+      return res.status(400).json({
+        error: channel === 'email' ? 'destination must be a valid email address' : 'destination must be a valid E.164 phone number, e.g. +15551234567',
+      });
+    }
+
+    const created = createNotificationChannel(projectId, channel, destination, event_types);
+    res.status(201).json(serializeChannel(created));
+  } catch (error) {
+    console.error('Error creating notification channel:', error);
+    res.status(500).json({ error: 'Failed to create notification channel' });
+  }
+});
+
+// List notification channels for project
+router.get('/:projectId/notification-channels', async (req: Request, res: Response) => {
+  try {
+    const { projectId } = req.params;
+    const userId = req.userId as string;
+
+    const project = db.prepare('SELECT * FROM projects WHERE id = ? AND user_id = ?').get(projectId, userId) as any;
+    if (!project) {
+      return res.status(404).json({ error: 'Project not found' });
+    }
+
+    res.json(getNotificationChannels(projectId).map(serializeChannel));
+  } catch (error) {
+    console.error('Error listing notification channels:', error);
+    res.status(500).json({ error: 'Failed to list notification channels' });
+  }
+});
+
+// Update notification channel
+router.patch('/:projectId/notification-channels/:channelId', async (req: Request, res: Response) => {
+  try {
+    const { projectId, channelId } = req.params;
+    const { destination, event_types, is_active } = req.body;
+    const userId = req.userId as string;
+
+    const project = db.prepare('SELECT * FROM projects WHERE id = ? AND user_id = ?').get(projectId, userId) as any;
+    if (!project) {
+      return res.status(404).json({ error: 'Project not found' });
+    }
+
+    const existing = db.prepare('SELECT * FROM notification_channels WHERE id = ? AND project_id = ?').get(channelId, projectId) as any;
+    if (!existing) {
+      return res.status(404).json({ error: 'Notification channel not found' });
+    }
+
+    if (destination !== undefined && !isValidDestination(existing.channel, destination)) {
+      return res.status(400).json({
+        error: existing.channel === 'email' ? 'destination must be a valid email address' : 'destination must be a valid E.164 phone number, e.g. +15551234567',
+      });
+    }
+
+    const updated = updateNotificationChannel(channelId, {
+      destination,
+      eventTypes: event_types,
+      isActive: is_active,
+    });
+    res.json(serializeChannel(updated!));
+  } catch (error) {
+    console.error('Error updating notification channel:', error);
+    res.status(500).json({ error: 'Failed to update notification channel' });
+  }
+});
+
+// Delete notification channel
+router.delete('/:projectId/notification-channels/:channelId', async (req: Request, res: Response) => {
+  try {
+    const { projectId, channelId } = req.params;
+    const userId = req.userId as string;
+
+    const project = db.prepare('SELECT * FROM projects WHERE id = ? AND user_id = ?').get(projectId, userId) as any;
+    if (!project) {
+      return res.status(404).json({ error: 'Project not found' });
+    }
+
+    const existing = db.prepare('SELECT * FROM notification_channels WHERE id = ? AND project_id = ?').get(channelId, projectId) as any;
+    if (!existing) {
+      return res.status(404).json({ error: 'Notification channel not found' });
+    }
+
+    deleteNotificationChannel(channelId);
+    res.status(204).send();
+  } catch (error) {
+    console.error('Error deleting notification channel:', error);
+    res.status(500).json({ error: 'Failed to delete notification channel' });
   }
 });
 

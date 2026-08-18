@@ -406,6 +406,26 @@ db.exec(`
   );
 `);
 
+// Email/SMS notification destinations — the direct-delivery counterpart to
+// the `webhooks` table above. Same event_types vocabulary (scan.completed,
+// incident_alert, etc.) plus "digest.daily"/"digest.weekly" for the
+// scheduled summary. See patrol/notificationChannels.ts.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS notification_channels (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL,
+    channel TEXT NOT NULL,
+    destination TEXT NOT NULL,
+    is_active INTEGER NOT NULL DEFAULT 1,
+    event_types TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY (project_id) REFERENCES projects(id)
+  );
+  CREATE INDEX IF NOT EXISTS idx_notification_channels_project
+    ON notification_channels(project_id, channel);
+`);
+
 export function newId(): string {
   return crypto.randomUUID();
 }

@@ -121,7 +121,7 @@ Auth required. → `{ user }`.
 Auth required. Marks onboarding done. → `{ user }`.
 
 ### `POST /api/auth/forgot-password` *(rate-limited)*
-Body: `{ email }`. Always → `{ message }` regardless of whether the email is registered (doesn't leak account existence). The reset token itself is only logged server-side (`console.log`) — there's no email delivery wired up yet.
+Body: `{ email }`. Always → `{ message }` regardless of whether the email is registered (doesn't leak account existence). For a registered email, sends a real reset email (`integrations/email.ts`, SMTP configured via `SMTP_HOST`/`SMTP_PORT`/`SMTP_USER`/`SMTP_PASS`/`SMTP_FROM`) containing a link to `${FRONTEND_URL}/reset-password?token=...`. The send is fire-and-forget and failure-logged, not awaited — a slow/down mail provider never changes this endpoint's response or timing. Real-tested against a local SMTP receiver in this environment; never exercised against a real mail provider (no credentials exist here to do so).
 
 ### `POST /api/auth/reset-password` *(rate-limited)*
 Body: `{ token, password }`. → `{ message }`. `400` if the token is invalid/expired or the password's too short.
@@ -404,6 +404,43 @@ Sends a real test delivery to the configured URL with `event_type: "test_event"`
 Query: `?limit=` (default 50). → `WebhookEvent[]` (also a bare array), each `{ id, webhook_id, event_type, payload, status: "pending"|"sent"|"failed"|"retrying", attempt_count, last_error?, created_at, sent_at? }`.
 
 **Real event types** a webhook can be subscribed to (from the actual call sites, not aspirational): `scan.completed` (fires from every recorded scan — `recordScan()` — with `{ scan_id, project_id, status, score, critical_count, caution_count, clear_count, scanned_at }`, delivered generically to every active webhook subscribed to it regardless of service), `incident_alert`, `incident_resolved` (PagerDuty), `anomaly_alert` (Datadog/Slack/Splunk), `metric_event`, `platform_event`, `log_event` (Datadog/Splunk), `notification` (Slack), and `test_event` (only from the `/test` endpoint above). A webhook only fires for event types listed in its own `event_types`.
+
+---
+
+## Notification channels — email/SMS (`/api/projects/:projectId/notification-channels/*`)
+
+The direct-delivery counterpart to webhooks above — same idea, but the
+destination is an email address or phone number instead of a URL, and
+delivery goes through `integrations/email.ts` (SMTP via nodemailer) or
+`integrations/sms.ts` (Twilio's REST API via a plain `fetch`, no SDK) rather
+than an HTTP POST. Auth required; ownership check returns 404.
+
+### `POST /api/projects/:projectId/notification-channels`
+Body: `{ channel: "email"|"sms", destination, event_types: string[] }`. `destination` must be a valid email address for `channel: "email"`, or E.164 (`+15551234567`) for `channel: "sms"` — `400` otherwise. → `201 { id, project_id, channel, destination, is_active, event_types, created_at, updated_at }`.
+
+### `GET /api/projects/:projectId/notification-channels`
+→ bare array of the shape above.
+
+### `PATCH /api/projects/:projectId/notification-channels/:channelId`
+Body: any subset of `{ destination, event_types, is_active }`. A changed `destination` is re-validated against the channel's existing type. → updated channel, or `404`.
+
+### `DELETE /api/projects/:projectId/notification-channels/:channelId`
+→ `204`.
+
+**Event types**: the same `scan.completed`/`incident_alert` as webhooks, plus `digest.daily` and `digest.weekly` (webhooks don't receive digests — those only fire through this table). Delivery is fire-and-forget (`notifyChannels()` in `patrol/notificationChannels.ts`) from the same call sites as the webhook events, `Promise.allSettled`, failures logged not thrown.
+
+**Not yet real**: SMS delivery has been tested against a local stand-in for Twilio's API (real request signing/shape, fake server) but never against a real Twilio account — no credentials exist in this environment to verify that. Email delivery has been tested against a real local SMTP receiver, which proves the send path works, but not against a real-world provider's spam filtering/deliverability.
+
+---
+
+## Digest trigger — internal (`/api/internal/digest/:period`)
+
+### `POST /api/internal/digest/:period`
+`period` is `daily` or `weekly`. Header: `X-Nettle-Cron-Secret: <CRON_SECRET>` — `401` if missing/wrong, `503` if `CRON_SECRET` isn't set on the server at all (fails closed rather than accepting an unauthenticated trigger in a misconfigured deployment). Not session-authenticated — the caller is an external scheduler, not a signed-in account.
+
+Composes and sends a summary (`patrol/digest.ts#composeDigest`: scan count, latest score, alert counts by severity, over the last 24h/7d) for every project with at least one active notification channel subscribed to `digest.daily`/`digest.weekly`, via the same `notifyChannels()` fan-out as above. → `{ period, projectsNotified }`.
+
+This app has no in-process job scheduler — deliberately: App Runner can scale to multiple instances, and an in-process cron would fire the same digest from each one. Something outside the process (a hosted cron, an EventBridge rule) is expected to call this endpoint on a schedule.
 
 ---
 
