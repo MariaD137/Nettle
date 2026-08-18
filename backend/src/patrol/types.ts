@@ -4,6 +4,8 @@ export interface Project {
   name: string;
   apiKey: string;
   url: string | null;
+  repoUrl: string | null;
+  repoBranch: string | null;
   description: string | null;
   environment: string;
   archivedAt: string | null;

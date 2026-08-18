@@ -226,6 +226,15 @@ if (!columnExists("projects", "environment")) {
 if (!columnExists("projects", "archived_at")) {
   db.exec("ALTER TABLE projects ADD COLUMN archived_at TEXT");
 }
+// Persistent repository info, separate from the application `url` above —
+// a project's app URL and its source repo are two different things, and a
+// stored default branch is what lets a repeat repo scan skip re-typing it.
+if (!columnExists("projects", "repo_url")) {
+  db.exec("ALTER TABLE projects ADD COLUMN repo_url TEXT");
+}
+if (!columnExists("projects", "repo_branch")) {
+  db.exec("ALTER TABLE projects ADD COLUMN repo_branch TEXT");
+}
 if (!columnExists("scans", "scanner_version")) {
   db.exec("ALTER TABLE scans ADD COLUMN scanner_version TEXT");
 }

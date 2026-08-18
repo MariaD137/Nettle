@@ -182,8 +182,10 @@ type ScanMethod = "upload" | "repo";
 function ScanTab({ project, onScanned }: { project: Project; onScanned: (badge: BadgeState) => void }) {
   const [method, setMethod] = useState<ScanMethod>("upload");
   const [file, setFile] = useState<File | null>(null);
-  const [repoUrl, setRepoUrl] = useState("");
-  const [branch, setBranch] = useState("");
+  // Pre-filled from the project's stored repository info (Settings tab) so a
+  // repeat scan doesn't need the URL and branch re-typed every time.
+  const [repoUrl, setRepoUrl] = useState(project.repoUrl ?? "");
+  const [branch, setBranch] = useState(project.repoBranch ?? "");
   const [report, setReport] = useState<ScanReport | null>(null);
   const [scanning, setScanning] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -655,6 +657,8 @@ function ProjectSettingsTab({
 }) {
   const [name, setName] = useState(project.name);
   const [url, setUrl] = useState(project.url ?? "");
+  const [repoUrl, setRepoUrl] = useState(project.repoUrl ?? "");
+  const [repoBranch, setRepoBranch] = useState(project.repoBranch ?? "");
   const [desc, setDesc] = useState(project.description ?? "");
   const [env, setEnv] = useState(project.environment ?? "");
   const [saving, setSaving] = useState(false);
@@ -670,6 +674,8 @@ function ProjectSettingsTab({
       const updated = await api.updateProject(project.id, {
         name: name || undefined,
         url: url || undefined,
+        repoUrl: repoUrl || undefined,
+        repoBranch: repoBranch || undefined,
         description: desc || undefined,
         environment: env || undefined,
       });
@@ -730,6 +736,19 @@ function ProjectSettingsTab({
           <div className="field">
             <label htmlFor="purl">URL</label>
             <input id="purl" value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://myapp.com" />
+          </div>
+          <div className="field">
+            <label htmlFor="prepourl">Repository URL</label>
+            <input
+              id="prepourl"
+              value={repoUrl}
+              onChange={(e) => setRepoUrl(e.target.value)}
+              placeholder="https://github.com/owner/repo"
+            />
+          </div>
+          <div className="field">
+            <label htmlFor="prepobranch">Default branch</label>
+            <input id="prepobranch" value={repoBranch} onChange={(e) => setRepoBranch(e.target.value)} placeholder="main" />
           </div>
           <div className="field">
             <label htmlFor="pdesc">Description</label>

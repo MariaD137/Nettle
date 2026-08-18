@@ -7,6 +7,8 @@ interface ProjectRow {
   name: string;
   api_key: string;
   url: string | null;
+  repo_url: string | null;
+  repo_branch: string | null;
   description: string | null;
   environment: string;
   archived_at: string | null;
@@ -20,6 +22,8 @@ function toProject(row: ProjectRow): Project {
     name: row.name,
     apiKey: row.api_key,
     url: row.url ?? null,
+    repoUrl: row.repo_url ?? null,
+    repoBranch: row.repo_branch ?? null,
     description: row.description ?? null,
     environment: row.environment ?? "production",
     archivedAt: row.archived_at ?? null,
@@ -27,32 +31,56 @@ function toProject(row: ProjectRow): Project {
   };
 }
 
-export function createProject(userId: string, name: string, opts?: { url?: string; description?: string; environment?: string }): Project {
+export function createProject(
+  userId: string,
+  name: string,
+  opts?: { url?: string; repoUrl?: string; repoBranch?: string; description?: string; environment?: string }
+): Project {
   const project: Project = {
     id: newId(),
     userId,
     name,
     apiKey: newApiKey(),
     url: opts?.url ?? null,
+    repoUrl: opts?.repoUrl ?? null,
+    repoBranch: opts?.repoBranch ?? null,
     description: opts?.description ?? null,
     environment: opts?.environment ?? "production",
     archivedAt: null,
     createdAt: new Date().toISOString(),
   };
   db.prepare(
-    "INSERT INTO projects (id, user_id, name, api_key, url, description, environment, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
-  ).run(project.id, project.userId, project.name, project.apiKey, project.url, project.description, project.environment, project.createdAt);
+    "INSERT INTO projects (id, user_id, name, api_key, url, repo_url, repo_branch, description, environment, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+  ).run(
+    project.id,
+    project.userId,
+    project.name,
+    project.apiKey,
+    project.url,
+    project.repoUrl,
+    project.repoBranch,
+    project.description,
+    project.environment,
+    project.createdAt
+  );
   return project;
 }
 
-export function updateProject(id: string, updates: { name?: string; url?: string; description?: string; environment?: string }): Project | null {
+export function updateProject(
+  id: string,
+  updates: { name?: string; url?: string; repoUrl?: string; repoBranch?: string; description?: string; environment?: string }
+): Project | null {
   const existing = getProject(id);
   if (!existing) return null;
   const name = updates.name ?? existing.name;
   const url = updates.url !== undefined ? updates.url : existing.url;
+  const repoUrl = updates.repoUrl !== undefined ? updates.repoUrl : existing.repoUrl;
+  const repoBranch = updates.repoBranch !== undefined ? updates.repoBranch : existing.repoBranch;
   const description = updates.description !== undefined ? updates.description : existing.description;
   const environment = updates.environment ?? existing.environment;
-  db.prepare("UPDATE projects SET name = ?, url = ?, description = ?, environment = ? WHERE id = ?").run(name, url, description, environment, id);
+  db.prepare(
+    "UPDATE projects SET name = ?, url = ?, repo_url = ?, repo_branch = ?, description = ?, environment = ? WHERE id = ?"
+  ).run(name, url, repoUrl, repoBranch, description, environment, id);
   return getProject(id);
 }
 

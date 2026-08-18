@@ -8,6 +8,8 @@ const mockProject = {
   name: "My App",
   apiKey: "nettle_test_key",
   url: null,
+  repoUrl: null,
+  repoBranch: null,
   description: null,
   environment: null,
   archivedAt: null,

@@ -23,6 +23,8 @@ export default function DashboardPage() {
   const [overview, setOverview] = useState<OverviewData | null>(null);
   const [newName, setNewName] = useState("");
   const [newUrl, setNewUrl] = useState("");
+  const [newRepoUrl, setNewRepoUrl] = useState("");
+  const [newRepoBranch, setNewRepoBranch] = useState("");
   const [newDesc, setNewDesc] = useState("");
   const [newEnv, setNewEnv] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -45,11 +47,15 @@ export default function DashboardPage() {
     try {
       await api.createProject(newName, {
         url: newUrl || undefined,
+        repoUrl: newRepoUrl || undefined,
+        repoBranch: newRepoBranch || undefined,
         description: newDesc || undefined,
         environment: newEnv || undefined,
       });
       setNewName("");
       setNewUrl("");
+      setNewRepoUrl("");
+      setNewRepoBranch("");
       setNewDesc("");
       setNewEnv("");
       setShowAdvanced(false);
@@ -261,6 +267,24 @@ export default function DashboardPage() {
               <div className="field">
                 <label htmlFor="proj-desc">Description</label>
                 <input id="proj-desc" value={newDesc} onChange={(e) => setNewDesc(e.target.value)} placeholder="Brief description" />
+              </div>
+              <div className="field">
+                <label htmlFor="proj-repo-url">Repository URL</label>
+                <input
+                  id="proj-repo-url"
+                  value={newRepoUrl}
+                  onChange={(e) => setNewRepoUrl(e.target.value)}
+                  placeholder="https://github.com/owner/repo"
+                />
+              </div>
+              <div className="field">
+                <label htmlFor="proj-repo-branch">Default branch</label>
+                <input
+                  id="proj-repo-branch"
+                  value={newRepoBranch}
+                  onChange={(e) => setNewRepoBranch(e.target.value)}
+                  placeholder="main"
+                />
               </div>
               <div className="field">
                 <label htmlFor="proj-env">Environment</label>

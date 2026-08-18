@@ -16,6 +16,8 @@ export interface Project {
   name: string;
   apiKey: string;
   url: string | null;
+  repoUrl: string | null;
+  repoBranch: string | null;
   description: string | null;
   environment: string | null;
   archivedAt: string | null;
@@ -289,13 +291,17 @@ export const api = {
   listProjects: (includeArchived = false) =>
     request<{ projects: Project[] }>(`/api/projects${includeArchived ? "?includeArchived=true" : ""}`),
 
-  createProject: (name: string, opts?: { url?: string; description?: string; environment?: string }) =>
-    request<Project>("/api/projects", { method: "POST", body: JSON.stringify({ name, ...opts }) }),
+  createProject: (
+    name: string,
+    opts?: { url?: string; repoUrl?: string; repoBranch?: string; description?: string; environment?: string }
+  ) => request<Project>("/api/projects", { method: "POST", body: JSON.stringify({ name, ...opts }) }),
 
   getProject: (id: string) => request<ProjectDetail>(`/api/projects/${id}`),
 
-  updateProject: (id: string, updates: { name?: string; url?: string; description?: string; environment?: string }) =>
-    request<Project>(`/api/projects/${id}`, { method: "PATCH", body: JSON.stringify(updates) }),
+  updateProject: (
+    id: string,
+    updates: { name?: string; url?: string; repoUrl?: string; repoBranch?: string; description?: string; environment?: string }
+  ) => request<Project>(`/api/projects/${id}`, { method: "PATCH", body: JSON.stringify(updates) }),
 
   deleteProject: (id: string) =>
     request<void>(`/api/projects/${id}`, { method: "DELETE" }),

@@ -38,6 +38,8 @@ projectsRouter.post("/api/projects", ...paywalled, (req, res) => {
 
   const project = createProject(req.userId!, name, {
     url: typeof req.body?.url === "string" ? req.body.url.trim() : undefined,
+    repoUrl: typeof req.body?.repoUrl === "string" ? req.body.repoUrl.trim() : undefined,
+    repoBranch: typeof req.body?.repoBranch === "string" ? req.body.repoBranch.trim() : undefined,
     description: typeof req.body?.description === "string" ? req.body.description.trim() : undefined,
     environment: typeof req.body?.environment === "string" ? req.body.environment : undefined,
   });
@@ -73,6 +75,8 @@ projectsRouter.patch("/api/projects/:id", ...paywalled, (req, res) => {
   const updates: Record<string, string | undefined> = {};
   if (typeof req.body?.name === "string") updates.name = req.body.name.trim();
   if (typeof req.body?.url === "string") updates.url = req.body.url.trim();
+  if (typeof req.body?.repoUrl === "string") updates.repoUrl = req.body.repoUrl.trim();
+  if (typeof req.body?.repoBranch === "string") updates.repoBranch = req.body.repoBranch.trim();
   if (typeof req.body?.description === "string") updates.description = req.body.description.trim();
   if (typeof req.body?.environment === "string") updates.environment = req.body.environment;
   const updated = updateProject(project.id, updates);
