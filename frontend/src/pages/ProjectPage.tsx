@@ -10,6 +10,7 @@ import BadgePill from "../components/BadgePill";
 import NettleLogo from "../components/NettleLogo";
 import { AppBar, BottomNav, Icons, type TabItem } from "../components/MobileChrome";
 import ScanProgress from "../components/ScanProgress";
+import ScoreChart, { type ScorePoint } from "../components/ScoreChart";
 import { useIsMobile } from "../useIsMobile";
 import { useScanJob } from "../useScanJob";
 
@@ -718,12 +719,28 @@ function AlertsTab({ projectId, onUpdate }: { projectId: string; onUpdate: (coun
   );
 }
 
+function FindingDiffSection({ title, findings, defaultOpen }: { title: string; findings: Finding[]; defaultOpen: boolean }) {
+  if (findings.length === 0) return null;
+  return (
+    <details className="scan-compare-section" open={defaultOpen}>
+      <summary>{title} ({findings.length})</summary>
+      {findings.map((f, i) => (
+        <div key={i} className="scan-compare-section-row">
+          {f.title}{f.severity ? ` (${f.severity})` : ""}
+        </div>
+      ))}
+    </details>
+  );
+}
+
 function HistoryTab({ projectId }: { projectId: string }) {
   const [scans, setScans] = useState<StoredScan[] | null>(null);
   const [expanded, setExpanded] = useState<string | null>(null);
   const [comparison, setComparison] = useState<ScanComparison | null>(null);
   const [comparing, setComparing] = useState(false);
   const [exportError, setExportError] = useState<string | null>(null);
+  const [fromId, setFromId] = useState("");
+  const [toId, setToId] = useState("");
 
   async function handleExport(scanId: string) {
     setExportError(null);
@@ -735,14 +752,22 @@ function HistoryTab({ projectId }: { projectId: string }) {
   }
 
   useEffect(() => {
-    api.getScans(projectId).then(({ scans }) => setScans(scans));
+    api.getScans(projectId).then(({ scans }) => {
+      setScans(scans);
+      // Default the picker to "previous vs latest" — the same comparison
+      // the old one-click "Compare latest" button used to run.
+      if (scans.length >= 2) {
+        setFromId(scans[1].id);
+        setToId(scans[0].id);
+      }
+    });
   }, [projectId]);
 
   async function compare() {
-    if (!scans || scans.length < 2) return;
+    if (!fromId || !toId) return;
     setComparing(true);
     try {
-      const result = await api.compareScans(projectId);
+      const result = await api.compareScans(projectId, fromId, toId);
       setComparison(result);
     } catch {
       setComparison(null);
@@ -751,44 +776,57 @@ function HistoryTab({ projectId }: { projectId: string }) {
     }
   }
 
+  const scoreHistory: ScorePoint[] = scans ? [...scans].reverse().map((s) => ({ id: s.id, scannedAt: s.scannedAt, score: s.score })) : [];
+
   return (
     <div className="card">
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-        <h2 style={{ margin: 0 }}>Scan history</h2>
-        {scans && scans.length >= 2 && (
-          <button className="small secondary" onClick={compare} disabled={comparing}>
-            {comparing ? "Comparing…" : "Compare latest"}
+      <h2 style={{ margin: 0 }}>Scan history</h2>
+
+      {scoreHistory.length > 0 && <ScoreChart points={scoreHistory} />}
+
+      {scans && scans.length >= 2 && (
+        <div className="scan-compare-picker">
+          <label className="muted" htmlFor="compare-from">Compare</label>
+          <select id="compare-from" value={fromId} onChange={(e) => setFromId(e.target.value)}>
+            {scans.map((s) => (
+              <option key={s.id} value={s.id}>{new Date(s.scannedAt).toLocaleString()} — {s.score}</option>
+            ))}
+          </select>
+          <label className="muted" htmlFor="compare-to">with</label>
+          <select id="compare-to" value={toId} onChange={(e) => setToId(e.target.value)}>
+            {scans.map((s) => (
+              <option key={s.id} value={s.id}>{new Date(s.scannedAt).toLocaleString()} — {s.score}</option>
+            ))}
+          </select>
+          <button className="small secondary" onClick={compare} disabled={comparing || fromId === toId}>
+            {comparing ? "Comparing…" : "Compare"}
           </button>
-        )}
-      </div>
+        </div>
+      )}
 
       {comparison && (
-        <div style={{ margin: "16px 0", padding: 12, borderRadius: 6, background: "var(--surface-alt, #f5f5f5)" }}>
-          <strong>Comparison:</strong>{" "}
-          <span className={comparison.scoreDelta > 0 ? "score-up" : comparison.scoreDelta < 0 ? "score-down" : ""}>
-            {comparison.scoreDelta > 0 ? "+" : ""}{comparison.scoreDelta} points
-          </span>
-          <div style={{ display: "flex", gap: 16, marginTop: 8 }}>
+        <div className="scan-compare" data-testid="scan-compare">
+          <div className="scan-compare-columns">
+            <div>
+              <div className="muted">{new Date(comparison.from.scannedAt).toLocaleString()}</div>
+              <div className="scan-compare-col-score">{comparison.from.score}</div>
+            </div>
+            <div className={`scan-compare-delta ${comparison.scoreDelta > 0 ? "score-up" : comparison.scoreDelta < 0 ? "score-down" : "muted"}`}>
+              {comparison.scoreDelta > 0 ? "+" : ""}{comparison.scoreDelta}
+            </div>
+            <div>
+              <div className="muted">{new Date(comparison.to.scannedAt).toLocaleString()}</div>
+              <div className="scan-compare-col-score">{comparison.to.score}</div>
+            </div>
+          </div>
+          <div className="scan-compare-counts">
             <span className="count-clear">{comparison.fixed} fixed</span>
             <span className="count-critical">{comparison.new} new</span>
             <span className="muted">{comparison.remaining} unchanged</span>
           </div>
-          {comparison.fixedFindings.length > 0 && (
-            <div style={{ marginTop: 8 }}>
-              <strong>Fixed:</strong>
-              {comparison.fixedFindings.map((f, i) => (
-                <div key={i} className="muted">- {f.title}</div>
-              ))}
-            </div>
-          )}
-          {comparison.newFindings.length > 0 && (
-            <div style={{ marginTop: 8 }}>
-              <strong>New issues:</strong>
-              {comparison.newFindings.map((f, i) => (
-                <div key={i} className="muted">- {f.title} ({f.severity})</div>
-              ))}
-            </div>
-          )}
+          <FindingDiffSection title="Fixed" findings={comparison.fixedFindings} defaultOpen />
+          <FindingDiffSection title="New issues" findings={comparison.newFindings} defaultOpen />
+          <FindingDiffSection title="Unchanged" findings={comparison.remainingFindings} defaultOpen={false} />
         </div>
       )}
 

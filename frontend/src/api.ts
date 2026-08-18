@@ -230,6 +230,7 @@ export interface ScanComparison {
   remaining: number;
   fixedFindings: Finding[];
   newFindings: Finding[];
+  remainingFindings: Finding[];
   fullReport: boolean;
 }
 

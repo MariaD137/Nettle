@@ -190,6 +190,7 @@ projectsRouter.get("/api/projects/:id/scans/compare", ...paywalled, (req, res) =
     remaining: remaining.length,
     fixedFindings: fixed,
     newFindings,
+    remainingFindings: remaining,
     changeIntelligence: computeChangeIntelligence(older, newer),
   });
 });
