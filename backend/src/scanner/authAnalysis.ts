@@ -11,11 +11,21 @@ export interface RouteInfo {
   isProtected: boolean;
   detectionMethod: string;
   evidence?: string;
+  // Whether a role/permission check (as opposed to plain "is someone logged
+  // in") was found near the handler. Optional and only meaningful when
+  // isProtected is true — an unauthenticated route has no identity to check
+  // a role against in the first place. Undefined in any RouteInfo built
+  // before this field existed (e.g. hand-built ones in older tests).
+  hasRoleCheck?: boolean;
 }
 
 export interface AuthCheckResult {
   routesAnalyzed: number;
   unprotectedRoutes: RouteInfo[];
+  // Every route this pass found, protected or not — unprotectedRoutes above
+  // is a filtered view of this. Needed separately because the missing-
+  // role-check check only makes sense against *protected* routes.
+  allRoutes: RouteInfo[];
   framework: FrameworkType;
   confidence: number;
 }
@@ -90,6 +100,80 @@ const NEXTJS_AUTH_PATTERNS = [
 ];
 
 /**
+ * Role/permission check patterns, per framework — deliberately distinct
+ * from the *_AUTH_PATTERNS above. Those answer "is someone logged in";
+ * these answer "is this specific someone allowed to do this specific
+ * thing." A route can pass the first check and still fail the second
+ * (any logged-in user reaching an admin action), which is a different,
+ * commonly-missed vulnerability class (broken access control / vertical
+ * privilege escalation) from missing authentication entirely.
+ */
+const EXPRESS_ROLE_PATTERNS = [
+  /req\.user\.role/i,
+  /requireRole/i,
+  /checkRole/i,
+  /hasRole/i,
+  /hasPermission/i,
+  /isAdmin\b/i,
+  /authorize\s*\(/i,
+];
+const DJANGO_ROLE_PATTERNS = [
+  /@permission_required/i,
+  /user_passes_test/i,
+  /is_staff/i,
+  /is_superuser/i,
+  /has_perm\s*\(/i,
+];
+const FLASK_ROLE_PATTERNS = [
+  /@roles_required/i,
+  /@admin_required/i,
+  /current_user\.is_admin/i,
+  /has_role\s*\(/i,
+];
+const FASTAPI_ROLE_PATTERNS = [
+  /Depends\(.*(role|permission|admin)/i,
+  /require_role/i,
+  /require_permission/i,
+];
+const RAILS_ROLE_PATTERNS = [
+  /before_action :require_admin/i,
+  /:authorize\b/i,
+  /can\?\s*\(/i,
+  /\.admin\?/i,
+];
+const NEXTJS_ROLE_PATTERNS = [
+  /role\s*===/i,
+  /session\.user\.role/i,
+  /isAdmin\b/i,
+];
+
+/**
+ * A route whose path (or, for frameworks where extraction only yields a
+ * function name, its name) marks it as administrative surface — the one
+ * kind of route where "authenticated but not role-checked" and "not even
+ * authenticated" both deserve a sharper, more specific finding than the
+ * generic per-route ones above.
+ */
+const ADMIN_PATH_PATTERN = /(^|\/)(admin|administrator|internal|management|superuser|backoffice)(\/|$|_)/i;
+export function isAdminRoute(routePath: string): boolean {
+  return ADMIN_PATH_PATTERN.test(routePath);
+}
+
+function hasRoleCheck(code: string, framework: FrameworkType): boolean {
+  const patterns: Record<FrameworkType, RegExp[]> = {
+    express: EXPRESS_ROLE_PATTERNS,
+    django: DJANGO_ROLE_PATTERNS,
+    flask: FLASK_ROLE_PATTERNS,
+    fastapi: FASTAPI_ROLE_PATTERNS,
+    rails: RAILS_ROLE_PATTERNS,
+    nextjs: NEXTJS_ROLE_PATTERNS,
+    nuxt: NEXTJS_ROLE_PATTERNS,
+    unknown: EXPRESS_ROLE_PATTERNS,
+  };
+  return patterns[framework].some((p) => p.test(code));
+}
+
+/**
  * Detect framework type from source code patterns.
  */
 function detectFramework(code: string): FrameworkType {
@@ -152,6 +236,7 @@ function extractExpressRoutes(code: string): RouteInfo[] {
       isProtected: auth.protected,
       detectionMethod: auth.protected ? "middleware detection" : "no auth pattern",
       evidence: handlerSection.substring(0, 50),
+      hasRoleCheck: hasRoleCheck(handlerSection, "express"),
     });
   }
 
@@ -181,6 +266,7 @@ function extractDjangoRoutes(code: string): RouteInfo[] {
       isProtected: auth.protected,
       detectionMethod: auth.protected ? "decorator/check detection" : "no auth pattern",
       evidence: funcBody.substring(0, 100),
+      hasRoleCheck: hasRoleCheck(fullContext, "django"),
     });
   }
 
@@ -203,6 +289,7 @@ function extractFlaskRoutes(code: string): RouteInfo[] {
     const beforeMatch = code.substring(Math.max(0, match.index - 100), match.index);
     const fullContext = beforeMatch + funcBody;
     const auth = hasAuthentication(fullContext, "flask");
+    const roleChecked = hasRoleCheck(fullContext, "flask");
 
     for (const method of methodList) {
       routes.push({
@@ -211,6 +298,7 @@ function extractFlaskRoutes(code: string): RouteInfo[] {
         isProtected: auth.protected,
         detectionMethod: auth.protected ? "decorator detection" : "no auth pattern",
         evidence: funcBody.substring(0, 100),
+        hasRoleCheck: roleChecked,
       });
     }
   }
@@ -236,6 +324,7 @@ function extractFastAPIRoutes(code: string): RouteInfo[] {
       isProtected: auth.protected,
       detectionMethod: auth.protected ? "Depends/auth detection" : "no auth pattern",
       evidence: params.substring(0, 50),
+      hasRoleCheck: hasRoleCheck(params + funcBody, "fastapi"),
     });
   }
 
@@ -273,6 +362,7 @@ export function analyzeAuth(code: string, detectedFramework?: FrameworkType): Au
   return {
     routesAnalyzed: routes.length,
     unprotectedRoutes,
+    allRoutes: routes,
     framework,
     confidence,
   };
@@ -306,6 +396,28 @@ export function generateAuthRemediation(route: RouteInfo, framework: FrameworkTy
     rails: `Add before_action: \`before_action :authenticate_user, only: :action_name\``,
     nextjs: `Use middleware.ts: \`const response = NextResponse.next()\\nif (!token) redirect('/');\``,
     nuxt: `Use server middleware: \`export default defineEventHandler((event) => { if (!event.context.auth) throw createError({ statusCode: 401 }); })\``,
+    unknown: unknownAdvice,
+  };
+
+  return paths[framework] || paths.unknown;
+}
+
+/**
+ * Remediation for a route that's authenticated but not role-checked —
+ * distinct from generateAuthRemediation above, which is entirely about
+ * proving *someone* is logged in. This is about proving *this* someone is
+ * allowed to do *this*.
+ */
+export function generateRoleCheckRemediation(route: RouteInfo, framework: FrameworkType): string {
+  const unknownAdvice = `Add a role or permission check before performing this action. Being logged in is not the same as being authorized for it.`;
+  const paths: Record<FrameworkType, string> = {
+    express: `Add a role check after the auth middleware: \`app.get('${route.path}', requireAuth, requireRole('admin'), handler)\``,
+    django: `Add @permission_required or a staff check: \`@permission_required('app.can_manage')\\ndef handler(request):\` or \`if not request.user.is_staff: raise PermissionDenied\``,
+    flask: `Add a role decorator: \`@app.route('${route.path}')\\n@login_required\\n@roles_required('admin')\\ndef handler():\``,
+    fastapi: `Add a role dependency: \`@app.get('${route.path}')\\ndef handler(user = Depends(require_role('admin'))):\``,
+    rails: `Add an authorization check: \`before_action :require_admin, only: :action_name\` or \`authorize @resource\` (Pundit/CanCanCan)`,
+    nextjs: `Check the role from the session before handling the request: \`if (session.user.role !== 'admin') return new Response('Forbidden', { status: 403 })\``,
+    nuxt: `Check the role in server middleware: \`if (event.context.auth.role !== 'admin') throw createError({ statusCode: 403 })\``,
     unknown: unknownAdvice,
   };
 
