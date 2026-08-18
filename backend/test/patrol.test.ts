@@ -106,3 +106,95 @@ test("alerts for one project never leak into another project's list", () => {
   runDetection(projectA.id, event);
   assert.equal(listAlerts(projectB.id).length, 0);
 });
+
+test("flags a broadened scanner-probe path (Spring Boot actuator)", () => {
+  const project = createProject(userId, "Actuator Target");
+  const event = recordEvent(project.id, { ip: "203.0.113.50", method: "GET", path: "/actuator/env", statusCode: 404 });
+  const alerts = runDetection(project.id, event);
+  assert.ok(alerts.some((a) => a.rule.startsWith("suspicious-path")));
+});
+
+test("flags an XSS-shaped query", () => {
+  const project = createProject(userId, "XSS Target");
+  const event = recordEvent(project.id, {
+    ip: "203.0.113.51",
+    method: "GET",
+    path: "/search?q=<script>alert(1)</script>",
+    statusCode: 200,
+  });
+  const alerts = runDetection(project.id, event);
+  assert.ok(alerts.some((a) => a.rule.startsWith("xss-shaped")));
+});
+
+test("flags a command-injection-shaped query", () => {
+  const project = createProject(userId, "CmdI Target");
+  const event = recordEvent(project.id, {
+    ip: "203.0.113.52",
+    method: "GET",
+    path: "/ping?host=127.0.0.1;cat%20/etc/passwd",
+    statusCode: 200,
+  });
+  const alerts = runDetection(project.id, event);
+  assert.ok(alerts.some((a) => a.rule.startsWith("cmdi-shaped")));
+});
+
+test("flags a known security-scanner User-Agent", () => {
+  const project = createProject(userId, "Scanner UA Target");
+  const event = recordEvent(project.id, {
+    ip: "203.0.113.53",
+    method: "GET",
+    path: "/",
+    statusCode: 200,
+    userAgent: "sqlmap/1.7.2#stable (http://sqlmap.org)",
+  });
+  const alerts = runDetection(project.id, event);
+  assert.ok(alerts.some((a) => a.rule.startsWith("suspicious-user-agent")));
+  assert.equal(alerts.find((a) => a.rule.startsWith("suspicious-user-agent"))?.severity, "critical");
+});
+
+test("does not flag an ordinary browser User-Agent", () => {
+  const project = createProject(userId, "Ordinary UA Target");
+  const event = recordEvent(project.id, {
+    ip: "203.0.113.54",
+    method: "GET",
+    path: "/",
+    statusCode: 200,
+    userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
+  });
+  const alerts = runDetection(project.id, event);
+  assert.equal(alerts.filter((a) => a.rule.startsWith("suspicious-user-agent")).length, 0);
+});
+
+test("flags credential-stuffing shape: many different IPs failing auth on the same endpoint", () => {
+  const project = createProject(userId, "Credential Stuffing Target");
+  let alerts: ReturnType<typeof runDetection> = [];
+  for (let i = 0; i < 5; i++) {
+    const event = recordEvent(project.id, { ip: `198.51.100.${i}`, method: "POST", path: "/login", statusCode: 401 });
+    alerts = runDetection(project.id, event);
+  }
+  const hit = alerts.find((a) => a.rule.startsWith("credential-stuffing"));
+  assert.ok(hit, "expected a credential-stuffing alert once 5 distinct IPs have failed auth on the same path");
+  assert.equal(hit?.severity, "critical");
+});
+
+test("does not flag credential-stuffing for repeated failures from a single IP (that's brute-force's job)", () => {
+  const project = createProject(userId, "Single IP Repeats");
+  let alerts: ReturnType<typeof runDetection> = [];
+  for (let i = 0; i < 5; i++) {
+    const event = recordEvent(project.id, { ip: "203.0.113.60", method: "POST", path: "/login", statusCode: 401 });
+    alerts = runDetection(project.id, event);
+  }
+  assert.equal(alerts.filter((a) => a.rule.startsWith("credential-stuffing")).length, 0);
+  assert.ok(alerts.some((a) => a.rule === "brute-force"), "the same-IP case should still be caught, just by the brute-force rule instead");
+});
+
+test("credential-stuffing does not fire for distinct IPs hitting different endpoints", () => {
+  const project = createProject(userId, "Scattered Failures");
+  let alerts: ReturnType<typeof runDetection> = [];
+  const paths = ["/login", "/reset-password", "/admin", "/api/token", "/account"];
+  for (let i = 0; i < 5; i++) {
+    const event = recordEvent(project.id, { ip: `198.51.100.${100 + i}`, method: "POST", path: paths[i], statusCode: 401 });
+    alerts = runDetection(project.id, event);
+  }
+  assert.equal(alerts.filter((a) => a.rule.startsWith("credential-stuffing")).length, 0);
+});
