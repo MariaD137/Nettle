@@ -1,5 +1,6 @@
 import { db, newId, newApiKey } from "../db";
 import type { Project } from "./types";
+import { encryptToken, decryptToken } from "../security/tokenEncryption";
 
 interface ProjectRow {
   id: string;
@@ -9,6 +10,7 @@ interface ProjectRow {
   url: string | null;
   repo_url: string | null;
   repo_branch: string | null;
+  repo_access_token_encrypted: string | null;
   description: string | null;
   environment: string;
   archived_at: string | null;
@@ -24,6 +26,7 @@ function toProject(row: ProjectRow): Project {
     url: row.url ?? null,
     repoUrl: row.repo_url ?? null,
     repoBranch: row.repo_branch ?? null,
+    hasRepoAccessToken: row.repo_access_token_encrypted != null,
     description: row.description ?? null,
     environment: row.environment ?? "production",
     archivedAt: row.archived_at ?? null,
@@ -44,6 +47,7 @@ export function createProject(
     url: opts?.url ?? null,
     repoUrl: opts?.repoUrl ?? null,
     repoBranch: opts?.repoBranch ?? null,
+    hasRepoAccessToken: false,
     description: opts?.description ?? null,
     environment: opts?.environment ?? "production",
     archivedAt: null,
@@ -82,6 +86,32 @@ export function updateProject(
     "UPDATE projects SET name = ?, url = ?, repo_url = ?, repo_branch = ?, description = ?, environment = ? WHERE id = ?"
   ).run(name, url, repoUrl, repoBranch, description, environment, id);
   return getProject(id);
+}
+
+/**
+ * Sets, replaces, or clears (pass null/empty string) a project's private
+ * repository access token. Deliberately separate from `updateProject` so
+ * the encryption happens in exactly one place and a token can never be set
+ * via the generic updates object by accident. Returns the Project as usual
+ * — `hasRepoAccessToken` reflects the change, the token value itself never
+ * does.
+ */
+export function setRepoAccessToken(id: string, token: string | null): Project | null {
+  const encrypted = token ? encryptToken(token) : null;
+  db.prepare("UPDATE projects SET repo_access_token_encrypted = ? WHERE id = ?").run(encrypted, id);
+  return getProject(id);
+}
+
+/**
+ * The one place the plaintext token is ever reconstructed — server-side,
+ * immediately before a git clone, never returned from an API route.
+ */
+export function getDecryptedRepoAccessToken(id: string): string | null {
+  const row = db.prepare("SELECT repo_access_token_encrypted FROM projects WHERE id = ?").get(id) as
+    | { repo_access_token_encrypted: string | null }
+    | undefined;
+  if (!row?.repo_access_token_encrypted) return null;
+  return decryptToken(row.repo_access_token_encrypted);
 }
 
 export function deleteProject(id: string): void {

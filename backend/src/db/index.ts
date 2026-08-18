@@ -235,6 +235,12 @@ if (!columnExists("projects", "repo_url")) {
 if (!columnExists("projects", "repo_branch")) {
   db.exec("ALTER TABLE projects ADD COLUMN repo_branch TEXT");
 }
+// Encrypted at rest (see security/tokenEncryption.ts) — enables cloning
+// private repositories for repo-based scans. Never selected into the
+// Project API type; only decrypted server-side, at clone time.
+if (!columnExists("projects", "repo_access_token_encrypted")) {
+  db.exec("ALTER TABLE projects ADD COLUMN repo_access_token_encrypted TEXT");
+}
 if (!columnExists("scans", "scanner_version")) {
   db.exec("ALTER TABLE scans ADD COLUMN scanner_version TEXT");
 }

@@ -10,6 +10,7 @@ const mockProject = {
   url: null,
   repoUrl: null,
   repoBranch: null,
+  hasRepoAccessToken: false,
   description: null,
   environment: null,
   archivedAt: null,
@@ -84,7 +85,10 @@ describe("OnboardingPage", () => {
     fireEvent.click(screen.getByRole("button", { name: /scan repository/i }));
 
     await waitFor(() =>
-      expect(api.scanRepo).toHaveBeenCalledWith("https://github.com/o/r", { apiKey: "nettle_test_key" })
+      expect(api.scanRepo).toHaveBeenCalledWith(
+        "https://github.com/o/r",
+        expect.objectContaining({ apiKey: "nettle_test_key" })
+      )
     );
 
     // Score step

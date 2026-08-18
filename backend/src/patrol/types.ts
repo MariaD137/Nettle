@@ -6,6 +6,9 @@ export interface Project {
   url: string | null;
   repoUrl: string | null;
   repoBranch: string | null;
+  // Whether a private-repo access token is stored — never the token itself,
+  // encrypted or otherwise. See security/tokenEncryption.ts.
+  hasRepoAccessToken: boolean;
   description: string | null;
   environment: string;
   archivedAt: string | null;

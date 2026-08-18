@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api, ApiError, type Project, type ScanReport } from "../api";
 import { useAuth } from "../AuthContext";
 import NettleLogo from "../components/NettleLogo";
@@ -243,21 +243,33 @@ function ScanStep({
   const [repoUrl, setRepoUrl] = useState("");
   const [scanning, setScanning] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const controllerRef = useRef<AbortController | null>(null);
 
   async function handleScan() {
     setError(null);
     setScanning(true);
+    const controller = new AbortController();
+    controllerRef.current = controller;
     try {
       const report =
         method === "repo"
-          ? await api.scanRepo(repoUrl, { apiKey: project.apiKey })
-          : await api.scanCodebase(file as File, project.apiKey);
+          ? await api.scanRepo(repoUrl, { apiKey: project.apiKey, signal: controller.signal })
+          : await api.scanCodebase(file as File, project.apiKey, controller.signal);
       onScanned(report);
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Scan failed");
+      if (err instanceof DOMException && err.name === "AbortError") {
+        setError("Scan cancelled.");
+      } else {
+        setError(err instanceof ApiError ? err.message : "Scan failed");
+      }
     } finally {
+      controllerRef.current = null;
       setScanning(false);
     }
+  }
+
+  function handleCancel() {
+    controllerRef.current?.abort();
   }
 
   return (
@@ -280,10 +292,15 @@ function ScanStep({
 
       {method === "upload" ? (
         <div className="scan-upload-row">
-          <input type="file" accept=".zip" onChange={(e) => setFile(e.target.files?.[0] ?? null)} />
+          <input type="file" accept=".zip" onChange={(e) => setFile(e.target.files?.[0] ?? null)} disabled={scanning} />
           <button onClick={handleScan} disabled={!file || scanning}>
             {scanning ? "Scanning…" : "Scan"}
           </button>
+          {scanning && (
+            <button type="button" className="secondary" onClick={handleCancel}>
+              Cancel
+            </button>
+          )}
         </div>
       ) : (
         <div>
@@ -296,13 +313,28 @@ function ScanStep({
               placeholder="https://github.com/owner/repo"
             />
           </div>
-          <button onClick={handleScan} disabled={!repoUrl || scanning}>
-            {scanning ? "Cloning & scanning…" : "Scan repository"}
-          </button>
+          <div style={{ display: "flex", gap: 10 }}>
+            <button onClick={handleScan} disabled={!repoUrl || scanning}>
+              {scanning ? "Cloning & scanning…" : "Scan repository"}
+            </button>
+            {scanning && (
+              <button type="button" className="secondary" onClick={handleCancel}>
+                Cancel
+              </button>
+            )}
+          </div>
         </div>
       )}
 
-      <button type="button" className="link-btn" style={{ marginTop: 14 }} onClick={onSkip}>
+      <button
+        type="button"
+        className="link-btn"
+        style={{ marginTop: 14 }}
+        onClick={() => {
+          controllerRef.current?.abort();
+          onSkip();
+        }}
+      >
         I'll scan later — take me to the dashboard
       </button>
     </div>

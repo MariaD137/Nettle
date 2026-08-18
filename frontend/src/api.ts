@@ -18,6 +18,8 @@ export interface Project {
   url: string | null;
   repoUrl: string | null;
   repoBranch: string | null;
+  // Never the token itself — see backend/src/security/tokenEncryption.ts.
+  hasRepoAccessToken: boolean;
   description: string | null;
   environment: string | null;
   archivedAt: string | null;
@@ -300,7 +302,17 @@ export const api = {
 
   updateProject: (
     id: string,
-    updates: { name?: string; url?: string; repoUrl?: string; repoBranch?: string; description?: string; environment?: string }
+    updates: {
+      name?: string;
+      url?: string;
+      repoUrl?: string;
+      repoBranch?: string;
+      // Empty string clears a previously-stored token; omit the field
+      // entirely to leave whatever's already stored untouched.
+      repoAccessToken?: string;
+      description?: string;
+      environment?: string;
+    }
   ) => request<Project>(`/api/projects/${id}`, { method: "PATCH", body: JSON.stringify(updates) }),
 
   deleteProject: (id: string) =>
@@ -396,17 +408,18 @@ export const api = {
   badgeSvgUrl: (projectId: string) => `${API_BASE}/api/projects/${projectId}/badge.svg`,
 
   // Scan upload
-  scanCodebase: async (file: File, apiKey?: string): Promise<ScanReport> => {
+  scanCodebase: async (file: File, apiKey?: string, signal?: AbortSignal): Promise<ScanReport> => {
     const form = new FormData();
     form.append("codebase", file);
     const headers: Record<string, string> = {};
     if (apiKey) headers["X-Nettle-Api-Key"] = apiKey;
-    return request<ScanReport>("/api/scans", { method: "POST", body: form, headers });
+    return request<ScanReport>("/api/scans", { method: "POST", body: form, headers, signal });
   },
 
-  scanRepo: (repoUrl: string, opts?: { branch?: string; apiKey?: string }) =>
+  scanRepo: (repoUrl: string, opts?: { branch?: string; apiKey?: string; signal?: AbortSignal }) =>
     request<ScanReport>("/api/scans/repo", {
       method: "POST",
+      signal: opts?.signal,
       body: JSON.stringify({ repoUrl, branch: opts?.branch, apiKey: opts?.apiKey }),
     }),
 

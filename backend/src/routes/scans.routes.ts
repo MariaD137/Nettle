@@ -1,12 +1,12 @@
 import { Router, type Request, type Response } from "express";
-import { execFileSync, execFile } from "child_process";
 import fs from "fs";
 import os from "os";
 import path from "path";
 import multer from "multer";
 import { runScan, runUrlScan, SsrfBlockedError, UrlScanUnreachableError } from "../scanner";
 import { resolveScanRoot } from "../scanner/resolveScanRoot";
-import { findProjectByApiKey } from "../patrol/projects";
+import { cloneRepo } from "../scanner/gitAuth";
+import { findProjectByApiKey, getDecryptedRepoAccessToken } from "../patrol/projects";
 import { recordScan } from "../patrol/scans";
 import { requireAuth, optionalAuth } from "../auth/middleware";
 import { requireSubscription } from "../billing/subscription";
@@ -135,20 +135,22 @@ scansRouter.post("/api/scans/repo", requireAuth, requireSubscription, (req: Requ
     return res.status(400).json({ error: "Provide a 'repoUrl' (e.g. https://github.com/owner/repo)" });
   }
   if (!REPO_URL_PATTERN.test(repoUrl)) {
-    return res.status(400).json({ error: "Only public GitHub, GitLab, and Bitbucket HTTPS URLs are supported" });
+    return res.status(400).json({ error: "Only GitHub, GitLab, and Bitbucket HTTPS URLs are supported" });
   }
 
   const repoProject = apiKey ? findProjectByApiKey(apiKey) : null;
   const billedUserId = req.userId ?? repoProject?.userId;
   if (quotaExceeded(billedUserId, res)) return;
 
+  // A project with a stored access token can have its private repo scanned;
+  // anonymous or token-less requests still work exactly as before for
+  // public repos. The token is decrypted only here, used only in-process by
+  // git, and never touches a log line, an error message, or the response.
+  const repoToken = repoProject ? getDecryptedRepoAccessToken(repoProject.id) : null;
+
   const cloneDir = fs.mkdtempSync(path.join(os.tmpdir(), "nettle-repo-"));
   try {
-    const args = ["clone", "--depth", "1"];
-    if (branch) args.push("--branch", branch);
-    args.push(repoUrl, cloneDir);
-
-    execFileSync("git", args, { timeout: 60_000, stdio: "pipe" });
+    cloneRepo(repoUrl, branch, cloneDir, repoToken);
 
     const report = runScan(cloneDir);
 

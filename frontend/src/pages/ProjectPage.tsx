@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import {
   api, ApiError,
@@ -179,6 +179,10 @@ function OverviewTab({ project, latestScan }: { project: Project; latestScan: St
 
 type ScanMethod = "upload" | "repo";
 
+function isAbortError(err: unknown): boolean {
+  return err instanceof DOMException && err.name === "AbortError";
+}
+
 function ScanTab({ project, onScanned }: { project: Project; onScanned: (badge: BadgeState) => void }) {
   const [method, setMethod] = useState<ScanMethod>("upload");
   const [file, setFile] = useState<File | null>(null);
@@ -189,26 +193,42 @@ function ScanTab({ project, onScanned }: { project: Project; onScanned: (badge: 
   const [report, setReport] = useState<ScanReport | null>(null);
   const [scanning, setScanning] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const controllerRef = useRef<AbortController | null>(null);
 
   async function handleScan() {
     setError(null);
     setScanning(true);
+    const controller = new AbortController();
+    controllerRef.current = controller;
     try {
       let result: ScanReport;
       if (method === "repo") {
         if (!repoUrl) { setError("Enter a repository URL"); setScanning(false); return; }
-        result = await api.scanRepo(repoUrl, { branch: branch || undefined, apiKey: project.apiKey });
+        result = await api.scanRepo(repoUrl, { branch: branch || undefined, apiKey: project.apiKey, signal: controller.signal });
       } else {
         if (!file) { setError("Select a file"); setScanning(false); return; }
-        result = await api.scanCodebase(file, project.apiKey);
+        result = await api.scanCodebase(file, project.apiKey, controller.signal);
       }
       setReport(result);
       onScanned(await api.getBadge(project.id));
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Scan failed");
+      if (isAbortError(err)) {
+        // Stops the browser from waiting on the response; the zip/repo scan
+        // itself runs synchronously server-side and isn't preemptible, so
+        // it may still finish its work — this just means the result won't
+        // come back to this tab.
+        setError("Scan cancelled.");
+      } else {
+        setError(err instanceof ApiError ? err.message : "Scan failed");
+      }
     } finally {
+      controllerRef.current = null;
       setScanning(false);
     }
+  }
+
+  function handleCancel() {
+    controllerRef.current?.abort();
   }
 
   return (
@@ -238,10 +258,15 @@ function ScanTab({ project, onScanned }: { project: Project; onScanned: (badge: 
         <div>
           <p className="muted">Upload a .zip of your codebase.</p>
           <div className="scan-upload-row">
-            <input type="file" accept=".zip" onChange={(e) => setFile(e.target.files?.[0] ?? null)} />
+            <input type="file" accept=".zip" onChange={(e) => setFile(e.target.files?.[0] ?? null)} disabled={scanning} />
             <button onClick={handleScan} disabled={!file || scanning}>
               {scanning ? "Scanning…" : "Scan"}
             </button>
+            {scanning && (
+              <button type="button" className="secondary" onClick={handleCancel}>
+                Cancel
+              </button>
+            )}
           </div>
         </div>
       )}
@@ -267,9 +292,16 @@ function ScanTab({ project, onScanned }: { project: Project; onScanned: (badge: 
               placeholder="main"
             />
           </div>
-          <button onClick={handleScan} disabled={!repoUrl || scanning}>
-            {scanning ? "Cloning & scanning…" : "Scan repository"}
-          </button>
+          <div style={{ display: "flex", gap: 10 }}>
+            <button onClick={handleScan} disabled={!repoUrl || scanning}>
+              {scanning ? "Cloning & scanning…" : "Scan repository"}
+            </button>
+            {scanning && (
+              <button type="button" className="secondary" onClick={handleCancel}>
+                Cancel
+              </button>
+            )}
+          </div>
         </div>
       )}
 
@@ -659,6 +691,10 @@ function ProjectSettingsTab({
   const [url, setUrl] = useState(project.url ?? "");
   const [repoUrl, setRepoUrl] = useState(project.repoUrl ?? "");
   const [repoBranch, setRepoBranch] = useState(project.repoBranch ?? "");
+  // Blank on load even when a token is already stored — it's write-only and
+  // never sent back down from the API, so there's nothing to prefill.
+  // Leaving it blank on save means "don't change the stored token."
+  const [repoToken, setRepoToken] = useState("");
   const [desc, setDesc] = useState(project.description ?? "");
   const [env, setEnv] = useState(project.environment ?? "");
   const [saving, setSaving] = useState(false);
@@ -676,15 +712,28 @@ function ProjectSettingsTab({
         url: url || undefined,
         repoUrl: repoUrl || undefined,
         repoBranch: repoBranch || undefined,
+        repoAccessToken: repoToken || undefined,
         description: desc || undefined,
         environment: env || undefined,
       });
       onUpdated(updated);
+      setRepoToken("");
       setSuccess(true);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Failed to save");
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function handleRemoveToken() {
+    if (!confirm("Remove the stored repository access token? Scans of this repo will only work if it's public.")) return;
+    setError(null);
+    try {
+      const updated = await api.updateProject(project.id, { repoAccessToken: "" });
+      onUpdated(updated);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Failed to remove token");
     }
   }
 
@@ -749,6 +798,28 @@ function ProjectSettingsTab({
           <div className="field">
             <label htmlFor="prepobranch">Default branch</label>
             <input id="prepobranch" value={repoBranch} onChange={(e) => setRepoBranch(e.target.value)} placeholder="main" />
+          </div>
+          <div className="field">
+            <label htmlFor="prepotoken">Private repository access token</label>
+            <input
+              id="prepotoken"
+              type="password"
+              autoComplete="off"
+              value={repoToken}
+              onChange={(e) => setRepoToken(e.target.value)}
+              placeholder={project.hasRepoAccessToken ? "•••••••• (configured — leave blank to keep it)" : "Only needed for private repos"}
+            />
+            <p className="muted" style={{ margin: "6px 0 0" }}>
+              {project.hasRepoAccessToken
+                ? "A token is stored, encrypted, and never shown again. Leave this blank to keep it, or "
+                : "Not set — repo scans of this project only work if the repository is public. "}
+              {project.hasRepoAccessToken && (
+                <button type="button" className="link-btn" onClick={handleRemoveToken} style={{ padding: 0 }}>
+                  remove it
+                </button>
+              )}
+              {!project.hasRepoAccessToken && "Add one above to enable private-repo scans."}
+            </p>
           </div>
           <div className="field">
             <label htmlFor="pdesc">Description</label>

@@ -1,5 +1,6 @@
 import { Router } from "express";
-import { createProject, getProject, listProjectsByUser, updateProject, deleteProject, archiveProject, restoreProject, rotateApiKey, countProjectsByUser } from "../patrol/projects";
+import { createProject, getProject, listProjectsByUser, updateProject, deleteProject, archiveProject, restoreProject, rotateApiKey, countProjectsByUser, setRepoAccessToken } from "../patrol/projects";
+import { MissingEncryptionKeyError } from "../security/tokenEncryption";
 import { listAlerts, getAlert, updateAlertStatus, countAlertsByStatus } from "../patrol/alerts";
 import { listScans, getLatestScan } from "../patrol/scans";
 import { computeBadgeState } from "../patrol/badge";
@@ -79,7 +80,24 @@ projectsRouter.patch("/api/projects/:id", ...paywalled, (req, res) => {
   if (typeof req.body?.repoBranch === "string") updates.repoBranch = req.body.repoBranch.trim();
   if (typeof req.body?.description === "string") updates.description = req.body.description.trim();
   if (typeof req.body?.environment === "string") updates.environment = req.body.environment;
-  const updated = updateProject(project.id, updates);
+  let updated = updateProject(project.id, updates);
+
+  // Handled separately from the generic `updates` above so the encryption
+  // step lives in exactly one place (patrol/projects.ts) — an empty string
+  // clears a previously-stored token, a non-empty one replaces it, and
+  // omitting the field entirely (the normal case: the user didn't touch
+  // this field) leaves whatever is already stored untouched.
+  if (typeof req.body?.repoAccessToken === "string") {
+    try {
+      updated = setRepoAccessToken(project.id, req.body.repoAccessToken || null);
+    } catch (err) {
+      if (err instanceof MissingEncryptionKeyError) {
+        return res.status(500).json({ error: err.message });
+      }
+      throw err;
+    }
+  }
+
   res.json(updated);
 });
 
