@@ -13,6 +13,10 @@ they ship.
   the trust badge, and Stripe billing. Real, tested code — 53 automated
   tests, including end-to-end HTTP checks and a genuinely-signed Stripe
   webhook verification. See `backend/README.md`.
+- **`cli/`** — the `nettle` command-line tool: login/signup, project
+  management, scanning a local directory or a public Git repo against the
+  real API, `--json` output and `--fail-on <severity>` for CI/CD gating.
+  See `cli/README.md`.
 - **`frontend/`** — the dashboard: sign up, create a project, upload code
   for a scan and read the report, view alerts and scan history, embed the
   badge, upgrade to a paid plan. A real React app, browser-tested against

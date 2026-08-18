@@ -4,7 +4,7 @@
   "description": "Nettle Tier 1 scan engine and API — scans AI-built apps for launch-readiness gaps",
   "main": "dist/index.js",
   "bin": {
-    "nettle": "bin/nettle.js"
+    "nettle-local": "bin/nettle.js"
   },
   "scripts": {
     "build": "tsc && mkdir -p dist/scanner/semgrep-rules dist/scanner/osv-data && cp src/scanner/semgrep-rules/*.yaml dist/scanner/semgrep-rules/ && cp src/scanner/osv-data/*.db dist/scanner/osv-data/",

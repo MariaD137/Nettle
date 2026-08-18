@@ -21,43 +21,68 @@ import {
 // Helpers
 // ---------------------------------------------------------------------------
 
-function prompt(question, hidden = false) {
-  return new Promise((resolve) => {
-    const rl = readline.createInterface({
-      input: process.stdin,
-      output: process.stdout,
-    });
-
-    if (hidden) {
-      // Mute output for password entry
-      const origWrite = process.stdout.write.bind(process.stdout);
-      process.stdout.write = (chunk, encoding, cb) => {
-        // Only suppress characters typed after the question has been printed
-        if (typeof chunk === "string" && !chunk.includes(question)) {
-          // Write nothing — hide the typed characters
-          if (typeof encoding === "function") {
-            encoding();
-            return true;
-          }
-          if (cb) cb();
-          return true;
-        }
-        return origWrite(chunk, encoding, cb);
-      };
-
-      rl.question(question, (answer) => {
-        process.stdout.write = origWrite;
-        console.log(); // newline after hidden input
-        rl.close();
-        resolve(answer);
-      });
-    } else {
-      rl.question(question, (answer) => {
-        rl.close();
-        resolve(answer);
-      });
-    }
+// A prompter that asks a whole sequence of questions (e.g. email then
+// password) through one readline.Interface, chaining each rl.question()
+// call directly from the previous one's callback rather than `await`ing
+// them one at a time from the caller.
+//
+// That chaining is load-bearing, not style: when stdin isn't a real TTY
+// (piped input — scripted use, CI, or just this CLI's own tests), the
+// whole answer set is often already buffered and the input stream can hit
+// 'end' the moment nothing is actively reading from it. `await`ing between
+// two separate rl.question() calls opens a microtask gap where exactly
+// that happens — readline reacts to the stream ending by closing the
+// interface, and the second question silently never gets asked (the
+// process just exits with whatever answers it already had). Asking every
+// question in one unbroken synchronous callback chain closes that gap.
+function createPrompter() {
+  const rl = readline.createInterface({
+    input: process.stdin,
+    output: process.stdout,
   });
+
+  function askSequence(questions) {
+    return new Promise((resolve) => {
+      const answers = [];
+      function next(i) {
+        if (i >= questions.length) return resolve(answers);
+        const { text, hidden } = questions[i];
+
+        if (hidden) {
+          // Mute output for password entry
+          const origWrite = process.stdout.write.bind(process.stdout);
+          process.stdout.write = (chunk, encoding, cb) => {
+            // Only suppress characters typed after the question has been printed
+            if (typeof chunk === "string" && !chunk.includes(text)) {
+              // Write nothing — hide the typed characters
+              if (typeof encoding === "function") {
+                encoding();
+                return true;
+              }
+              if (cb) cb();
+              return true;
+            }
+            return origWrite(chunk, encoding, cb);
+          };
+
+          rl.question(text, (answer) => {
+            process.stdout.write = origWrite;
+            console.log(); // newline after hidden input
+            answers.push(answer);
+            next(i + 1);
+          });
+        } else {
+          rl.question(text, (answer) => {
+            answers.push(answer);
+            next(i + 1);
+          });
+        }
+      }
+      next(0);
+    });
+  }
+
+  return { askSequence, close: () => rl.close() };
 }
 
 function die(message) {
@@ -94,8 +119,12 @@ export function run() {
     .description("Log in to your Nettle account")
     .action(async (_, cmd) => {
       const apiUrl = cmd.optsWithGlobals().apiUrl;
-      const email = await prompt("Email: ");
-      const password = await prompt("Password: ", true);
+      const prompter = createPrompter();
+      const [email, password] = await prompter.askSequence([
+        { text: "Email: " },
+        { text: "Password: ", hidden: true },
+      ]);
+      prompter.close();
 
       if (!email || !password) die("Email and password are required.");
 
@@ -119,8 +148,12 @@ export function run() {
     .description("Create a new Nettle account")
     .action(async (_, cmd) => {
       const apiUrl = cmd.optsWithGlobals().apiUrl;
-      const email = await prompt("Email: ");
-      const password = await prompt("Password: ", true);
+      const prompter = createPrompter();
+      const [email, password] = await prompter.askSequence([
+        { text: "Email: " },
+        { text: "Password: ", hidden: true },
+      ]);
+      prompter.close();
 
       if (!email || !password) die("Email and password are required.");
       if (password.length < 8) die("Password must be at least 8 characters.");
@@ -254,7 +287,10 @@ export function run() {
       const zipFile = path.join(tmpDir, "codebase.zip");
 
       try {
-        console.log(chalk.dim(`\nScanning ${scanPath} ...\n`));
+        // stderr, not stdout: --json's whole point is a clean, parseable
+        // report on stdout for scripts/CI to consume — a progress line
+        // mixed into stdout would corrupt that.
+        console.error(chalk.dim(`\nScanning ${scanPath} ...\n`));
 
         // Zip the directory, excluding common non-source directories
         execFileSync("zip", [
@@ -314,7 +350,7 @@ export function run() {
             die(`Invalid --fail-on value: ${opts.failOn}. Use: critical, high, medium, low`);
           }
           if (meetsThreshold(report.summary, threshold)) {
-            console.log(
+            console.error(
               chalk.red.bold(`\nFailed: findings at ${threshold} severity or above detected.\n`)
             );
             process.exit(1);
@@ -350,7 +386,8 @@ export function run() {
       requireLoggedIn();
 
       try {
-        console.log(chalk.dim(`\nCloning and scanning ${url}${opts.branch ? ` (branch: ${opts.branch})` : ""} ...\n`));
+        // stderr, not stdout — see the same note in `scan` above.
+        console.error(chalk.dim(`\nCloning and scanning ${url}${opts.branch ? ` (branch: ${opts.branch})` : ""} ...\n`));
 
         const { data: report } = await request("POST", "/api/scans/repo", {
           body: { repoUrl: url, branch: opts.branch, apiKey: opts.apiKey },
@@ -372,7 +409,7 @@ export function run() {
             die(`Invalid --fail-on value: ${opts.failOn}. Use: critical, high, medium, low`);
           }
           if (meetsThreshold(report.summary, threshold)) {
-            console.log(
+            console.error(
               chalk.red.bold(`\nFailed: findings at ${threshold} severity or above detected.\n`)
             );
             process.exit(1);

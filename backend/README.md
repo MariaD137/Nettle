@@ -16,7 +16,9 @@ with real issues (`test/fixtures/sample-app`) and one clean
 npm install
 npm run build
 
-# CLI
+# Local, offline scan — runs the scan engine in-process, nothing is
+# uploaded anywhere. Also does login/projects/status against the API
+# below, but scanning itself never leaves the machine.
 node bin/nettle.js scan /path/to/some/app
 
 # API
@@ -24,6 +26,11 @@ npm start                 # listens on :8080
 curl -X POST http://localhost:8080/api/scans \
   -F "codebase=@/path/to/app.zip"
 ```
+
+For the full-featured networked CLI (upload-based scanning, repo scans,
+project management, `--json`/`--fail-on` for CI) see [`../cli`](../cli).
+Its published bin name is `nettle`; this backend package's own CLI installs
+as `nettle-local` to avoid colliding with it.
 
 ## Develop
 
