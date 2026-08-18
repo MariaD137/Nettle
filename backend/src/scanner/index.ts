@@ -34,7 +34,7 @@ export function runScan(targetPath: string, scanType?: ScanType): ScanReport {
   const results = [
     scanSecrets(files, targetRoot),
     scanDependencies(targetRoot),
-    scanLegalPolicy(targetRoot),
+    scanLegalPolicy(files, targetRoot),
     scanAIDisclosure(files),
     scanAuthHeuristic(files, targetRoot),
     scanAuthAnalysis(files, targetRoot),
