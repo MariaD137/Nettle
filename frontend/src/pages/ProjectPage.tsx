@@ -171,6 +171,13 @@ function OverviewTab({ project, latestScan }: { project: Project; latestScan: St
               <span className="plan-badge" style={{ marginLeft: 8 }}>{latestScan.report.environment}</span>
             )}
           </p>
+          {(latestScan.scannerVersion || latestScan.semgrepVersion) && (
+            <p className="muted scan-version-tag">
+              {latestScan.scannerVersion && `Scanner v${latestScan.scannerVersion}`}
+              {latestScan.scannerVersion && latestScan.semgrepVersion && " · "}
+              {latestScan.semgrepVersion && `Semgrep v${latestScan.semgrepVersion}`}
+            </p>
+          )}
           <div className="score-counts">
             <span className="count-critical">{latestScan.criticalCount} critical</span>
             <span className="count-high">{latestScan.cautionCount} caution</span>
@@ -807,6 +814,7 @@ function HistoryTab({ projectId }: { projectId: string }) {
                   </span>
                 )}
                 {s.report.environment && <span className="plan-badge">{s.report.environment}</span>}
+                {s.scannerVersion && <span className="scan-version-tag muted">v{s.scannerVersion}</span>}
               </div>
               <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
                 <span className="muted">

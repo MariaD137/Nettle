@@ -102,6 +102,9 @@ export interface StoredScan {
   criticalCount: number;
   cautionCount: number;
   clearCount: number;
+  // Null for scans recorded before scanner-version tracking existed.
+  scannerVersion?: string | null;
+  semgrepVersion?: string | null;
   report: ScanReport;
 }
 

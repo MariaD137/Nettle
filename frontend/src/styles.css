@@ -671,6 +671,10 @@ button.destructive {
   background: var(--accent-soft);
   color: var(--accent);
 }
+.scan-version-tag {
+  font-family: var(--mono);
+  font-size: 11px;
+}
 
 .scan-upload-row {
   display: flex;

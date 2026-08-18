@@ -13,6 +13,12 @@ export interface StoredScan {
   cautionCount: number;
   clearCount: number;
   status: ScanStatus;
+  // Pulled out of `report` to a first-class, directly queryable column —
+  // same idea as score/criticalCount/etc above — rather than only living
+  // inside the report_json blob. Null for scans recorded before this
+  // column existed.
+  scannerVersion: string | null;
+  semgrepVersion: string | null;
   report: ScanReport;
 }
 
@@ -25,6 +31,8 @@ interface ScanRow {
   caution_count: number;
   clear_count: number;
   status: string;
+  scanner_version: string | null;
+  semgrep_version: string | null;
   report_json: string;
 }
 
@@ -38,6 +46,8 @@ function toScan(row: ScanRow): StoredScan {
     cautionCount: row.caution_count,
     clearCount: row.clear_count,
     status: (row.status || "COMPLETED") as ScanStatus,
+    scannerVersion: row.scanner_version,
+    semgrepVersion: row.semgrep_version,
     report: JSON.parse(row.report_json),
   };
 }
@@ -62,10 +72,12 @@ export function recordScan(projectId: string, report: ScanReport, status: ScanSt
     cautionCount,
     clearCount: report.summary.clear,
     status: report.status || status, // Use report status if set, otherwise fall back to parameter
+    scannerVersion: report.scannerVersion ?? null,
+    semgrepVersion: report.semgrepVersion ?? null,
     report,
   };
   db.prepare(
-    "INSERT INTO scans (id, project_id, scanned_at, score, critical_count, caution_count, clear_count, status, report_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
+    "INSERT INTO scans (id, project_id, scanned_at, score, critical_count, caution_count, clear_count, status, scanner_version, semgrep_version, report_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
   ).run(
     stored.id,
     stored.projectId,
@@ -75,6 +87,8 @@ export function recordScan(projectId: string, report: ScanReport, status: ScanSt
     stored.cautionCount,
     stored.clearCount,
     stored.status,
+    stored.scannerVersion,
+    stored.semgrepVersion,
     JSON.stringify(report)
   );
 

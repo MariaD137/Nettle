@@ -244,6 +244,13 @@ if (!columnExists("projects", "repo_access_token_encrypted")) {
 if (!columnExists("scans", "scanner_version")) {
   db.exec("ALTER TABLE scans ADD COLUMN scanner_version TEXT");
 }
+// The external Semgrep tool's own version, separate from Nettle's own
+// scanner_version above — Semgrep availability/version affects which AST
+// checks (SQL injection, eval usage, hardcoded JWT secrets, disabled TLS
+// verification, wildcard CORS) actually ran for a given scan.
+if (!columnExists("scans", "semgrep_version")) {
+  db.exec("ALTER TABLE scans ADD COLUMN semgrep_version TEXT");
+}
 // Billable scans are recorded here rather than counted off the `scans`
 // table. A scan run without a project API key never lands in `scans` at
 // all, so counting stored reports would let a subscriber take unlimited

@@ -77,3 +77,33 @@ test("a scan's environment tag is a permanent snapshot — relabeling the projec
   const reloaded = getLatestScan(project.id);
   assert.equal(reloaded?.report.environment, "development", "the historical scan must not retroactively relabel itself");
 });
+
+test("recordScan persists scannerVersion and semgrepVersion as first-class, queryable fields", async () => {
+  const user = await createUser("scans-version-tracking@example.com", "correct horse battery staple");
+  const project = createProject(user.id, "Version Tracking Target").id;
+
+  const report = runScan(FLAWED_APP);
+  assert.ok(report.scannerVersion, "a real scan should always carry the scanner's own version");
+
+  const stored = recordScan(project, report);
+  assert.equal(stored.scannerVersion, report.scannerVersion);
+  assert.equal(stored.semgrepVersion, report.semgrepVersion ?? null);
+
+  // Round-trip through storage (not just the in-memory object recordScan
+  // returns) — the dedicated columns, not just the report_json blob.
+  const reloaded = getLatestScan(project);
+  assert.equal(reloaded?.scannerVersion, report.scannerVersion);
+  assert.equal(reloaded?.semgrepVersion, report.semgrepVersion ?? null);
+});
+
+test("a scan recorded with no semgrepVersion (e.g. a URL scan) stores null, not undefined or a crash", async () => {
+  const user = await createUser("scans-version-no-semgrep@example.com", "correct horse battery staple");
+  const project = createProject(user.id, "No Semgrep Version Target").id;
+
+  const report = runScan(FLAWED_APP);
+  delete report.semgrepVersion;
+
+  const stored = recordScan(project, report);
+  assert.equal(stored.semgrepVersion, null);
+  assert.equal(getLatestScan(project)?.semgrepVersion, null);
+});
