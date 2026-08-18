@@ -128,6 +128,11 @@ export interface ScanReport {
   scoreConfidence?: number; // 0-100: how complete is the scan
   status?: ScanStatus; // default COMPLETED for backward compatibility
   access?: ScanAccess;
+  // The project's environment (development/staging/production/...) at the
+  // moment this scan was recorded — a permanent snapshot, not a live
+  // lookup, so relabeling a project later doesn't retroactively change
+  // what environment its past scans say they ran against.
+  environment?: string | null;
   // Legacy fields for backward compatibility
   findings: Finding[];
   passed: Pass[];

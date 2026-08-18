@@ -253,6 +253,7 @@ projectsRouter.get("/api/overview", ...paywalled, (req, res) => {
     return {
       id: p.id,
       name: p.name,
+      environment: p.environment,
       badge,
       latestScore: latest?.score ?? null,
       lastScannedAt: latest?.scannedAt ?? null,

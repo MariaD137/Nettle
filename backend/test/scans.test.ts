@@ -2,7 +2,7 @@ import { test, before } from "node:test";
 import assert from "node:assert/strict";
 import path from "path";
 import { createUser } from "../src/auth/users";
-import { createProject } from "../src/patrol/projects";
+import { createProject, updateProject } from "../src/patrol/projects";
 import { recordScan, listScans, getLatestScan } from "../src/patrol/scans";
 import { runScan } from "../src/scanner";
 
@@ -49,4 +49,31 @@ test("getLatestScan returns null for a project with no scans yet", async () => {
   const user = await createUser("scans-empty@example.com", "correct horse battery staple");
   const emptyProjectId = createProject(user.id, "No Scans Yet").id;
   assert.equal(getLatestScan(emptyProjectId), null);
+});
+
+test("recordScan snapshots the project's environment onto the stored report", async () => {
+  const user = await createUser("scans-env@example.com", "correct horse battery staple");
+  const project = createProject(user.id, "Env Tag Target", { environment: "staging" });
+
+  const report = runScan(CLEAN_APP);
+  assert.equal(report.environment, undefined, "runScan itself has no notion of environment");
+
+  const stored = recordScan(project.id, report);
+  assert.equal(stored.report.environment, "staging");
+  // Mutated in place — the original report object the caller is still
+  // holding (e.g. to build an HTTP response from) reflects it too.
+  assert.equal(report.environment, "staging");
+});
+
+test("a scan's environment tag is a permanent snapshot — relabeling the project later doesn't change it", async () => {
+  const user = await createUser("scans-env-snapshot@example.com", "correct horse battery staple");
+  const project = createProject(user.id, "Relabeled Project", { environment: "development" });
+
+  const stored = recordScan(project.id, runScan(CLEAN_APP));
+  assert.equal(stored.report.environment, "development");
+
+  updateProject(project.id, { environment: "production" });
+
+  const reloaded = getLatestScan(project.id);
+  assert.equal(reloaded?.report.environment, "development", "the historical scan must not retroactively relabel itself");
 });

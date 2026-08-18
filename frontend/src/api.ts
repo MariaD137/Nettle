@@ -59,6 +59,9 @@ export interface ScanReport {
   findings: Finding[];
   passed: { category: string; title: string }[];
   summary: { critical: number; high: number; medium: number; low: number; info: number; clear: number };
+  // The project's environment at the moment this scan was recorded — a
+  // permanent snapshot, not a live lookup of the project's current setting.
+  environment?: string | null;
 }
 
 export type ScanJobStatus = "queued" | "running" | "completed" | "failed" | "cancelled";
@@ -148,6 +151,7 @@ export interface OverviewData {
   projects: {
     id: string;
     name: string;
+    environment: string | null;
     badge: BadgeState;
     latestScore: number | null;
     lastScannedAt: string | null;

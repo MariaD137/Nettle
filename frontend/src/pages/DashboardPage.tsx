@@ -152,7 +152,10 @@ export default function DashboardPage() {
               {overview.projects.map((p) => (
                 <Link key={p.id} to={`/projects/${p.id}`} className="m-row">
                   <div className="m-row-main">
-                    <span className="m-row-title">{p.name}</span>
+                    <span className="m-row-title">
+                      {p.name}
+                      {p.environment && <span className="plan-badge" style={{ marginLeft: 6 }}>{p.environment}</span>}
+                    </span>
                     <span className="m-row-sub">
                       {p.latestScore !== null ? `${p.latestScore}/100` : "Not yet scanned"}
                       {p.newAlerts > 0 && ` · ${p.newAlerts} alert${p.newAlerts > 1 ? "s" : ""}`}
@@ -308,6 +311,7 @@ export default function DashboardPage() {
           <Link key={p.id} to={`/projects/${p.id}`} className="project-row">
             <div className="project-row-left">
               <span className="project-row-name">{p.name}</span>
+              {p.environment && <span className="plan-badge" style={{ marginLeft: 6 }}>{p.environment}</span>}
               {p.latestScore !== null && (
                 <span className="muted">{p.latestScore}/100</span>
               )}

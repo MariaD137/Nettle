@@ -1,5 +1,6 @@
 import { db, newId } from "../db";
 import type { ScanReport, ScanStatus } from "../scanner/types";
+import { getProject } from "./projects";
 
 export interface StoredScan {
   id: string;
@@ -40,6 +41,14 @@ function toScan(row: ScanRow): StoredScan {
 }
 
 export function recordScan(projectId: string, report: ScanReport, status: ScanStatus = "COMPLETED"): StoredScan {
+  // Mutated in place, not spread into a copy: callers that hold their own
+  // reference to this same report object (e.g. the response already being
+  // built for the request that triggered this scan) pick up the tag too,
+  // without every call site having to remember to re-read it back out.
+  if (report.environment === undefined) {
+    report.environment = getProject(projectId)?.environment ?? null;
+  }
+
   const criticalCount = report.summary.critical + report.summary.high;
   const cautionCount = report.summary.medium + report.summary.low + report.summary.info;
   const stored: StoredScan = {

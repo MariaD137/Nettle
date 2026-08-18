@@ -167,6 +167,9 @@ function OverviewTab({ project, latestScan }: { project: Project; latestScan: St
           {exportError && <div className="error-banner">{exportError}</div>}
           <p className="muted">
             {new Date(latestScan.scannedAt).toLocaleString()} — Score: {latestScan.score}/100
+            {latestScan.report.environment && (
+              <span className="plan-badge" style={{ marginLeft: 8 }}>{latestScan.report.environment}</span>
+            )}
           </p>
           <div className="score-counts">
             <span className="count-critical">{latestScan.criticalCount} critical</span>
@@ -652,6 +655,7 @@ function HistoryTab({ projectId }: { projectId: string }) {
                     {diff > 0 ? "+" : ""}{diff}
                   </span>
                 )}
+                {s.report.environment && <span className="plan-badge">{s.report.environment}</span>}
               </div>
               <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
                 <span className="muted">
