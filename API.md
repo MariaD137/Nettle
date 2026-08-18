@@ -200,6 +200,14 @@ except at `/api/events` where a key is mandatory so it's a `401`).
 ### `PATCH /api/projects/:id/alerts/:alertId`
 Body: `{ status }` (one of `new`/`acknowledged`/`resolved`/`false_positive`). → `{ alert }`.
 
+### Detection thresholds (`/api/projects/:id/detection-settings*`)
+
+Per-project overrides for the built-in `detection.ts` rule thresholds (brute-force failed-auth count, high-request-rate count, credential-stuffing distinct-IP count). No override row means the built-in defaults (5, 50, 5) apply — every project behaves identically until someone customizes it. `DetectionSettings` is `{ projectId, bruteForceThreshold, highRequestRateThreshold, credentialStuffingMinIps, updatedAt }` (`updatedAt: null` means still on defaults).
+
+- **`GET /api/projects/:id/detection-settings`** → `{ settings: DetectionSettings }`.
+- **`PATCH /api/projects/:id/detection-settings`** — Body: any subset of `{ bruteForceThreshold, highRequestRateThreshold, credentialStuffingMinIps }` (each must be a positive integer; invalid values are ignored and the previous value is kept, not rejected outright). → `{ settings }`.
+- **`POST /api/projects/:id/detection-settings/reset`** — Removes the override, reverting to defaults. → `{ settings }`.
+
 ### `GET /api/projects/:id/scans`
 → `{ project: { id, name }, scans: StoredScan[] }`, newest first.
 

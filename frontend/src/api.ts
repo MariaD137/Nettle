@@ -42,6 +42,14 @@ export interface StoredApiKey {
   createdAt: string;
 }
 
+export interface DetectionSettings {
+  projectId: string;
+  bruteForceThreshold: number;
+  highRequestRateThreshold: number;
+  credentialStuffingMinIps: number;
+  updatedAt: string | null;
+}
+
 export type Severity = "critical" | "high" | "medium" | "low" | "info";
 
 export interface Finding {
@@ -414,6 +422,22 @@ export const api = {
 
   revokeApiKey: (projectId: string, keyId: string) =>
     request<{ apiKey: StoredApiKey }>(`/api/projects/${projectId}/api-keys/${keyId}/revoke`, { method: "POST" }),
+
+  // Detection thresholds
+  getDetectionSettings: (projectId: string) =>
+    request<{ settings: DetectionSettings }>(`/api/projects/${projectId}/detection-settings`),
+
+  updateDetectionSettings: (
+    projectId: string,
+    updates: { bruteForceThreshold?: number; highRequestRateThreshold?: number; credentialStuffingMinIps?: number }
+  ) =>
+    request<{ settings: DetectionSettings }>(`/api/projects/${projectId}/detection-settings`, {
+      method: "PATCH",
+      body: JSON.stringify(updates),
+    }),
+
+  resetDetectionSettings: (projectId: string) =>
+    request<{ settings: DetectionSettings }>(`/api/projects/${projectId}/detection-settings/reset`, { method: "POST" }),
 
   // Alerts
   getAlerts: (projectId: string) =>

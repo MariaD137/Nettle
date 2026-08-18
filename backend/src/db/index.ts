@@ -389,6 +389,23 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_api_keys_project ON api_keys(project_id);
 `);
 
+// Per-project overrides for the built-in detection.ts thresholds, which
+// were previously hardcoded module constants (5 failed auths, 50 req/10s,
+// 5 distinct IPs for credential-stuffing). No row means "use the
+// defaults" — see patrol/detectionSettings.ts — so this is purely
+// additive and every existing project behaves identically until someone
+// explicitly customizes it.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS detection_settings (
+    project_id TEXT PRIMARY KEY,
+    brute_force_threshold INTEGER NOT NULL,
+    high_request_rate_threshold INTEGER NOT NULL,
+    credential_stuffing_min_ips INTEGER NOT NULL,
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY (project_id) REFERENCES projects(id)
+  );
+`);
+
 export function newId(): string {
   return crypto.randomUUID();
 }

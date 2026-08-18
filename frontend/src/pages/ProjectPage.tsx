@@ -3,7 +3,7 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import {
   api, ApiError,
   type Alert, type AlertCounts, type AlertStatus, type ApiKeyScope, type BadgeState,
-  type Finding, type FindingHistoryEntry, type FindingStatus, type Project, type ScanComparison,
+  type DetectionSettings, type Finding, type FindingHistoryEntry, type FindingStatus, type Project, type ScanComparison,
   type ScanReport, type Severity, type StoredApiKey, type StoredFindingStatus, type StoredScan,
 } from "../api";
 import BadgePill from "../components/BadgePill";
@@ -874,6 +874,109 @@ function HistoryTab({ projectId }: { projectId: string }) {
   );
 }
 
+function DetectionSettingsCard({ projectId }: { projectId: string }) {
+  const [settings, setSettings] = useState<DetectionSettings | null>(null);
+  const [form, setForm] = useState({ bruteForceThreshold: "", highRequestRateThreshold: "", credentialStuffingMinIps: "" });
+  const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+
+  function applySettings(s: DetectionSettings) {
+    setSettings(s);
+    setForm({
+      bruteForceThreshold: String(s.bruteForceThreshold),
+      highRequestRateThreshold: String(s.highRequestRateThreshold),
+      credentialStuffingMinIps: String(s.credentialStuffingMinIps),
+    });
+  }
+
+  useEffect(() => {
+    api.getDetectionSettings(projectId).then(({ settings }) => applySettings(settings));
+  }, [projectId]);
+
+  async function handleSave(e: React.FormEvent) {
+    e.preventDefault();
+    setError(null);
+    setSaved(false);
+    setSaving(true);
+    try {
+      const { settings } = await api.updateDetectionSettings(projectId, {
+        bruteForceThreshold: Number(form.bruteForceThreshold),
+        highRequestRateThreshold: Number(form.highRequestRateThreshold),
+        credentialStuffingMinIps: Number(form.credentialStuffingMinIps),
+      });
+      applySettings(settings);
+      setSaved(true);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Failed to save detection thresholds");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleReset() {
+    if (!confirm("Reset detection thresholds to the built-in defaults?")) return;
+    setError(null);
+    try {
+      const { settings } = await api.resetDetectionSettings(projectId);
+      applySettings(settings);
+      setSaved(false);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Failed to reset detection thresholds");
+    }
+  }
+
+  return (
+    <div className="card">
+      <h2>Detection thresholds</h2>
+      <p className="muted" style={{ marginTop: 0 }}>
+        How sensitive Tier 2 monitoring is before it raises an alert. Lower numbers catch attacks sooner but risk more false positives.
+      </p>
+      {error && <div className="error-banner">{error}</div>}
+      {saved && <div className="success-banner">Saved</div>}
+      {settings === null && <p className="muted">Loading…</p>}
+      {settings !== null && (
+        <form onSubmit={handleSave}>
+          <div className="field">
+            <label htmlFor="brute-force-threshold">Brute-force: failed logins from one IP within 60s</label>
+            <input
+              id="brute-force-threshold"
+              type="number"
+              min={1}
+              value={form.bruteForceThreshold}
+              onChange={(e) => setForm((f) => ({ ...f, bruteForceThreshold: e.target.value }))}
+            />
+          </div>
+          <div className="field">
+            <label htmlFor="high-request-rate-threshold">High request rate: requests from one IP within 10s</label>
+            <input
+              id="high-request-rate-threshold"
+              type="number"
+              min={1}
+              value={form.highRequestRateThreshold}
+              onChange={(e) => setForm((f) => ({ ...f, highRequestRateThreshold: e.target.value }))}
+            />
+          </div>
+          <div className="field">
+            <label htmlFor="credential-stuffing-threshold">Credential stuffing: distinct IPs failing auth on one endpoint within 60s</label>
+            <input
+              id="credential-stuffing-threshold"
+              type="number"
+              min={1}
+              value={form.credentialStuffingMinIps}
+              onChange={(e) => setForm((f) => ({ ...f, credentialStuffingMinIps: e.target.value }))}
+            />
+          </div>
+          <div style={{ display: "flex", gap: 10 }}>
+            <button type="submit" disabled={saving}>{saving ? "Saving…" : "Save"}</button>
+            <button type="button" className="secondary" onClick={handleReset}>Reset to defaults</button>
+          </div>
+        </form>
+      )}
+    </div>
+  );
+}
+
 const ALL_API_KEY_SCOPES: ApiKeyScope[] = ["scan", "events"];
 const API_KEY_SCOPE_LABELS: Record<ApiKeyScope, string> = { scan: "Scan", events: "Events" };
 
@@ -1175,6 +1278,8 @@ function ProjectSettingsTab({
       </div>
 
       <ApiKeysCard projectId={project.id} />
+
+      <DetectionSettingsCard projectId={project.id} />
 
       <div className="card">
         <h2>Danger zone</h2>

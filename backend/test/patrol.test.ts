@@ -9,6 +9,7 @@ import { recordEvent } from "../src/patrol/events";
 import { runDetection } from "../src/patrol/detection";
 import { listAlerts } from "../src/patrol/alerts";
 import { createUser } from "../src/auth/users";
+import { updateDetectionSettings } from "../src/patrol/detectionSettings";
 
 // projects.user_id has a real foreign key to users(id), enforced by
 // node:sqlite — these tests need one real user to own the test projects,
@@ -175,6 +176,30 @@ test("flags credential-stuffing shape: many different IPs failing auth on the sa
   const hit = alerts.find((a) => a.rule.startsWith("credential-stuffing"));
   assert.ok(hit, "expected a credential-stuffing alert once 5 distinct IPs have failed auth on the same path");
   assert.equal(hit?.severity, "critical");
+});
+
+test("a project's custom brute-force threshold is honored instead of the built-in default", () => {
+  const project = createProject(userId, "Custom Threshold Target");
+  updateDetectionSettings(project.id, { bruteForceThreshold: 2 });
+
+  let alerts: ReturnType<typeof runDetection> = [];
+  const event1 = recordEvent(project.id, { ip: "203.0.113.90", method: "POST", path: "/login", statusCode: 401 });
+  alerts = runDetection(project.id, event1);
+  assert.equal(alerts.filter((a) => a.rule === "brute-force").length, 0, "1 failure should not yet trip a threshold of 2");
+
+  const event2 = recordEvent(project.id, { ip: "203.0.113.90", method: "POST", path: "/login", statusCode: 401 });
+  alerts = runDetection(project.id, event2);
+  assert.ok(alerts.some((a) => a.rule === "brute-force"), "the 2nd failure should trip the customized threshold of 2");
+});
+
+test("a project with no customized thresholds still uses the original built-in default of 5", () => {
+  const project = createProject(userId, "Default Threshold Target");
+  let alerts: ReturnType<typeof runDetection> = [];
+  for (let i = 0; i < 4; i++) {
+    const event = recordEvent(project.id, { ip: "203.0.113.91", method: "POST", path: "/login", statusCode: 401 });
+    alerts = runDetection(project.id, event);
+  }
+  assert.equal(alerts.filter((a) => a.rule === "brute-force").length, 0, "4 failures should not trip the default threshold of 5");
 });
 
 test("does not flag credential-stuffing for repeated failures from a single IP (that's brute-force's job)", () => {

@@ -69,13 +69,35 @@ function matchRegex(event: any, pattern: string, field: string): boolean {
   return value && regex.test(String(value));
 }
 
-function matchThreshold(events: any[], pattern: string): boolean {
-  try {
-    const [fieldName, operator, threshold] = pattern.split(':');
-    if (!fieldName || !operator || !threshold) return false;
+const THRESHOLD_PATTERN = /^(>=|<=|>|<|=)\s*(\d+)$/;
 
-    const count = events.length;
-    const thresholdNum = parseInt(threshold, 10);
+// Counts how many events in the given window share the same value for
+// `fieldName` as `currentEvent` does, and compares that count against the
+// threshold — e.g. pattern "ip:>10" against a window of events fires when
+// more than 10 of them came from the same ip as the one being evaluated.
+//
+// Format is "fieldName:operatorValue" — TWO colon-separated segments, not
+// three. The operator and number are written together with no colon
+// between them ("ip:>10", not "ip:>:10") — that's what the UI's own
+// placeholder/example text ("ip:>10", "count:>=10") shows. A naive
+// three-way split on ':' fails to parse every real example of this
+// format and always returns false; this is why threshold rules could
+// never fire before — a second bug stacked on top of the missing-window
+// one fixed alongside this.
+//
+// (Previously this also counted the raw size of whatever list was passed
+// in, ignoring `fieldName` entirely — fixed here too.)
+function matchThreshold(events: any[], currentEvent: any, pattern: string): boolean {
+  try {
+    const [fieldName, rest] = pattern.split(':');
+    if (!fieldName || !rest) return false;
+    const match = THRESHOLD_PATTERN.exec(rest.trim());
+    if (!match) return false;
+    const [, operator, thresholdStr] = match;
+    const thresholdNum = parseInt(thresholdStr, 10);
+
+    const targetValue = currentEvent?.[fieldName];
+    const count = events.filter((e) => e[fieldName] === targetValue).length;
 
     switch (operator) {
       case '>':
@@ -298,7 +320,7 @@ export async function testRule(ruleId: string, events: any[]): Promise<TestResul
           isMatch = matchRegex(event, rule.pattern_value, 'path');
           break;
         case 'threshold':
-          isMatch = matchThreshold(events, rule.pattern_value);
+          isMatch = matchThreshold(events, event, rule.pattern_value);
           break;
         case 'combination':
           isMatch = matchCombination(event, rule.pattern_value);
@@ -356,7 +378,14 @@ export async function testRule(ruleId: string, events: any[]): Promise<TestResul
   }
 }
 
-export function evaluateCustomRule(rule: CustomRule | null, event: any): boolean {
+/**
+ * `window` is the set of recent events a "threshold" rule counts against
+ * (e.g. the last 60s of project traffic) — irrelevant to the other
+ * pattern types, which only ever look at `event` itself. Defaults to
+ * empty so existing callers that only care about exact/regex/combination
+ * rules don't need to change.
+ */
+export function evaluateCustomRule(rule: CustomRule | null, event: any, window: any[] = []): boolean {
   if (!rule || !rule.enabled) return false;
 
   try {
@@ -366,8 +395,7 @@ export function evaluateCustomRule(rule: CustomRule | null, event: any): boolean
       case 'regex':
         return matchRegex(event, rule.pattern_value, 'path');
       case 'threshold':
-        // Threshold needs event collection, return false in single-event context
-        return false;
+        return matchThreshold(window, event, rule.pattern_value);
       case 'combination':
         return matchCombination(event, rule.pattern_value);
       default:

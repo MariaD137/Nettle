@@ -2,9 +2,9 @@ import { recentEvents } from "./events";
 import { createAlert, hasRecentAlert } from "./alerts";
 import type { StoredEvent, Alert } from "./types";
 import { listCustomRules, evaluateCustomRule } from "./customRules";
+import { getDetectionSettings } from "./detectionSettings";
 
 const ALERT_COOLDOWN_SECONDS = 300; // don't re-alert on an ongoing pattern every single request
-const CREDENTIAL_STUFFING_MIN_IPS = 5; // distinct IPs failing auth on one endpoint within the window
 
 const SUSPICIOUS_PATH_PATTERNS = [
   /\.\.\//, // path traversal
@@ -92,11 +92,12 @@ function suspiciousUserAgent(userAgent: string | null | undefined): boolean {
  */
 export function runDetection(projectId: string, event: StoredEvent): Alert[] {
   const alerts: Alert[] = [];
+  const settings = getDetectionSettings(projectId);
   const window = recentEvents(projectId, 60);
   const fromSameIp = window.filter((e) => e.ip === event.ip);
 
   const recentFailedAuth = fromSameIp.filter((e) => e.statusCode === 401 || e.statusCode === 403);
-  if (recentFailedAuth.length >= 5 && !hasRecentAlert(projectId, "brute-force", ALERT_COOLDOWN_SECONDS)) {
+  if (recentFailedAuth.length >= settings.bruteForceThreshold && !hasRecentAlert(projectId, "brute-force", ALERT_COOLDOWN_SECONDS)) {
     alerts.push(
       createAlert(
         projectId,
@@ -110,7 +111,7 @@ export function runDetection(projectId: string, event: StoredEvent): Alert[] {
   const lastTenSeconds = fromSameIp.filter(
     (e) => Date.now() - new Date(e.occurredAt).getTime() <= 10_000
   );
-  if (lastTenSeconds.length >= 50 && !hasRecentAlert(projectId, "high-request-rate", ALERT_COOLDOWN_SECONDS)) {
+  if (lastTenSeconds.length >= settings.highRequestRateThreshold && !hasRecentAlert(projectId, "high-request-rate", ALERT_COOLDOWN_SECONDS)) {
     alerts.push(
       createAlert(
         projectId,
@@ -191,7 +192,7 @@ export function runDetection(projectId: string, event: StoredEvent): Alert[] {
   );
   const distinctIps = new Set(sameFailedAuthPath.map((e) => e.ip));
   if (
-    distinctIps.size >= CREDENTIAL_STUFFING_MIN_IPS &&
+    distinctIps.size >= settings.credentialStuffingMinIps &&
     !hasRecentAlert(projectId, "credential-stuffing-" + event.path, ALERT_COOLDOWN_SECONDS)
   ) {
     alerts.push(
@@ -204,10 +205,13 @@ export function runDetection(projectId: string, event: StoredEvent): Alert[] {
     );
   }
 
-  // Evaluate custom rules
+  // Evaluate custom rules. The same 60s project-wide window computed above
+  // is what a "threshold" rule counts against (see evaluateCustomRule /
+  // matchThreshold in customRules.ts) — there's no per-rule window
+  // override today, so every threshold rule shares this one.
   const customRules = listCustomRules(projectId, true); // enabledOnly
   for (const rule of customRules) {
-    if (evaluateCustomRule(rule, event)) {
+    if (evaluateCustomRule(rule, event, window)) {
       const alertId = `custom-rule-${rule.id}`;
       if (!hasRecentAlert(projectId, alertId, ALERT_COOLDOWN_SECONDS)) {
         alerts.push(

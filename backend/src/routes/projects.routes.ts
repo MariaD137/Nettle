@@ -7,6 +7,7 @@ import { computeBadgeState } from "../patrol/badge";
 import { hashFinding, upsertFindingStatus, listFindingStatuses } from "../patrol/findingStatuses";
 import { listFindingHistory } from "../patrol/findingHistory";
 import { createApiKey, listApiKeys, getApiKeyRecord, updateApiKey, revokeApiKey, rotateApiKeyById } from "../patrol/apiKeys";
+import { getDetectionSettings, updateDetectionSettings, resetDetectionSettings } from "../patrol/detectionSettings";
 import { requireAuth } from "../auth/middleware";
 import { requireSubscription } from "../billing/subscription";
 import { getQuotaState } from "../billing/scanQuota";
@@ -215,6 +216,29 @@ projectsRouter.patch("/api/projects/:id/alerts/:alertId", ...paywalled, (req, re
 
   const updated = updateAlertStatus(alert.id, status);
   res.json({ alert: updated });
+});
+
+projectsRouter.get("/api/projects/:id/detection-settings", ...paywalled, (req, res) => {
+  const project = ownedProjectOr404(req, res);
+  if (!project) return;
+  res.json({ settings: getDetectionSettings(project.id) });
+});
+
+projectsRouter.patch("/api/projects/:id/detection-settings", ...paywalled, (req, res) => {
+  const project = ownedProjectOr404(req, res);
+  if (!project) return;
+  const updated = updateDetectionSettings(project.id, {
+    bruteForceThreshold: req.body?.bruteForceThreshold,
+    highRequestRateThreshold: req.body?.highRequestRateThreshold,
+    credentialStuffingMinIps: req.body?.credentialStuffingMinIps,
+  });
+  res.json({ settings: updated });
+});
+
+projectsRouter.post("/api/projects/:id/detection-settings/reset", ...paywalled, (req, res) => {
+  const project = ownedProjectOr404(req, res);
+  if (!project) return;
+  res.json({ settings: resetDetectionSettings(project.id) });
 });
 
 projectsRouter.get("/api/projects/:id/scans", ...paywalled, (req, res) => {

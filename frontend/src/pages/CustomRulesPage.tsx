@@ -281,7 +281,7 @@ function getPatternPlaceholder(type: string): string {
     case 'regex':
       return '/api/admin|/wp-admin|^/internal/';
     case 'threshold':
-      return 'ip:>10 (more than 10 requests)';
+      return 'ip:>10';
     case 'combination':
       return 'method=POST&status_code=403';
     default:
@@ -294,7 +294,7 @@ function getPatternHelp(type: string): string {
     case 'regex':
       return 'JavaScript regular expression pattern (tested against path)';
     case 'threshold':
-      return 'Format: fieldname:operator:value (e.g., count:>=10)';
+      return 'Format: field:operatorN (e.g. ip:>=10) — fires when more than N events in the last 60s share the same value for that field as the one being evaluated';
     case 'combination':
       return 'Format: field1=value1&field2=value2 (AND) or field1=value1|field2=value2 (OR)';
     default:

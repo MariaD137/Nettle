@@ -69,6 +69,7 @@ vi.mock("../api", async () => {
       createApiKey: vi.fn(),
       rotateApiKeyById: vi.fn(),
       revokeApiKey: vi.fn(),
+      getDetectionSettings: vi.fn(),
       getBadge: vi.fn(),
       badgeSvgUrl: (id: string) => `http://example.com/badge/${id}.svg`,
     },
@@ -99,6 +100,9 @@ describe("ProjectPage API keys (Settings tab)", () => {
     vi.mocked(api.createApiKey).mockReset();
     vi.mocked(api.rotateApiKeyById).mockReset();
     vi.mocked(api.revokeApiKey).mockReset();
+    vi.mocked(api.getDetectionSettings).mockReset().mockResolvedValue({
+      settings: { projectId: "proj-1", bruteForceThreshold: 5, highRequestRateThreshold: 50, credentialStuffingMinIps: 5, updatedAt: null },
+    });
   });
 
   async function openSettingsTab() {

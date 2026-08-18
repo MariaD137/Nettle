@@ -11,6 +11,9 @@ import {
   evaluateCustomRule,
   getRuleVersions,
 } from '../src/patrol/customRules';
+import { recordEvent } from '../src/patrol/events';
+import { runDetection } from '../src/patrol/detection';
+import { listAlerts } from '../src/patrol/alerts';
 
 describe('Phase 12: Custom Detection Rules', () => {
   let projectId: string;
@@ -215,6 +218,53 @@ describe('Phase 12: Custom Detection Rules', () => {
       assert.equal(evaluateCustomRule(rule!, event), false);
     });
 
+    it('should match threshold patterns against a window of events sharing the evaluated field', async () => {
+      const rule = await createCustomRule(projectId, userId, {
+        name: 'Threshold',
+        pattern_type: 'threshold',
+        pattern_value: 'ip:>=3',
+        weight: 50,
+        severity: 'high',
+      } as any);
+
+      const currentEvent = { ip: '203.0.113.9', path: '/x', status_code: 200 };
+      const windowBelowThreshold = [
+        { ip: '203.0.113.9', path: '/x', status_code: 200 },
+        { ip: '203.0.113.9', path: '/x', status_code: 200 },
+      ];
+      assert.equal(evaluateCustomRule(rule!, currentEvent, windowBelowThreshold), false, "2 matching events < 3 threshold");
+
+      const windowAtThreshold = [
+        { ip: '203.0.113.9', path: '/x', status_code: 200 },
+        { ip: '203.0.113.9', path: '/x', status_code: 200 },
+        { ip: '203.0.113.9', path: '/x', status_code: 200 },
+        { ip: '198.51.100.1', path: '/x', status_code: 200 }, // different ip — must not count
+      ];
+      assert.equal(evaluateCustomRule(rule!, currentEvent, windowAtThreshold), true, "3 matching-ip events meets the >=3 threshold");
+    });
+
+    it('threshold patterns ignore events from the window that do not share the evaluated field value', async () => {
+      const rule = await createCustomRule(projectId, userId, {
+        name: 'Threshold by path',
+        pattern_type: 'threshold',
+        pattern_value: 'path:>2',
+        weight: 50,
+        severity: 'high',
+      } as any);
+
+      const currentEvent = { path: '/login', status_code: 401 };
+      const window = [
+        { path: '/login', status_code: 401 },
+        { path: '/login', status_code: 401 },
+        { path: '/other', status_code: 401 },
+        { path: '/other', status_code: 401 },
+        { path: '/other', status_code: 401 },
+      ];
+      // Only 2 events (besides — inclusive of — the pattern's own field
+      // match count) share path "/login"; ">2" requires more than 2.
+      assert.equal(evaluateCustomRule(rule!, currentEvent, window), false);
+    });
+
     it('should match combination patterns', async () => {
       const rule = await createCustomRule(projectId, userId, {
         name: 'Combination',
@@ -346,9 +396,7 @@ describe('Phase 12: Custom Detection Rules', () => {
   });
 
   describe('Detection Pipeline Integration', () => {
-    it('should detect events using custom rules', async () => {
-      // This test would verify that custom rules are evaluated by detection.ts
-      // When a custom rule matches, it should create an alert with rule-specified severity
+    it('a matching exact/regex/combination custom rule fires a real alert via runDetection', async () => {
       const rule = await createCustomRule(projectId, userId, {
         name: 'Production Alert',
         pattern_type: 'exact',
@@ -356,9 +404,37 @@ describe('Phase 12: Custom Detection Rules', () => {
         weight: 80,
         severity: 'critical',
       } as any);
-
       assert.notEqual(rule, undefined);
-      // Would call detection pipeline and verify alert was created
+
+      const event = recordEvent(projectId, { ip: '203.0.113.70', method: 'GET', path: '/api/admin', statusCode: 200 });
+      const alerts = runDetection(projectId, event);
+
+      const hit = alerts.find((a) => a.rule === `custom-rule-${rule!.id}`);
+      assert.ok(hit, 'expected the custom rule to produce a real alert through the actual detection pipeline');
+      assert.equal(hit?.severity, 'critical');
+      assert.ok(listAlerts(projectId).some((a) => a.id === hit!.id), 'the alert should be persisted, not just returned in-memory');
+    });
+
+    it('a "threshold" custom rule — previously dead code that always returned false — now genuinely fires via runDetection', async () => {
+      const rule = await createCustomRule(projectId, userId, {
+        name: 'Same-IP flood',
+        pattern_type: 'threshold',
+        pattern_value: 'ip:>=4',
+        weight: 80,
+        severity: 'high',
+      } as any);
+      assert.notEqual(rule, undefined);
+
+      let alerts: ReturnType<typeof runDetection> = [];
+      for (let i = 0; i < 4; i++) {
+        const event = recordEvent(projectId, { ip: '203.0.113.80', method: 'GET', path: '/anything', statusCode: 200 });
+        alerts = runDetection(projectId, event);
+      }
+
+      assert.ok(
+        alerts.some((a) => a.rule === `custom-rule-${rule!.id}`),
+        'expected the threshold rule to fire once 4 same-ip events are in the window'
+      );
     });
   });
 
