@@ -1141,6 +1141,77 @@ button.destructive {
   }
 }
 
+/* First-run onboarding */
+.onboarding-shell {
+  max-width: 560px;
+  margin: 0 auto;
+  padding: 40px 20px 80px;
+}
+.onboarding-steps {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 36px;
+}
+.onboarding-step {
+  display: flex;
+}
+.step-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--line-strong);
+  display: block;
+}
+.step-dot.done {
+  background: var(--sev-good);
+}
+.step-dot.active {
+  background: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+.onboarding-skip {
+  margin-left: auto;
+}
+.onboarding-panel {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 28px 26px;
+}
+.onboarding-center {
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+.onboarding-center .nettle-logo {
+  margin-bottom: 8px;
+}
+.onboarding-lede {
+  max-width: 40ch;
+  line-height: 1.55;
+  margin: 4px 0 20px;
+}
+.onboarding-center button {
+  margin-top: 6px;
+}
+.intro-features {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  margin: 16px 0 24px;
+}
+.intro-feature strong {
+  display: block;
+  font-size: 14.5px;
+  margin-bottom: 2px;
+}
+.intro-feature p {
+  margin: 0;
+}
+
 @media (pointer: coarse) {
   button,
   .button,

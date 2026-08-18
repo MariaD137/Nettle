@@ -294,6 +294,16 @@ if (!columnExists("scans", "status")) {
   db.exec("ALTER TABLE scans ADD COLUMN status TEXT NOT NULL DEFAULT 'COMPLETED'");
 }
 
+// First-run onboarding (welcome -> product intro -> first project -> first
+// scan -> first score). NULL means the account hasn't finished or skipped
+// it yet. Backfilled to `created_at` for every account that already existed
+// when this column was introduced, so onboarding never ambushes an existing
+// customer who's been using the product for months.
+if (!columnExists("users", "onboarding_completed_at")) {
+  db.exec("ALTER TABLE users ADD COLUMN onboarding_completed_at TEXT");
+  db.exec("UPDATE users SET onboarding_completed_at = created_at WHERE onboarding_completed_at IS NULL");
+}
+
 // Phase 15: Performance Optimization — Additional Indexes
 db.exec(`
   CREATE INDEX IF NOT EXISTS idx_scans_project_status ON scans(project_id, status);

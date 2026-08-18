@@ -2,6 +2,7 @@ import { Navigate, Route, Routes } from "react-router-dom";
 import { useAuth } from "./AuthContext";
 import LoginPage from "./pages/LoginPage";
 import DashboardPage from "./pages/DashboardPage";
+import OnboardingPage from "./pages/OnboardingPage";
 import ProjectPage from "./pages/ProjectPage";
 import BillingResultPage from "./pages/BillingResultPage";
 import SettingsPage from "./pages/SettingsPage";
@@ -32,6 +33,22 @@ function PaidRoute({ children }: { children: React.ReactNode }) {
   return <>{children}</>;
 }
 
+/**
+ * The first thing a newly-paid account sees is the onboarding wizard
+ * (welcome -> product intro -> first project -> first scan -> first score),
+ * not the real dashboard — it's gated the same way the dashboard itself is
+ * (behind PaidRoute), since creating a project requires a subscription
+ * regardless, so there's nothing useful to onboard into before that.
+ * `onboardingCompletedAt` is stamped once the wizard finishes or is
+ * skipped, and every pre-existing account was backfilled with it at
+ * migration time, so this only ever shows to genuinely new accounts.
+ */
+function HomeRoute() {
+  const { user } = useAuth();
+  if (user && !user.onboardingCompletedAt) return <OnboardingPage />;
+  return <DashboardPage />;
+}
+
 export default function App() {
   return (
     <Routes>
@@ -49,7 +66,7 @@ export default function App() {
         path="/"
         element={
           <PaidRoute>
-            <DashboardPage />
+            <HomeRoute />
           </PaidRoute>
         }
       />

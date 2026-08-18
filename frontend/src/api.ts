@@ -6,6 +6,7 @@ export interface User {
   plan: string;
   stripeCustomerId: string | null;
   subscriptionStatus: string;
+  onboardingCompletedAt?: string | null;
   createdAt: string;
 }
 
@@ -238,6 +239,9 @@ export const api = {
   logout: () => request<void>("/api/auth/logout", { method: "POST" }),
 
   me: () => request<{ user: User }>("/api/auth/me"),
+
+  completeOnboarding: () =>
+    request<{ user: User }>("/api/auth/onboarding/complete", { method: "POST" }),
 
   forgotPassword: (email: string) =>
     request<{ message: string }>("/api/auth/forgot-password", {

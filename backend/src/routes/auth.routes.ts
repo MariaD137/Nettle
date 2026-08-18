@@ -7,6 +7,7 @@ import {
   updatePassword,
   updateEmail,
   deleteUser,
+  completeOnboarding,
   createPasswordResetToken,
   resolvePasswordResetToken,
   consumePasswordResetToken,
@@ -70,6 +71,12 @@ authRouter.post("/api/auth/logout", requireAuth, (req, res) => {
 
 authRouter.get("/api/auth/me", requireAuth, (req, res) => {
   const user = getUserById(req.userId!);
+  if (!user) return res.status(401).json({ error: "Invalid session" });
+  res.json({ user });
+});
+
+authRouter.post("/api/auth/onboarding/complete", requireAuth, (req, res) => {
+  const user = completeOnboarding(req.userId!);
   if (!user) return res.status(401).json({ error: "Invalid session" });
   res.json({ user });
 });

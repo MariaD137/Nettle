@@ -9,6 +9,7 @@ export interface User {
   stripeCustomerId: string | null;
   subscriptionStatus: string;
   billingAnchor: string | null;
+  onboardingCompletedAt: string | null;
   createdAt: string;
 }
 
@@ -20,6 +21,7 @@ interface UserRow {
   stripe_customer_id: string | null;
   subscription_status: string;
   billing_anchor: string | null;
+  onboarding_completed_at: string | null;
   created_at: string;
 }
 
@@ -31,6 +33,7 @@ function toUser(row: UserRow): User {
     stripeCustomerId: row.stripe_customer_id,
     subscriptionStatus: row.subscription_status,
     billingAnchor: row.billing_anchor,
+    onboardingCompletedAt: row.onboarding_completed_at,
     createdAt: row.created_at,
   };
 }
@@ -50,7 +53,16 @@ export async function createUser(email: string, password: string): Promise<User>
     passwordHash,
     createdAt
   );
-  return { id, email, plan: "free", stripeCustomerId: null, subscriptionStatus: "none", billingAnchor: null, createdAt };
+  return {
+    id,
+    email,
+    plan: "free",
+    stripeCustomerId: null,
+    subscriptionStatus: "none",
+    billingAnchor: null,
+    onboardingCompletedAt: null,
+    createdAt,
+  };
 }
 
 export async function verifyCredentials(email: string, password: string): Promise<User | null> {
@@ -86,6 +98,19 @@ export function setSubscriptionStatus(userId: string, plan: string, status: stri
       "UPDATE users SET billing_anchor = ? WHERE id = ? AND billing_anchor IS NULL"
     ).run(new Date().toISOString(), userId);
   }
+}
+
+/**
+ * Marks the first-run onboarding flow finished or skipped. Idempotent and
+ * never overwritten once set, same as the billing anchor above — a user who
+ * revisits an already-completed flow (e.g. a stale tab) shouldn't be able to
+ * reset their own completion timestamp.
+ */
+export function completeOnboarding(userId: string): User | null {
+  db.prepare(
+    "UPDATE users SET onboarding_completed_at = ? WHERE id = ? AND onboarding_completed_at IS NULL"
+  ).run(new Date().toISOString(), userId);
+  return getUserById(userId);
 }
 
 export function getUserByStripeCustomerId(stripeCustomerId: string): User | null {
