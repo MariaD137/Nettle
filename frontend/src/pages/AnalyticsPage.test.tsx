@@ -1,7 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, fireEvent } from "@testing-library/react";
 import { MemoryRouter, Routes, Route } from "react-router-dom";
 import { AnalyticsPage } from "./AnalyticsPage";
+import { ApiError } from "../api";
 
 // Regression coverage for a real crash: the backend used to send
 // model_status: null for any project with no trained ML model — the
@@ -60,6 +61,34 @@ describe("AnalyticsPage", () => {
     renderPage();
     await waitFor(() => expect(screen.getByText("Request Rate")).toBeInTheDocument());
     expect(screen.queryByText("ML Model Status")).not.toBeInTheDocument();
+  });
+
+  // Regression coverage: this page used to always show a hardcoded generic
+  // string on any failure ('Error loading analytics' / 'Failed to
+  // recalculate baselines'), discarding whatever real message the backend
+  // sent — including a paywall/permission-specific message every other
+  // page in the app correctly surfaces. It now follows the same
+  // `err instanceof ApiError ? err.message : <fallback>` convention.
+  it("shows the real backend error message on load failure instead of a hardcoded generic string", async () => {
+    vi.mocked(api.getAnalyticsDashboard).mockRejectedValue(new ApiError(402, "An active Tier 1 or Tier 2 subscription is required"));
+    renderPage();
+    await waitFor(() => expect(screen.getByText("An active Tier 1 or Tier 2 subscription is required")).toBeInTheDocument());
+  });
+
+  it("falls back to a generic message on load failure only for a non-API error", async () => {
+    vi.mocked(api.getAnalyticsDashboard).mockRejectedValue(new Error("network exploded"));
+    renderPage();
+    await waitFor(() => expect(screen.getByText("Error loading analytics")).toBeInTheDocument());
+  });
+
+  it("shows the real backend error message when recalculating baselines fails", async () => {
+    vi.mocked(api.calculateBaselines).mockRejectedValue(new ApiError(429, "Too many recalculation requests — try again later"));
+    renderPage();
+
+    const button = await screen.findByRole("button", { name: "Recalculate Baselines" });
+    fireEvent.click(button);
+
+    await waitFor(() => expect(screen.getByText("Too many recalculation requests — try again later")).toBeInTheDocument());
   });
 
   it("renders real trained-model data when a model is active", async () => {

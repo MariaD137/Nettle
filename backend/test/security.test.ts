@@ -45,6 +45,44 @@ test("C-1: symlink in archive is detected and rejected", () => {
   }
 });
 
+// Regression coverage: the symlink/path-traversal error messages used to
+// include the extraction directory's absolute path (e.g.
+// /tmp/nettle-scan-xxxxx/...), which the API surfaces verbatim to the
+// client via its `detail` field — leaking this container's temp-directory
+// naming convention. Messages are now root-relative.
+test("C-1: the rejected-symlink error message does not leak the extraction directory's absolute path", () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "symlink-leak-test-"));
+  try {
+    const testFile = path.join(tmpDir, "secret.txt");
+    fs.writeFileSync(testFile, "sensitive data");
+    const symlinkFile = path.join(tmpDir, "link.txt");
+    try {
+      fs.symlinkSync(testFile, symlinkFile);
+    } catch {
+      return;
+    }
+
+    const zipPath = path.join(tmpDir, "payload.zip");
+    execFileSync("zip", ["-q", "-y", zipPath, symlinkFile], { cwd: tmpDir });
+
+    const extractDir = fs.mkdtempSync(path.join(os.tmpdir(), "extract-leak-"));
+    try {
+      assert.throws(
+        () => safeExtractZip(zipPath, extractDir),
+        (err: Error) => {
+          assert.doesNotMatch(err.message, new RegExp(extractDir.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+          assert.match(err.message, /link\.txt/, "the relative filename should still be present for debugging");
+          return true;
+        }
+      );
+    } finally {
+      fs.rmSync(extractDir, { recursive: true, force: true });
+    }
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
 test("C-1: symlink to /etc/passwd blocked", () => {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "symlink-passwd-test-"));
   try {

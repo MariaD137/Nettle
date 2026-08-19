@@ -17,23 +17,19 @@ jobs:
   backend-quality:
     name: Backend — Lint, Test & Build
     runs-on: ubuntu-latest
-    if: |
-      github.event_name == 'push' ||
-      contains(join(github.event.pull_request.labels.*.name, ','), '') ||
-      true
     defaults:
       run:
         working-directory: backend
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: "22"
           cache: "npm"
           cache-dependency-path: backend/package-lock.json
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "3.11"
 
@@ -42,6 +38,12 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+
+      - name: Audit dependencies for known vulnerabilities
+        # high/critical only — Dependabot (.github/dependabot.yml) already
+        # opens PRs for everything else on a weekly cadence; this is the
+        # merge-blocking gate for the severities that shouldn't wait a week.
+        run: npm audit --audit-level=high
 
       - name: Lint (typecheck)
         run: npm run lint
@@ -59,9 +61,9 @@ jobs:
       run:
         working-directory: frontend
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: "22"
           cache: "npm"
@@ -69,6 +71,9 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+
+      - name: Audit dependencies for known vulnerabilities
+        run: npm audit --audit-level=high
 
       - name: Lint (typecheck)
         run: npm run lint

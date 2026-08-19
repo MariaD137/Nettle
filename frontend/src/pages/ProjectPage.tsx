@@ -13,6 +13,7 @@ import ScanProgress from "../components/ScanProgress";
 import ScoreChart, { type ScorePoint } from "../components/ScoreChart";
 import { useIsMobile } from "../useIsMobile";
 import { useScanJob } from "../useScanJob";
+import { scoreLabel, scoreBand } from "../scoreLabel";
 
 type Tab = "overview" | "scan" | "findings" | "alerts" | "history" | "settings";
 
@@ -122,9 +123,25 @@ export default function ProjectPage() {
   );
 }
 
+// Mirrors the backend's maskKey() (patrol/apiKeys.ts) so this legacy
+// project-level key gets the same visual treatment the newer per-key
+// system already uses. Unlike a rotate-if-lost named key, this one is
+// meant to be embedded in the caller's own long-lived monitoring config,
+// so it can't be "shown once and never again" without breaking that use
+// case — masking by default and revealing on demand still meaningfully
+// cuts its standing on-screen exposure (shoulder-surfing, screen shares,
+// browser history of a page that would otherwise always render it live).
+function maskProjectKey(key: string): string {
+  const withoutPrefix = key.startsWith("nettle_") ? key.slice("nettle_".length) : key;
+  if (withoutPrefix.length <= 8) return "nettle_" + "*".repeat(withoutPrefix.length);
+  return `nettle_${withoutPrefix.slice(0, 4)}…${withoutPrefix.slice(-4)}`;
+}
+
 function OverviewTab({ project, latestScan }: { project: Project; latestScan: StoredScan | null }) {
   const badgeUrl = api.badgeSvgUrl(project.id);
   const [exportError, setExportError] = useState<string | null>(null);
+  const [keyRevealed, setKeyRevealed] = useState(false);
+  const displayedKey = keyRevealed ? project.apiKey : maskProjectKey(project.apiKey);
 
   async function handleExport(scanId: string) {
     setExportError(null);
@@ -148,14 +165,23 @@ function OverviewTab({ project, latestScan }: { project: Project; latestScan: St
         <h2>Continuous monitoring</h2>
         <p className="muted">Drop this into your own Express app to start reporting live traffic:</p>
         <div className="code-snippet">
-          {`import { nettleMonitor } from "./nettleMonitor";\napp.use(nettleMonitor({ apiKey: "${project.apiKey}" }));`}
+          {`import { nettleMonitor } from "./nettleMonitor";\napp.use(nettleMonitor({ apiKey: "${displayedKey}" }));`}
         </div>
       </div>
 
       <div className="card">
         <h2>API key</h2>
         <p className="muted">Used by the monitoring middleware and to associate scans with this project.</p>
-        <div className="code-snippet">{project.apiKey}</div>
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <div className="code-snippet" style={{ flex: 1 }}>{displayedKey}</div>
+          <button
+            type="button"
+            className="small secondary"
+            onClick={() => setKeyRevealed((v) => !v)}
+          >
+            {keyRevealed ? "Hide" : "Reveal"}
+          </button>
+        </div>
       </div>
 
       {latestScan && (
@@ -302,13 +328,6 @@ function ScanTab({ project, onScanned }: { project: Project; onScanned: (badge: 
   );
 }
 
-function scoreLabel(score: number): string {
-  if (score >= 90) return "READY";
-  if (score >= 75) return "REVIEW";
-  if (score >= 50) return "NEEDS WORK";
-  return "NOT READY";
-}
-
 function ReportView({ report }: { report: ScanReport }) {
   const bySeverity = (sev: string) => report.findings.filter((f) => f.severity === sev);
   const critical = bySeverity("critical");
@@ -324,7 +343,7 @@ function ReportView({ report }: { report: ScanReport }) {
           <span className="muted">/ 100</span>
         </div>
         <div className="score-status">
-          <span className={`score-label score-${report.score >= 90 ? "ready" : report.score >= 75 ? "review" : report.score >= 50 ? "work" : "bad"}`}>
+          <span className={`score-label score-${scoreBand(report.score)}`}>
             {scoreLabel(report.score)}
           </span>
         </div>

@@ -1,5 +1,6 @@
 import { db, newId } from '../db/index';
 import { incrementCounter, Metric } from '../observability/metrics';
+import { ssrfSafeFetch, SsrfBlockedError } from '../scanner/ssrfSafeFetch';
 
 export interface WebhookConfig {
   id: string;
@@ -143,34 +144,30 @@ async function deliverWebhook(webhook: WebhookConfig, event: WebhookEvent): Prom
 
   for (let attempt = 0; attempt < maxRetries; attempt++) {
     try {
-      // Without a timeout, a receiving endpoint that accepts the connection
-      // but never responds hangs this attempt indefinitely — retries never
-      // even get a chance to run. 10s is generous for a webhook receiver
-      // while keeping each attempt's worst case bounded.
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 10_000);
-      let response: Response;
-      try {
-        response = await fetch(webhook.webhook_url, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'X-Nettle-Signature': generateSignature(event.payload),
-            'X-Nettle-Event-Type': event.event_type,
-          },
-          body: JSON.stringify({
-            id: event.id,
-            timestamp: event.created_at,
-            event_type: event.event_type,
-            data: event.payload,
-          }),
-          signal: controller.signal,
-        });
-      } finally {
-        clearTimeout(timeout);
-      }
+      // Delivered through the same SSRF-hardened client the URL scanner
+      // uses (resolves the hostname itself, validates every address
+      // against the private/reserved-range blocklist, pins the connection
+      // to the validated address, and re-validates every redirect hop) —
+      // webhook_url is customer-supplied and this request is made from
+      // Nettle's own infrastructure, exactly the SSRF shape ssrfSafeFetch
+      // exists for. Its own 10s per-attempt timeout matches what this used
+      // to configure manually via AbortController.
+      const result = await ssrfSafeFetch(webhook.webhook_url, undefined, undefined, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Nettle-Signature': generateSignature(event.payload),
+          'X-Nettle-Event-Type': event.event_type,
+        },
+        body: JSON.stringify({
+          id: event.id,
+          timestamp: event.created_at,
+          event_type: event.event_type,
+          data: event.payload,
+        }),
+      });
 
-      if (response.ok) {
+      if (result.statusCode >= 200 && result.statusCode < 300) {
         updateWebhookEventStatus(event.id, 'sent');
         return;
       }
@@ -179,7 +176,7 @@ async function deliverWebhook(webhook: WebhookConfig, event: WebhookEvent): Prom
       // wrong — a bad URL, an unauthorized endpoint, a malformed payload.
       // Retrying with backoff can't fix that; only 5xx/network failures and
       // 429 are transient enough to be worth retrying.
-      const isPermanentFailure = response.status >= 400 && response.status < 500 && response.status !== 429;
+      const isPermanentFailure = result.statusCode >= 400 && result.statusCode < 500 && result.statusCode !== 429;
 
       if (!isPermanentFailure && attempt < maxRetries - 1) {
         await new Promise(resolve => setTimeout(resolve, backoffMs[attempt]));
@@ -189,10 +186,19 @@ async function deliverWebhook(webhook: WebhookConfig, event: WebhookEvent): Prom
           WHERE id = ?
         `).run(event.id);
       } else {
-        updateWebhookEventStatus(event.id, 'failed', `HTTP ${response.status}`);
+        updateWebhookEventStatus(event.id, 'failed', `HTTP ${result.statusCode}`);
         return;
       }
     } catch (error) {
+      // A webhook pointed at a private/reserved address, a blocked
+      // hostname, or an unsupported scheme is never going to succeed on
+      // retry — treat it as permanent so a malicious or misconfigured
+      // destination doesn't get retried for a full minute.
+      if (error instanceof SsrfBlockedError) {
+        updateWebhookEventStatus(event.id, 'failed', error.message);
+        return;
+      }
+
       const errMsg = error instanceof Error ? error.message : 'Unknown error';
 
       if (attempt < maxRetries - 1) {

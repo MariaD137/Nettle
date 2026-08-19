@@ -1,6 +1,22 @@
 import { Router, Request, Response } from "express";
+import crypto from "crypto";
 import { sendDigests, type DigestPeriod } from "../patrol/digest";
 import { runRetentionCleanup } from "../patrol/retention";
+
+// Plain !== leaks how many leading bytes matched via response timing —
+// low-value against a long random secret, but free to close, so it's
+// closed. Falls back to a self-comparison of the presented value on a
+// length mismatch so the "wrong length" case doesn't short-circuit into a
+// visibly faster response than a same-length wrong guess.
+function timingSafeEqual(presented: string, expected: string): boolean {
+  const presentedBuf = Buffer.from(presented);
+  const expectedBuf = Buffer.from(expected);
+  if (presentedBuf.length !== expectedBuf.length) {
+    crypto.timingSafeEqual(presentedBuf, presentedBuf);
+    return false;
+  }
+  return crypto.timingSafeEqual(presentedBuf, expectedBuf);
+}
 
 /**
  * Triggered by something outside this process on a schedule (a hosted cron,
@@ -18,7 +34,8 @@ function requireCronSecret(req: Request, res: Response): boolean {
     res.status(503).json({ error: "Internal trigger is not configured (CRON_SECRET is unset)" });
     return false;
   }
-  if (req.get("X-Nettle-Cron-Secret") !== secret) {
+  const presented = req.get("X-Nettle-Cron-Secret");
+  if (!presented || !timingSafeEqual(presented, secret)) {
     res.status(401).json({ error: "Unauthorized" });
     return false;
   }

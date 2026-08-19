@@ -62,22 +62,26 @@ test("Phase 5: Audit report categorizes by priority", () => {
 test("Phase 5: two of three critical items genuinely PASS; C-2 honestly reports it does not", () => {
   // C-2 (worker isolation) was previously marked PASS on the strength of
   // workerIsolation.ts existing, without checking that anything actually
-  // calls it — it doesn't; the real scan pipeline runs analysis in-process,
-  // and workerIsolation.ts's own task handler is a stub. This test guards
-  // against that specific false-positive pattern recurring, not just
-  // against the count going down.
+  // calls it — it didn't; the real scan pipeline ran analysis in-process,
+  // and workerIsolation.ts's own task handler was a stub. That dead,
+  // misleading module has since been removed entirely (see
+  // jobs/scanJobs.ts's resourceLimits for the one real, partial mitigation
+  // that replaced it — a memory ceiling, not a security sandbox). This
+  // test guards against the same false-positive pattern recurring, not
+  // just against the count going down.
   const critical = getItemsByStatus("PASS").filter((i) => i.id.startsWith("C"));
 
   assert.ok(critical.length >= 2, "C-1 and C-3 should be implemented");
   assert.ok(critical.every((i) => i.testCount > 0), "Each PASS item should have tests");
   assert.ok(
     critical.every((i) => i.id !== "C-2"),
-    "C-2 must not be reported PASS while workerIsolation.ts is unwired dead code"
+    "C-2 must not be reported PASS while there is no real per-scan isolation"
   );
 
   const c2 = getItemsByStatus("FAIL").find((i) => i.id === "C-2");
   assert.ok(c2, "C-2 should be explicitly FAIL, not silently dropped");
   assert.ok(c2!.evidence.includes("not imported by the real scan pipeline"));
+  assert.ok(c2!.evidence.includes("infrastructure work"), "the evidence must point at the real (infra-level) remediation, not claim it's solved");
 });
 
 test("Phase 5: High priority items are mostly PASS", () => {

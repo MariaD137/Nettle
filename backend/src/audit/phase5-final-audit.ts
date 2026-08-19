@@ -37,13 +37,21 @@ const GAP_AUDIT: GapItem[] = [
     title: "Worker Isolation for Untrusted Input",
     description: "Sandbox untrusted code analysis in separate process",
     status: "FAIL",
-    implementedBy: ["src/scanner/workerIsolation.ts"],
+    implementedBy: [],
     evidence:
-      "workerIsolation.ts defines a WorkerPool abstraction, but it is not imported by the real scan " +
-      "pipeline (verified by repo-wide grep — its only importer is this audit file) and its task-processing " +
-      "body is a stub (\"Simulate task processing\"). Untrusted code analysis today runs in-process, not in " +
-      "an isolated worker. Re-verify after this is either wired into the real pipeline or removed as dead code.",
-    testCount: 14,
+      "workerIsolation.ts (a WorkerPool abstraction whose task-processing body was a stub — " +
+      "\"Simulate task processing\") has been removed: it was not imported by the real scan pipeline " +
+      "(verified by repo-wide grep — its only prior reference was this audit file) and its presence " +
+      "falsely implied isolation existed. The real execution path (scanner/scanWorker.ts) runs a scan " +
+      "on a worker_thread for concurrency only — worker_threads share the host process's OS-level " +
+      "privileges and are not a security boundary — while the actual work against untrusted input " +
+      "(git clone, unzip, semgrep) runs via execFileSync in the same container/filesystem/network as " +
+      "the API. A worker_thread memory ceiling (see Worker's resourceLimits in jobs/scanJobs.ts) was " +
+      "added as a real, partial resource-exhaustion mitigation — it is not sandboxing and does not " +
+      "change this item's status. Genuine isolation (a Fargate task per scan, or a purpose-built " +
+      "untrusted-code runner like e2b/Modal) is infrastructure work — see backend/README.md and " +
+      "infra/README.md's \"Known gaps\" sections. Re-verify only once real per-scan isolation exists.",
+    testCount: 0,
   },
   {
     id: "C-3",
@@ -112,10 +120,12 @@ const GAP_AUDIT: GapItem[] = [
       "build-osv-db.js now writes a metadata table (generated_at, record_count, source) alongside the " +
       "vulnerabilities table it already built. getOSVDatabaseFreshness() in osvVulnerabilities.ts reads it " +
       "and is called directly from scanOSVVulnerabilities() on every scan, so every report carries a real " +
-      "CURRENT/STALE/UNKNOWN status, database age, and record count — not the osvVersioning.ts module, which " +
-      "remains unused dead code (see its own note, if re-added to this table). The currently-bundled .db file " +
-      "pre-dates this table and correctly reports UNKNOWN rather than a fabricated freshness value until it " +
-      "is rebuilt.",
+      "CURRENT/STALE/UNKNOWN status, database age, and record count. A separate osvVersioning.ts module (an " +
+      "unused, self-contained in-memory metadata tracker, never imported by the real scan pipeline or by " +
+      "this one) has since been removed entirely as dead code — it never implemented this item and its " +
+      "removal changes nothing about the real freshness mechanism described above. The currently-bundled " +
+      ".db file pre-dates the metadata table and correctly reports UNKNOWN rather than a fabricated " +
+      "freshness value until it is rebuilt.",
     testCount: 8,
   },
   {

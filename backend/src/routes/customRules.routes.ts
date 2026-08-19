@@ -1,5 +1,5 @@
 import { Router, Request, Response } from 'express';
-import { db } from '../db/index';
+import { getOwnedProject } from '../patrol/projectAccess';
 import {
   createCustomRule,
   getCustomRule,
@@ -25,10 +25,7 @@ function verifyProjectAccess(req: Request, res: Response, next: Function) {
     return res.status(401).json({ error: 'Unauthorized' });
   }
 
-  const project = db.prepare(
-    'SELECT * FROM projects WHERE id = ? AND user_id = ?'
-  ).get(projectId, userId);
-
+  const project = getOwnedProject(projectId, userId);
   if (!project) {
     return res.status(403).json({ error: 'Forbidden' });
   }

@@ -28,3 +28,12 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
+
+  # backend/Dockerfile's base image (node:22-slim) and any other FROM
+  # images — previously not monitored at all, so a base-image CVE would
+  # only ever be caught by whatever separately scans the built image, not
+  # by Dependabot.
+  - package-ecosystem: "docker"
+    directory: "/backend"
+    schedule:
+      interval: "weekly"

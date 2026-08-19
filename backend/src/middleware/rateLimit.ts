@@ -74,8 +74,13 @@ class RateLimiter {
   }
 
   private getKey(req: Request, prefix: string): string {
-    // Use IP for unauthenticated endpoints, user ID for authenticated
-    const identifier = (req as any).user?.id || req.ip || req.socket.remoteAddress || 'unknown';
+    // Use IP for unauthenticated endpoints, user ID for authenticated —
+    // req.userId is what requireAuth/optionalAuth actually set (see
+    // auth/middleware.ts); req.user was never a real property anywhere in
+    // this codebase, so this previously always fell through to req.ip,
+    // silently limiting every authenticated user sharing an IP as if they
+    // were one caller instead of limiting each account independently.
+    const identifier = req.userId || req.ip || req.socket.remoteAddress || 'unknown';
     return `${prefix}:${identifier}`;
   }
 

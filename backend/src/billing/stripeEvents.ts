@@ -4,15 +4,42 @@ import { db, newId } from "../db/index";
 // redelivered event id must be recognized and skipped rather than
 // re-applying its side effects (a second "your payment failed" email, a
 // duplicate payment_failures row, etc).
-export function isStripeEventProcessed(eventId: string): boolean {
-  const row = db.prepare("SELECT 1 FROM stripe_events WHERE event_id = ?").get(eventId);
-  return !!row;
-}
-
-export function markStripeEventProcessed(eventId: string, eventType: string): void {
-  db.prepare(
-    "INSERT OR IGNORE INTO stripe_events (event_id, event_type, processed_at) VALUES (?, ?, ?)"
-  ).run(eventId, eventType, new Date().toISOString());
+//
+// This used to be a separate check-then-mark: isStripeEventProcessed()
+// (a SELECT) at the top of the webhook handler, then
+// markStripeEventProcessed() (an INSERT OR IGNORE) after all side effects
+// ran. That left a real TOCTOU race — two genuinely concurrent deliveries
+// of the same event id (Stripe's own docs describe redelivery as
+// plausible, and the handler itself awaits e.g. sendEmail() between the
+// check and the mark) could both pass the SELECT before either reached the
+// INSERT, both running the side effects.
+//
+// claimStripeEvent() closes that window by doing the INSERT *first*, as
+// the sole atomic operation deciding who gets to process this event — not
+// a second confirmation of a decision already made. stripe_events.event_id
+// is a PRIMARY KEY, so SQLite itself enforces that only one INSERT for a
+// given id can ever succeed; the loser gets a real constraint violation,
+// not a race-prone read. Call this once, synchronously, immediately after
+// signature verification and before any side effect or `await` — node:sqlite
+// executes each statement synchronously, so as long as nothing yields the
+// event loop between "verified" and "claimed," two concurrent requests for
+// the same event id cannot both observe "not yet claimed."
+export function claimStripeEvent(eventId: string, eventType: string): boolean {
+  try {
+    db.prepare(
+      "INSERT INTO stripe_events (event_id, event_type, processed_at) VALUES (?, ?, ?)"
+    ).run(eventId, eventType, new Date().toISOString());
+    return true;
+  } catch (err) {
+    // SQLITE_CONSTRAINT (unique/primary key violation) means another
+    // request already claimed this exact event id — a real duplicate, not
+    // an error to surface. Anything else is a genuine failure and should
+    // propagate.
+    if (err instanceof Error && /UNIQUE constraint failed|SQLITE_CONSTRAINT/i.test(err.message)) {
+      return false;
+    }
+    throw err;
+  }
 }
 
 export interface PaymentFailureRecord {

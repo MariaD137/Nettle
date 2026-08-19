@@ -235,7 +235,18 @@ static analysis over code an attacker fully controls. Before this goes
 anywhere near real traffic, extraction and scanning need to happen in an
 isolated, network-less sandbox (see the AWS architecture notes: ECS Fargate
 tasks with no NAT/egress, or a service like e2b/Modal purpose-built for
-executing untrusted code).
+executing untrusted code). A prior module (`scanner/workerIsolation.ts`)
+claimed to provide this via a worker-thread pool; it was dead code (never
+imported by the real scan pipeline) whose task handler was a stub, and has
+been removed. What actually runs today: `scanner/scanWorker.ts` executes a
+scan on a `worker_thread` for concurrency (so a slow scan doesn't block the
+HTTP event loop), with a real memory ceiling via Node's `resourceLimits`
+(`NETTLE_SCAN_WORKER_MAX_MEMORY_MB`) — a genuine but partial mitigation,
+not a security boundary, since worker_threads share the host process's
+OS-level privileges. The git clone / zip extraction / Semgrep invocation
+against untrusted input still run via `execFileSync` in the same
+container/filesystem/network as the API. Nothing in the codebase claims
+otherwise as of this note.
 
 **Billing is untested against a live Stripe account.** The webhook's
 signature verification is genuinely tested (see above), but the actual

@@ -10,9 +10,9 @@ import { findProjectByApiKeyForScope, getDecryptedRepoAccessToken } from "../pat
 import { recordScan } from "../patrol/scans";
 import { requireAuth, optionalAuth } from "../auth/middleware";
 import { requireSubscription } from "../billing/subscription";
-import { getUserById } from "../auth/users";
+import { resolveEntitlement } from "../billing/entitlement";
 import { applyScanAccess } from "../billing/scanAccess";
-import { getQuotaState, recordScanUsage } from "../billing/scanQuota";
+import { reserveScanUsage, releaseScanUsage } from "../billing/scanQuota";
 import { safeExtractZip } from "../scanner/safeExtraction";
 import { scanRateLimit } from "../middleware/rateLimit";
 import type { Request as ExpressRequest } from "express";
@@ -20,39 +20,47 @@ import type { Request as ExpressRequest } from "express";
 export const scansRouter = Router();
 
 /**
- * Refuses the scan when the billing account has used its monthly allowance.
- * Returns true when the caller should stop. Anonymous, unauthenticated scans
- * have no account to meter and are preview-only, so they pass through.
+ * Atomically reserves one unit of scan usage (see reserveScanUsage in
+ * billing/scanQuota.ts) and, if the account is metered and already at its
+ * limit, sends the 402 response itself. Anonymous, unauthenticated scans
+ * have no account to meter and are preview-only, so they always proceed.
+ *
+ * Returns the reservation's usageId so the caller can releaseScanUsage()
+ * it if the scan this was reserved for doesn't actually succeed — a failed
+ * attempt still shouldn't count against the allowance.
  */
-export function quotaExceeded(userId: string | undefined, res: Response): boolean {
-  if (!userId) return false;
-  const quota = getQuotaState(userId);
-  if (!quota || !quota.exhausted) return false;
-
-  res.status(402).json({
-    error: `You have used all ${quota.limit} scans in this billing period. Your allowance resets on ${new Date(quota.periodEnd).toLocaleDateString("en-GB")}.`,
-    quotaExceeded: true,
-    limit: quota.limit,
-    used: quota.used,
-    remaining: 0,
-    periodEnd: quota.periodEnd,
-  });
-  return true;
+export function reserveOrRespond(
+  userId: string | undefined,
+  projectId: string | null,
+  source: "upload" | "repo" | "url",
+  res: Response
+): { proceed: boolean; usageId: string | null } {
+  const { blocked, usageId, quota } = reserveScanUsage(userId, projectId, source);
+  if (blocked && quota) {
+    res.status(402).json({
+      error: `You have used all ${quota.limit} scans in this billing period. Your allowance resets on ${new Date(quota.periodEnd).toLocaleDateString("en-GB")}.`,
+      quotaExceeded: true,
+      limit: quota.limit,
+      used: quota.used,
+      remaining: 0,
+      periodEnd: quota.periodEnd,
+    });
+    return { proceed: false, usageId: null };
+  }
+  return { proceed: true, usageId };
 }
 
 /**
- * Which plan governs this scan's report. A bearer token wins; failing that,
- * an API key identifies the owning project, and that project owner's plan
- * applies — so CI runs authenticated only by a project key still get the
- * full report the account pays for.
+ * Which entitlement governs this scan's report. A bearer token wins;
+ * failing that, an API key identifies the owning project, and that project
+ * owner's entitlement applies — so CI runs authenticated only by a project
+ * key still get the full report the account pays for. Always re-resolved
+ * from the database (see resolveEntitlement) rather than trusting a value
+ * cached earlier in the request, so a lapsed subscription is honored
+ * immediately rather than on whatever refreshed req.userPlan last.
  */
-export function planForScan(req: ExpressRequest, apiKeyProjectUserId?: string): string {
-  if (req.userPlan) return req.userPlan;
-  if (apiKeyProjectUserId) {
-    const owner = getUserById(apiKeyProjectUserId);
-    if (owner) return owner.plan;
-  }
-  return "free";
+export function planForScan(req: ExpressRequest, apiKeyProjectUserId?: string) {
+  return resolveEntitlement(req.userId, apiKeyProjectUserId);
 }
 
 export const upload = multer({
@@ -60,7 +68,7 @@ export const upload = multer({
   limits: { fileSize: 25 * 1024 * 1024 }, // 25MB — plenty for source code, not for asset-heavy repos
 });
 
-scansRouter.post("/api/scans", scanRateLimit, optionalAuth, upload.single("codebase"), (req: Request, res: Response) => {
+scansRouter.post("/api/scans", optionalAuth, scanRateLimit, upload.single("codebase"), (req: Request, res: Response) => {
   if (!req.file) {
     return res.status(400).json({ error: "Upload a zip file under the 'codebase' field" });
   }
@@ -71,10 +79,13 @@ scansRouter.post("/api/scans", scanRateLimit, optionalAuth, upload.single("codeb
 
   // Resolve the billing account before doing any work — an over-quota
   // caller shouldn't get a scan run on their behalf and then be refused.
+  // reserveOrRespond reserves the usage slot atomically right here, before
+  // any of the slow extraction/scan work below — see billing/scanQuota.ts.
   const upfrontKey = req.header("x-nettle-api-key");
   const upfrontProject = upfrontKey ? findProjectByApiKeyForScope(upfrontKey, "scan") : null;
   const billedUserId = req.userId ?? upfrontProject?.userId;
-  if (quotaExceeded(billedUserId, res)) {
+  const { proceed, usageId } = reserveOrRespond(billedUserId, upfrontProject?.id ?? null, "upload", res);
+  if (!proceed) {
     fs.unlinkSync(req.file.path);
     return;
   }
@@ -98,10 +109,12 @@ scansRouter.post("/api/scans", scanRateLimit, optionalAuth, upload.single("codeb
       ownerUserId = upfrontProject.userId;
     }
 
-    if (billedUserId) recordScanUsage(billedUserId, upfrontProject?.id ?? null, "upload");
-
     res.json(applyScanAccess(report, planForScan(req, ownerUserId)));
   } catch (err) {
+    // The reserved usage slot was for a scan that didn't actually succeed
+    // — refund it, preserving "only successful scans count against quota".
+    releaseScanUsage(usageId);
+
     const msg = (err as Error).message;
     let statusCode = 422;
     let errorMsg = "Couldn't extract or scan the uploaded file";
@@ -127,7 +140,7 @@ scansRouter.post("/api/scans", scanRateLimit, optionalAuth, upload.single("codeb
 const ALLOWED_HOSTS = ["github.com", "gitlab.com", "bitbucket.org"];
 export const REPO_URL_PATTERN = /^https:\/\/(github\.com|gitlab\.com|bitbucket\.org)\/[\w.\-]+\/[\w.\-]+(\.git)?$/;
 
-scansRouter.post("/api/scans/repo", scanRateLimit, requireAuth, requireSubscription, (req: Request, res: Response) => {
+scansRouter.post("/api/scans/repo", requireAuth, requireSubscription, scanRateLimit, (req: Request, res: Response) => {
   const repoUrl = typeof req.body?.repoUrl === "string" ? req.body.repoUrl.trim() : "";
   const branch = typeof req.body?.branch === "string" ? req.body.branch.trim() : "";
   const apiKey = typeof req.body?.apiKey === "string" ? req.body.apiKey.trim() : "";
@@ -141,7 +154,8 @@ scansRouter.post("/api/scans/repo", scanRateLimit, requireAuth, requireSubscript
 
   const repoProject = apiKey ? findProjectByApiKeyForScope(apiKey, "scan") : null;
   const billedUserId = req.userId ?? repoProject?.userId;
-  if (quotaExceeded(billedUserId, res)) return;
+  const { proceed, usageId } = reserveOrRespond(billedUserId, repoProject?.id ?? null, "repo", res);
+  if (!proceed) return;
 
   // A project with a stored access token can have its private repo scanned;
   // anonymous or token-less requests still work exactly as before for
@@ -161,10 +175,10 @@ scansRouter.post("/api/scans/repo", scanRateLimit, requireAuth, requireSubscript
       ownerUserId = repoProject.userId;
     }
 
-    if (billedUserId) recordScanUsage(billedUserId, repoProject?.id ?? null, "repo");
-
     res.json(applyScanAccess(report, planForScan(req, ownerUserId)));
   } catch (err) {
+    releaseScanUsage(usageId);
+
     const msg = (err as Error).message;
     if (msg.includes("not found") || msg.includes("Could not read")) {
       return res.status(404).json({ error: "Repository not found — check the URL and make sure it's public" });
@@ -186,7 +200,7 @@ scansRouter.post("/api/scans/repo", scanRateLimit, requireAuth, requireSubscript
  * (for abuse accountability and quota metering) and an explicit ownership/
  * authorization confirmation, unlike the anonymous-friendly zip upload.
  */
-scansRouter.post("/api/scans/url", scanRateLimit, requireAuth, async (req: Request, res: Response) => {
+scansRouter.post("/api/scans/url", requireAuth, scanRateLimit, async (req: Request, res: Response) => {
   const targetUrl = typeof req.body?.url === "string" ? req.body.url.trim() : "";
   const confirmed = req.body?.confirmed === true;
 
@@ -212,7 +226,8 @@ scansRouter.post("/api/scans/url", scanRateLimit, requireAuth, async (req: Reque
   const apiKey = typeof req.body?.apiKey === "string" ? req.body.apiKey.trim() : "";
   const urlProject = apiKey ? findProjectByApiKeyForScope(apiKey, "scan") : null;
   const billedUserId = req.userId ?? urlProject?.userId;
-  if (quotaExceeded(billedUserId, res)) return;
+  const { proceed, usageId } = reserveOrRespond(billedUserId, urlProject?.id ?? null, "url", res);
+  if (!proceed) return;
 
   try {
     const report = await runUrlScan(parsed.toString());
@@ -223,10 +238,10 @@ scansRouter.post("/api/scans/url", scanRateLimit, requireAuth, async (req: Reque
       ownerUserId = urlProject.userId;
     }
 
-    if (billedUserId) recordScanUsage(billedUserId, urlProject?.id ?? null, "url");
-
     res.json(applyScanAccess(report, planForScan(req, ownerUserId)));
   } catch (err) {
+    releaseScanUsage(usageId);
+
     if (err instanceof SsrfBlockedError) {
       return res.status(400).json({ error: "That target cannot be scanned: it resolves to a private, reserved, or otherwise disallowed address" });
     }

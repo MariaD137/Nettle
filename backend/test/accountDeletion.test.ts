@@ -61,6 +61,16 @@ async function seedFullAccount(emailPrefix: string) {
     "INSERT INTO rule_test_results (id, rule_id, test_run_id, events_matched, created_at) VALUES (?, ?, ?, 1, ?)"
   ).run(newId(), ruleId, newId(), now);
 
+  // No standalone creator that doesn't also attempt a real send — same
+  // direct-insert pattern used above for ml_baselines/anomaly_scores/
+  // rule_versions/rule_test_results. Regression coverage for H-6: this
+  // table (a delivery outcome record that includes the account's real
+  // destination email/phone) was previously missing from deleteUser()'s
+  // purge list entirely.
+  db.prepare(
+    "INSERT INTO notification_deliveries (id, project_id, channel, destination, event_type, status, attempt_count, created_at) VALUES (?, ?, 'email', ?, 'scan.completed', 'sent', 1, ?)"
+  ).run(newId(), project.id, `${emailPrefix}@ops.example.com`, now);
+
   createAlert(project.id, "critical", "brute-force", "test alert");
   recordEvent(project.id, { ip: "203.0.113.1", method: "GET", path: "/", statusCode: 200 });
   const stored = recordScan(project.id, runScan(CLEAN_APP));
@@ -76,6 +86,7 @@ function countsForProject(projectId: string): Record<string, number> {
   const tables = [
     "webhooks",
     "notification_channels",
+    "notification_deliveries",
     "custom_rules",
     "api_keys",
     "detection_settings",

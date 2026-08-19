@@ -6,9 +6,9 @@ import { findProjectByApiKeyForScope, getDecryptedRepoAccessToken } from "../pat
 import { recordScan } from "../patrol/scans";
 import { requireAuth } from "../auth/middleware";
 import { applyScanAccess } from "../billing/scanAccess";
-import { recordScanUsage } from "../billing/scanQuota";
+import { releaseScanUsage } from "../billing/scanQuota";
 import { scanRateLimit } from "../middleware/rateLimit";
-import { quotaExceeded, planForScan, upload, REPO_URL_PATTERN } from "./scans.routes";
+import { reserveOrRespond, planForScan, upload, REPO_URL_PATTERN } from "./scans.routes";
 
 /**
  * The async, worker_thread-backed counterpart to the synchronous scan
@@ -52,7 +52,7 @@ function ownerCheckFailed(req: Request, res: Response, jobId: string): boolean {
   return false;
 }
 
-scanJobsRouter.post("/api/scans/jobs/upload", scanRateLimit, requireAuth, upload.single("codebase"), (req: Request, res: Response) => {
+scanJobsRouter.post("/api/scans/jobs/upload", requireAuth, scanRateLimit, upload.single("codebase"), (req: Request, res: Response) => {
   if (!req.file) {
     return res.status(400).json({ error: "Upload a zip file under the 'codebase' field" });
   }
@@ -64,7 +64,14 @@ scanJobsRouter.post("/api/scans/jobs/upload", scanRateLimit, requireAuth, upload
   const apiKey = req.header("x-nettle-api-key");
   const project = apiKey ? findProjectByApiKeyForScope(apiKey, "scan") : null;
   const billedUserId = req.userId;
-  if (quotaExceeded(billedUserId, res)) {
+  // Reserved synchronously here, before the job (whose worker runs and
+  // completes asynchronously, well after this request returns) is even
+  // created — see billing/scanQuota.ts. Recording usage only in
+  // onComplete, as this used to, left a real gap: a second job-creation
+  // request could run its own quota check before the first job's worker
+  // ever finished and recorded anything.
+  const { proceed, usageId } = reserveOrRespond(billedUserId, project?.id ?? null, "upload", res);
+  if (!proceed) {
     fs.unlinkSync(req.file.path);
     return;
   }
@@ -77,14 +84,14 @@ scanJobsRouter.post("/api/scans/jobs/upload", scanRateLimit, requireAuth, upload
       billedUserId: billedUserId ?? null,
       onComplete: (report) => {
         if (project) recordScan(project.id, report);
-        if (billedUserId) recordScanUsage(billedUserId, project?.id ?? null, "upload");
       },
+      onFailure: () => releaseScanUsage(usageId),
     }
   );
   res.status(202).json({ jobId: job.id });
 });
 
-scanJobsRouter.post("/api/scans/jobs/repo", scanRateLimit, requireAuth, (req: Request, res: Response) => {
+scanJobsRouter.post("/api/scans/jobs/repo", requireAuth, scanRateLimit, (req: Request, res: Response) => {
   const repoUrl = typeof req.body?.repoUrl === "string" ? req.body.repoUrl.trim() : "";
   const branch = typeof req.body?.branch === "string" ? req.body.branch.trim() : "";
   const apiKey = typeof req.body?.apiKey === "string" ? req.body.apiKey.trim() : "";
@@ -98,7 +105,8 @@ scanJobsRouter.post("/api/scans/jobs/repo", scanRateLimit, requireAuth, (req: Re
 
   const project = apiKey ? findProjectByApiKeyForScope(apiKey, "scan") : null;
   const billedUserId = req.userId;
-  if (quotaExceeded(billedUserId, res)) return;
+  const { proceed, usageId } = reserveOrRespond(billedUserId, project?.id ?? null, "repo", res);
+  if (!proceed) return;
 
   const repoToken = project ? getDecryptedRepoAccessToken(project.id) : null;
 
@@ -110,8 +118,8 @@ scanJobsRouter.post("/api/scans/jobs/repo", scanRateLimit, requireAuth, (req: Re
       billedUserId: billedUserId ?? null,
       onComplete: (report) => {
         if (project) recordScan(project.id, report);
-        if (billedUserId) recordScanUsage(billedUserId, project?.id ?? null, "repo");
       },
+      onFailure: () => releaseScanUsage(usageId),
     }
   );
   res.status(202).json({ jobId: job.id });

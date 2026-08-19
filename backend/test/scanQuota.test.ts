@@ -116,6 +116,36 @@ test("an unsubscribed account has no metered quota", async () => {
   assert.equal(getQuotaState(user.id), null);
 });
 
+// Regression coverage for the entitlement-drift bug: a canceled or past-due
+// account must not keep a metered paid-tier quota just because `plan` still
+// says tier1/tier2 — getQuotaState must fall back to "no metered quota"
+// (the same as a free account) the moment the subscription itself lapses.
+test("a canceled subscription loses its metered quota even though plan still says tier1/tier2", async () => {
+  const id = await subscriber("quota-canceled@example.com", "tier2");
+  assert.equal(getQuotaState(id)!.limit, SCAN_QUOTAS.tier2);
+
+  setSubscriptionStatus(id, "tier2", "canceled");
+  assert.equal(getQuotaState(id), null);
+});
+
+test("a past_due subscription loses its metered quota", async () => {
+  const id = await subscriber("quota-pastdue@example.com", "tier1");
+  assert.equal(getQuotaState(id)!.limit, SCAN_QUOTAS.tier1);
+
+  setSubscriptionStatus(id, "tier1", "past_due");
+  assert.equal(getQuotaState(id), null);
+});
+
+test("downgrading from tier2 to tier1 immediately shrinks the metered quota", async () => {
+  const id = await subscriber("quota-downgrade@example.com", "tier2");
+  assert.equal(getQuotaState(id)!.limit, SCAN_QUOTAS.tier2);
+
+  // What the customer.subscription.updated webhook does once it correctly
+  // re-derives plan from Stripe's own price instead of trusting the old one.
+  setSubscriptionStatus(id, "tier1", "active");
+  assert.equal(getQuotaState(id)!.limit, SCAN_QUOTAS.tier1);
+});
+
 test("usage is recorded even when no project is attached", async () => {
   // This is the hole the ledger exists to close: a scan run without a
   // project API key never lands in the `scans` table, so counting stored

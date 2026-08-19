@@ -29,3 +29,21 @@ export function priceIdForPlan(plan: string): string {
   if (!priceId) throw new Error(`${envVar} is not set — billing is not configured for the "${plan}" plan`);
   return priceId;
 }
+
+/**
+ * Reverse of priceIdForPlan — maps a Stripe price id back to the plan it
+ * represents, by checking it against the same configured price env vars.
+ * Used to re-derive a subscription's plan from Stripe's own state (its
+ * current price) instead of trusting a previously stored plan value, which
+ * would otherwise go stale the moment a customer upgrades or downgrades
+ * through the Stripe Customer Portal. Returns null for a price id that
+ * doesn't match any configured plan (e.g. billing not configured, or a
+ * price that predates the current STRIPE_PRICE_* values) rather than
+ * throwing — the caller decides what to do with "unknown."
+ */
+export function planForPriceId(priceId: string): string | null {
+  for (const [plan, envVar] of Object.entries(PLAN_PRICE_ENV_VARS)) {
+    if (process.env[envVar] === priceId) return plan;
+  }
+  return null;
+}

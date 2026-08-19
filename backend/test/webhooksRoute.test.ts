@@ -7,6 +7,7 @@ import { createUser } from "../src/auth/users";
 import { createSession } from "../src/auth/sessions";
 import { createProject } from "../src/patrol/projects";
 import integrationsRouter from "../src/routes/integrations.routes";
+import { limiter } from "../src/middleware/rateLimit";
 
 function listen(app: express.Express): Promise<{ server: Server; base: string }> {
   return new Promise((resolve) => {
@@ -144,6 +145,47 @@ test("DELETE /api/projects/:id/webhooks/:webhookId removes it", async () => {
 
     const list = await (await fetch(`${base}/api/projects/${projectId}/webhooks`, { headers: { Authorization: `Bearer ${token}` } })).json();
     assert.equal(list.length, 0);
+  } finally {
+    server.close();
+  }
+});
+
+// Regression coverage: webhookRateLimit was defined in middleware/rateLimit.ts
+// but never actually attached to any route — outbound webhook test delivery
+// was, in practice, unrate-limited. It's now wired into the one route that
+// triggers a real outbound request. Pre-seeding the limiter's internal
+// store (same pattern used in rateLimitScoping.test.ts) rather than firing
+// 1000+ real requests keeps this test fast.
+test("the webhook test-delivery endpoint is actually rate-limited", async () => {
+  (limiter as unknown as { store: Record<string, { count: number; resetTime: number }> }).store = {};
+
+  const app = buildApp();
+  const { server, base } = await listen(app);
+  try {
+    const user = await createUser(`webhooks-ratelimit-${counter++}@example.com`, "correct horse battery staple");
+    const token = createSession(user.id);
+    const project = createProject(user.id, "Webhook Rate Limit Test Project");
+
+    const created = await (
+      await fetch(`${base}/api/projects/${project.id}/webhooks`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ service: "generic", webhook_url: "https://example.invalid/hook", event_types: ["scan.completed"] }),
+      })
+    ).json();
+
+    // Matches RateLimiter.getKey()'s real key shape: `${prefix}:${identifier}`
+    // where webhookRateLimit's prefix is `webhook:${projectId}` and the
+    // identifier is req.userId (see middleware/rateLimit.ts).
+    (limiter as unknown as { store: Record<string, { count: number; resetTime: number }> }).store[
+      `webhook:${project.id}:${user.id}`
+    ] = { count: 1000, resetTime: Date.now() + 60_000 };
+
+    const res = await fetch(`${base}/api/projects/${project.id}/webhooks/${created.id}/test`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    assert.equal(res.status, 429);
   } finally {
     server.close();
   }

@@ -1,5 +1,6 @@
 import { Router } from "express";
-import { createProject, getProject, listProjectsByUser, updateProject, deleteProject, archiveProject, restoreProject, rotateApiKey, countProjectsByUser, setRepoAccessToken, setDefaultApiKeyValue } from "../patrol/projects";
+import { createProject, listProjectsByUser, updateProject, deleteProject, archiveProject, restoreProject, rotateApiKey, countProjectsByUser, setRepoAccessToken, setDefaultApiKeyValue } from "../patrol/projects";
+import { getOwnedProject } from "../patrol/projectAccess";
 import { MissingEncryptionKeyError } from "../security/tokenEncryption";
 import { listAlerts, getAlert, updateAlertStatus, countAlertsByStatus } from "../patrol/alerts";
 import { getAlertAnalytics } from "../patrol/alertAnalytics";
@@ -57,8 +58,8 @@ projectsRouter.get("/api/projects", ...paywalled, (req, res) => {
 });
 
 function ownedProjectOr404(req: import("express").Request, res: import("express").Response) {
-  const project = getProject(req.params.id);
-  if (!project || project.userId !== req.userId) {
+  const project = getOwnedProject(req.params.id, req.userId);
+  if (!project) {
     res.status(404).json({ error: "Project not found" });
     return null;
   }

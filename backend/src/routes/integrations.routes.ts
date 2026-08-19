@@ -1,6 +1,8 @@
 import { Router, Request, Response } from 'express';
 import { requireAuth } from '../auth/middleware';
 import { db, newId } from '../db/index';
+import { getOwnedProject } from '../patrol/projectAccess';
+import { webhookRateLimit } from '../middleware/rateLimit';
 import {
   createWebhookConfig,
   getWebhookConfigs,
@@ -27,7 +29,7 @@ router.post('/:projectId/webhooks', async (req: Request, res: Response) => {
     const userId = req.userId as string;
 
     // Verify project ownership
-    const project = db.prepare('SELECT * FROM projects WHERE id = ? AND user_id = ?').get(projectId, userId) as any;
+    const project = getOwnedProject(projectId, userId);
     if (!project) {
       return res.status(404).json({ error: 'Project not found' });
     }
@@ -58,7 +60,7 @@ router.get('/:projectId/webhooks', async (req: Request, res: Response) => {
     const userId = req.userId as string;
 
     // Verify project ownership
-    const project = db.prepare('SELECT * FROM projects WHERE id = ? AND user_id = ?').get(projectId, userId) as any;
+    const project = getOwnedProject(projectId, userId);
     if (!project) {
       return res.status(404).json({ error: 'Project not found' });
     }
@@ -78,7 +80,7 @@ router.get('/:projectId/webhooks/:webhookId', async (req: Request, res: Response
     const userId = req.userId as string;
 
     // Verify project ownership
-    const project = db.prepare('SELECT * FROM projects WHERE id = ? AND user_id = ?').get(projectId, userId) as any;
+    const project = getOwnedProject(projectId, userId);
     if (!project) {
       return res.status(404).json({ error: 'Project not found' });
     }
@@ -114,7 +116,7 @@ router.patch('/:projectId/webhooks/:webhookId', async (req: Request, res: Respon
     const userId = req.userId as string;
 
     // Verify project ownership
-    const project = db.prepare('SELECT * FROM projects WHERE id = ? AND user_id = ?').get(projectId, userId) as any;
+    const project = getOwnedProject(projectId, userId);
     if (!project) {
       return res.status(404).json({ error: 'Project not found' });
     }
@@ -164,7 +166,7 @@ router.delete('/:projectId/webhooks/:webhookId', async (req: Request, res: Respo
     const userId = req.userId as string;
 
     // Verify project ownership
-    const project = db.prepare('SELECT * FROM projects WHERE id = ? AND user_id = ?').get(projectId, userId) as any;
+    const project = getOwnedProject(projectId, userId);
     if (!project) {
       return res.status(404).json({ error: 'Project not found' });
     }
@@ -184,14 +186,18 @@ router.delete('/:projectId/webhooks/:webhookId', async (req: Request, res: Respo
   }
 });
 
-// Test webhook delivery
-router.post('/:projectId/webhooks/:webhookId/test', async (req: Request, res: Response) => {
+// Test webhook delivery. The only route in this file that actually
+// triggers a real outbound HTTP request (see integrations/webhooks.ts) —
+// webhookRateLimit was defined but never wired into any real request path
+// until now; every other route here just reads/writes config and is
+// already covered by the app-wide apiRateLimit.
+router.post('/:projectId/webhooks/:webhookId/test', webhookRateLimit, async (req: Request, res: Response) => {
   try {
     const { projectId, webhookId } = req.params;
     const userId = req.userId as string;
 
     // Verify project ownership
-    const project = db.prepare('SELECT * FROM projects WHERE id = ? AND user_id = ?').get(projectId, userId) as any;
+    const project = getOwnedProject(projectId, userId);
     if (!project) {
       return res.status(404).json({ error: 'Project not found' });
     }
@@ -227,7 +233,7 @@ router.get('/:projectId/webhooks/:webhookId/events', async (req: Request, res: R
     const limit = parseInt(req.query.limit as string) || 50;
 
     // Verify project ownership
-    const project = db.prepare('SELECT * FROM projects WHERE id = ? AND user_id = ?').get(projectId, userId) as any;
+    const project = getOwnedProject(projectId, userId);
     if (!project) {
       return res.status(404).json({ error: 'Project not found' });
     }
@@ -286,7 +292,7 @@ router.post('/:projectId/notification-channels', async (req: Request, res: Respo
     const { channel, destination, event_types } = req.body;
     const userId = req.userId as string;
 
-    const project = db.prepare('SELECT * FROM projects WHERE id = ? AND user_id = ?').get(projectId, userId) as any;
+    const project = getOwnedProject(projectId, userId);
     if (!project) {
       return res.status(404).json({ error: 'Project not found' });
     }
@@ -317,7 +323,7 @@ router.get('/:projectId/notification-channels', async (req: Request, res: Respon
     const { projectId } = req.params;
     const userId = req.userId as string;
 
-    const project = db.prepare('SELECT * FROM projects WHERE id = ? AND user_id = ?').get(projectId, userId) as any;
+    const project = getOwnedProject(projectId, userId);
     if (!project) {
       return res.status(404).json({ error: 'Project not found' });
     }
@@ -336,7 +342,7 @@ router.patch('/:projectId/notification-channels/:channelId', async (req: Request
     const { destination, event_types, is_active } = req.body;
     const userId = req.userId as string;
 
-    const project = db.prepare('SELECT * FROM projects WHERE id = ? AND user_id = ?').get(projectId, userId) as any;
+    const project = getOwnedProject(projectId, userId);
     if (!project) {
       return res.status(404).json({ error: 'Project not found' });
     }
@@ -370,7 +376,7 @@ router.delete('/:projectId/notification-channels/:channelId', async (req: Reques
     const { projectId, channelId } = req.params;
     const userId = req.userId as string;
 
-    const project = db.prepare('SELECT * FROM projects WHERE id = ? AND user_id = ?').get(projectId, userId) as any;
+    const project = getOwnedProject(projectId, userId);
     if (!project) {
       return res.status(404).json({ error: 'Project not found' });
     }

@@ -7,6 +7,7 @@ import { createProject } from "../src/patrol/projects";
 import { recordScan } from "../src/patrol/scans";
 import { createWebhookConfig } from "../src/integrations/webhooks";
 import { runScan } from "../src/scanner";
+import { db } from "../src/db";
 import path from "path";
 import crypto from "crypto";
 
@@ -52,27 +53,37 @@ function waitFor(check: () => boolean, timeoutMs = 5000): Promise<void> {
   });
 }
 
+// Regression note (C-3): this used to point a webhook at a real local HTTP
+// receiver (127.0.0.1/localhost) and assert the request actually arrived.
+// Once outbound webhook delivery was correctly routed through the
+// SSRF-hardened client (see webhookSsrf.test.ts), a loopback receiver is —
+// correctly — never reachable from that code path, the same as it wouldn't
+// be for a real customer webhook pointed at an internal address. Delivery
+// mechanics themselves (a real POST reaching a real receiver) are already
+// covered end-to-end in webhookSsrf.test.ts. What this test verifies —
+// that recordScan() actually wires up to sendWebhook() with the right
+// payload — is verified here via the row queueWebhookEvent() persists
+// *before* attempting delivery, which is deterministic and doesn't depend
+// on the delivery attempt's (now correctly-blocked) outcome.
 test("recordScan fires a scan.completed webhook to every active webhook subscribed to it", async () => {
   const user = await createUser("scan-completed-webhook@example.com", "correct horse battery staple");
   const project = createProject(user.id, "Scan Webhook Target");
-  const receiver = await startReceiver();
-  try {
-    createWebhookConfig(project.id, "generic", receiver.url, ["scan.completed"]);
+  const webhook = createWebhookConfig(project.id, "generic", "https://example.invalid/hook", ["scan.completed"]);
 
-    const report = runScan(CLEAN_APP);
-    const stored = recordScan(project.id, report);
+  const report = runScan(CLEAN_APP);
+  const stored = recordScan(project.id, report);
 
-    await waitFor(() => receiver.received().length >= 1);
+  await waitFor(() => {
+    const row = db.prepare("SELECT payload FROM webhook_events WHERE webhook_id = ?").get(webhook.id) as { payload: string } | undefined;
+    return !!row;
+  });
 
-    const delivered = receiver.received()[0];
-    assert.equal(delivered.event_type, "scan.completed");
-    assert.equal(delivered.data.scan_id, stored.id);
-    assert.equal(delivered.data.project_id, project.id);
-    assert.equal(delivered.data.score, stored.score);
-    assert.equal(delivered.data.status, stored.status);
-  } finally {
-    await receiver.close();
-  }
+  const row = db.prepare("SELECT payload FROM webhook_events WHERE webhook_id = ?").get(webhook.id) as { payload: string };
+  const payload = JSON.parse(row.payload);
+  assert.equal(payload.scan_id, stored.id);
+  assert.equal(payload.project_id, project.id);
+  assert.equal(payload.score, stored.score);
+  assert.equal(payload.status, stored.status);
 });
 
 test("recordScan does not deliver to a webhook that isn't subscribed to scan.completed", async () => {

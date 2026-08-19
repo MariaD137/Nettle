@@ -88,9 +88,12 @@ function verifyExtractedArchive(root: string, opts: Required<ExtractionConfig>):
     for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
       const full = path.join(dir, entry.name);
 
-      // Critical: reject any symlink, whether file or directory
+      // Critical: reject any symlink, whether file or directory. Message
+      // uses a root-relative path — the absolute path would leak this
+      // container's temp-directory naming convention to the client, which
+      // gets this message verbatim via the API's error `detail` field.
       if (entry.isSymbolicLink()) {
-        throw new Error(`Symlink detected in archive: ${full}`);
+        throw new Error(`Symlink detected in archive: ${path.relative(root, full)}`);
       }
 
       if (entry.isDirectory()) {
@@ -129,7 +132,11 @@ function verifyPathsWithinRoot(dir: string, expectedRoot: string): void {
     const real = fs.realpathSync(full);
 
     if (!real.startsWith(expectedRoot + path.sep) && real !== expectedRoot) {
-      throw new Error(`Path resolution attempt outside archive root: ${full} resolves to ${real}`);
+      // Root-relative for `full` (still inside the archive, safe to name);
+      // `real` resolved *outside* root by definition here, so it's named
+      // only generically — it's exactly the value a path-traversal probe
+      // is trying to learn, not just an internal detail to protect.
+      throw new Error(`Path resolution attempt outside archive root: ${path.relative(expectedRoot, full)} resolves outside the archive`);
     }
 
     if (entry.isDirectory()) {

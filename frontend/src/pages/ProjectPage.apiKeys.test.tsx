@@ -112,6 +112,27 @@ describe("ProjectPage API keys (Settings tab)", () => {
     await waitFor(() => expect(screen.getByText("API keys")).toBeInTheDocument());
   }
 
+  // Regression coverage: the legacy per-project apiKey used to always be
+  // rendered in full, plaintext, on every visit to the Overview tab —
+  // inconsistent with the newer multi-key system's masked-by-default,
+  // reveal-on-demand pattern (see the tests below this one). It can't be
+  // "shown once and never again" like a rotate-if-lost named key, since
+  // it's meant to be re-referenced for an ongoing monitoring-middleware
+  // config, but it should still be masked by default.
+  it("shows the legacy project API key masked by default on the Overview tab, with a Reveal toggle", async () => {
+    renderProjectPage();
+    await waitFor(() => expect(screen.getByText("My App")).toBeInTheDocument());
+
+    expect(screen.queryByText("nettle_default_key_value")).not.toBeInTheDocument();
+    expect(screen.getByText("nettle_defa…alue")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Reveal" }));
+    expect(screen.getByText("nettle_default_key_value")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Hide" }));
+    expect(screen.queryByText("nettle_default_key_value")).not.toBeInTheDocument();
+  });
+
   it("lists every key, masked, with scopes and last-used", async () => {
     await openSettingsTab();
 

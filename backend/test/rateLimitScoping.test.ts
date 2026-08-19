@@ -7,7 +7,8 @@ import { createUser, setSubscriptionStatus } from "../src/auth/users";
 import { createSession } from "../src/auth/sessions";
 import { scansRouter } from "../src/routes/scans.routes";
 import { authRouter } from "../src/routes/auth.routes";
-import { limiter } from "../src/middleware/rateLimit";
+import { limiter, apiRateLimit } from "../src/middleware/rateLimit";
+import { optionalAuth } from "../src/auth/middleware";
 
 // Regression coverage for a real bug: index.ts used to mount scanRateLimit
 // and publicRateLimit the same way `app.use(limiter, router)` mounts any
@@ -89,6 +90,88 @@ test("scanRateLimit still applies to the scan routes it's meant for", async () =
       assert.equal(res.status, 400);
     }
     assert.ok(sawRateLimited, "scanRateLimit should still kick in on the 31st real scan-submission request");
+  } finally {
+    server.close();
+  }
+});
+
+// Regression coverage for M-1: RateLimiter.getKey() used to read
+// `(req as any).user?.id`, a property nothing in this codebase ever sets
+// (only req.userId exists) — so it silently fell back to req.ip for every
+// request, meaning two different authenticated accounts sharing an IP
+// (a NAT'd office, a shared proxy — or, as here, two callers hitting the
+// same test server, which is indistinguishable from that case at the IP
+// level) shared ONE rate-limit budget instead of getting one each.
+test("two different authenticated users sharing the same client IP get independent scanRateLimit budgets", async () => {
+  (limiter as unknown as { store: Record<string, unknown> }).store = {};
+
+  const app = buildApp();
+  const { server, base } = await listen(app);
+  try {
+    const userA = await createUser("ratelimit-peruser-a@example.com", "correct horse battery staple");
+    setSubscriptionStatus(userA.id, "tier1", "active");
+    const tokenA = createSession(userA.id);
+
+    const userB = await createUser("ratelimit-peruser-b@example.com", "correct horse battery staple");
+    setSubscriptionStatus(userB.id, "tier1", "active");
+    const tokenB = createSession(userB.id);
+
+    // Every request in this test goes to the same loopback test server, so
+    // both users share the same req.ip — the only thing that can still
+    // separate their budgets is being keyed by req.userId.
+    for (let i = 0; i < 30; i++) {
+      const res = await fetch(`${base}/api/scans/repo`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${tokenA}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ repoUrl: "not-a-valid-url" }),
+      });
+      assert.equal(res.status, 400, `user A's request ${i + 1}/30 should not be rate-limited yet`);
+    }
+
+    // User A is now at their 30/30 budget. If keying were still per-IP,
+    // this next request — a completely different account — would already
+    // be rate-limited too.
+    const userBFirstRequest = await fetch(`${base}/api/scans/repo`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${tokenB}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ repoUrl: "not-a-valid-url" }),
+    });
+    assert.equal(userBFirstRequest.status, 400, "user B must have their own, untouched rate-limit budget");
+
+    // And user A's own next request should now be the one that's limited.
+    const userANextRequest = await fetch(`${base}/api/scans/repo`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${tokenA}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ repoUrl: "not-a-valid-url" }),
+    });
+    assert.equal(userANextRequest.status, 429, "user A should be rate-limited on their own 31st request");
+  } finally {
+    server.close();
+  }
+});
+
+test("an unauthenticated caller still gets a real per-IP rate limit (falls back correctly, isn't left unlimited)", async () => {
+  (limiter as unknown as { store: Record<string, unknown> }).store = {};
+
+  const app = express();
+  app.use(express.json());
+  app.use(optionalAuth);
+  app.use(apiRateLimit);
+  app.use(authRouter);
+  const { server, base } = await listen(app);
+  try {
+    let sawRateLimited = false;
+    for (let i = 0; i < 501; i++) {
+      // /api/auth/me with no Authorization header is a cheap, unauthenticated
+      // request that still passes through the real apiRateLimit middleware.
+      const res = await fetch(`${base}/api/auth/me`);
+      if (res.status === 429) {
+        sawRateLimited = true;
+        break;
+      }
+      assert.equal(res.status, 401);
+    }
+    assert.ok(sawRateLimited, "an unauthenticated caller must still be rate-limited by IP, not left unbounded");
   } finally {
     server.close();
   }

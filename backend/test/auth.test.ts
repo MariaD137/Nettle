@@ -34,6 +34,32 @@ test("verifyCredentials returns null for an unknown email or wrong password", as
   assert.equal(await verifyCredentials("known@example.com", "wrong password"), null);
 });
 
+// Regression coverage: verifyCredentials used to return immediately for an
+// unknown email (no row to run scrypt against), while a known email always
+// paid the real scrypt cost first — a real, if narrow, account-enumeration
+// timing gap. Both paths now run scrypt unconditionally (against a dummy
+// hash when there's no real one). This doesn't assert exact timing
+// equality (too flaky under real scheduler noise) — it asserts an unknown
+// email takes genuinely scrypt-costly time, not near-instant time, which
+// is the actual property that closes the gap.
+test("checking an unknown email pays the same real password-hashing cost as a known one, not a near-instant rejection", async () => {
+  await createUser("timing-known@example.com", "correct horse battery staple");
+
+  const start = process.hrtime.bigint();
+  await verifyCredentials("timing-unknown@example.com", "anything");
+  const unknownMs = Number(process.hrtime.bigint() - start) / 1_000_000;
+
+  const start2 = process.hrtime.bigint();
+  await verifyCredentials("timing-known@example.com", "wrong password");
+  const knownMs = Number(process.hrtime.bigint() - start2) / 1_000_000;
+
+  // A near-instant rejection (no scrypt run) would be well under 1ms; a
+  // real scrypt derivation is reliably several ms even on fast hardware.
+  // This is a floor, not a timing-equality assertion.
+  assert.ok(unknownMs > 1, `unknown-email check should run real scrypt, took ${unknownMs}ms`);
+  assert.ok(knownMs > 1, `known-email check should run real scrypt, took ${knownMs}ms`);
+});
+
 test("full HTTP flow: signup, then me, then logout, then me fails", async () => {
   const app = express();
   app.use(express.json());

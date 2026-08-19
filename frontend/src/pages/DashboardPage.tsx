@@ -7,13 +7,7 @@ import NettleLogo from "../components/NettleLogo";
 import { AppBar, BottomNav, Icons, type TabItem } from "../components/MobileChrome";
 import { useIsMobile } from "../useIsMobile";
 import { useNavigate } from "react-router-dom";
-
-function scoreLabel(score: number): string {
-  if (score >= 90) return "READY";
-  if (score >= 75) return "REVIEW";
-  if (score >= 50) return "NEEDS WORK";
-  return "NOT READY";
-}
+import { scoreLabel } from "../scoreLabel";
 
 export default function DashboardPage() {
   const { user, logout } = useAuth();

@@ -4,6 +4,7 @@ import { useAuth } from "../AuthContext";
 import NettleLogo from "../components/NettleLogo";
 import ScanProgress from "../components/ScanProgress";
 import { useScanJob } from "../useScanJob";
+import { scoreLabel, scoreBand } from "../scoreLabel";
 
 type Step = "welcome" | "intro" | "project" | "scan" | "score";
 const STEPS: Step[] = ["welcome", "intro", "project", "scan", "score"];
@@ -327,13 +328,6 @@ function ScanStep({
   );
 }
 
-function scoreLabel(score: number): string {
-  if (score >= 90) return "READY";
-  if (score >= 75) return "REVIEW";
-  if (score >= 50) return "NEEDS WORK";
-  return "NOT READY";
-}
-
 function ScoreStep({ onFinish, finishing }: { onFinish: () => void; finishing: boolean }) {
   const [report, setReport] = useState<ScanReport | null>(null);
 
@@ -358,9 +352,7 @@ function ScoreStep({ onFinish, finishing }: { onFinish: () => void; finishing: b
               <span className="score-num">{report.score}</span>
               <span className="muted">/ 100</span>
             </div>
-            <span
-              className={`score-label score-${report.score >= 90 ? "ready" : report.score >= 75 ? "review" : report.score >= 50 ? "work" : "bad"}`}
-            >
+            <span className={`score-label score-${scoreBand(report.score)}`}>
               {scoreLabel(report.score)}
             </span>
           </div>

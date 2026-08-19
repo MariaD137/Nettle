@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
-import { api } from '../api';
+import { api, ApiError } from '../api';
 import './AnalyticsPage.css';
 
 interface Baseline {
@@ -63,7 +63,7 @@ export function AnalyticsPage() {
       setData(dashData);
       setBaselines(baselinesData.baselines || []);
     } catch (err) {
-      setError('Error loading analytics');
+      setError(err instanceof ApiError ? err.message : 'Error loading analytics');
     } finally {
       setLoading(false);
     }
@@ -75,7 +75,7 @@ export function AnalyticsPage() {
       await api.calculateBaselines(projectId!, 24);
       loadDashboard();
     } catch (err) {
-      setError('Failed to recalculate baselines');
+      setError(err instanceof ApiError ? err.message : 'Failed to recalculate baselines');
     } finally {
       setRecalculating(false);
     }

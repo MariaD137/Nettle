@@ -8,6 +8,7 @@ import {
   getAnomalies,
 } from '../patrol/mlAnalytics';
 import { requireAuth } from '../auth/middleware';
+import { getOwnedProject } from '../patrol/projectAccess';
 
 const router = Router();
 
@@ -20,10 +21,7 @@ function verifyProjectAccess(req: Request, res: Response, next: Function) {
     return res.status(401).json({ error: 'Unauthorized' });
   }
 
-  const project = db.prepare(
-    'SELECT * FROM projects WHERE id = ? AND user_id = ?'
-  ).get(projectId, userId);
-
+  const project = getOwnedProject(projectId, userId);
   if (!project) {
     return res.status(403).json({ error: 'Forbidden' });
   }

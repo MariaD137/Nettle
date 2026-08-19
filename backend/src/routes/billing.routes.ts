@@ -1,10 +1,11 @@
 import { Router, raw } from "express";
-import { getStripeClient, priceIdForPlan } from "../billing/stripeClient";
+import { getStripeClient, priceIdForPlan, planForPriceId } from "../billing/stripeClient";
 import { requireAuth } from "../auth/middleware";
 import { getUserById, setStripeCustomerId, setSubscriptionStatus, getUserByStripeCustomerId } from "../auth/users";
-import { isStripeEventProcessed, markStripeEventProcessed, recordPaymentFailure, getPaymentFailures } from "../billing/stripeEvents";
+import { claimStripeEvent, recordPaymentFailure, getPaymentFailures } from "../billing/stripeEvents";
 import { sendEmail } from "../integrations/email";
 import { incrementCounter, Metric } from "../observability/metrics";
+import { recordOpsFailure } from "../observability/opsAlert";
 import type Stripe from "stripe";
 
 // Split in two deliberately: the webhook needs the exact raw request bytes
@@ -79,6 +80,13 @@ billingWebhookRouter.post("/api/billing/webhook", raw({ type: "application/json"
 
   if (!signature || !webhookSecret) {
     incrementCounter(Metric.StripeWebhookFailures);
+    // A missing signature header is normal background noise (bots probing
+    // the endpoint); a missing *webhook secret* means billing is
+    // misconfigured in this environment and every real Stripe event is
+    // silently failing — recordOpsFailure's threshold means isolated noise
+    // doesn't page anyone, but a sustained run of these (which is what a
+    // missing-secret misconfiguration looks like) does.
+    recordOpsFailure("stripe_webhook_failures", "Stripe webhook requests are failing signature/secret checks");
     return res.status(400).json({ error: "Missing signature or webhook secret not configured" });
   }
 
@@ -88,14 +96,18 @@ billingWebhookRouter.post("/api/billing/webhook", raw({ type: "application/json"
     event = stripe.webhooks.constructEvent(req.body, signature, webhookSecret);
   } catch (err) {
     incrementCounter(Metric.StripeWebhookFailures);
+    recordOpsFailure("stripe_webhook_failures", "Stripe webhook requests are failing signature verification");
     return res.status(400).json({ error: `Webhook signature verification failed: ${(err as Error).message}` });
   }
 
   // Stripe redelivers webhooks (at-least-once delivery is documented
   // behavior, not an edge case) — without this, a redelivered
   // invoice.payment_failed would send the customer a second "payment
-  // failed" email for the exact same invoice.
-  if (isStripeEventProcessed(event.id)) {
+  // failed" email for the exact same invoice. claimStripeEvent() is a
+  // single atomic INSERT (see stripeEvents.ts) — called here, synchronously,
+  // before any side effect or `await` below, so two genuinely concurrent
+  // deliveries of the same event id can't both proceed past this point.
+  if (!claimStripeEvent(event.id, event.type)) {
     return res.json({ received: true, duplicate: true });
   }
 
@@ -117,7 +129,29 @@ billingWebhookRouter.post("/api/billing/webhook", raw({ type: "application/json"
         const user = getUserByStripeCustomerId(subscription.customer);
         if (user) {
           const status = event.type === "customer.subscription.deleted" ? "canceled" : subscription.status;
-          setSubscriptionStatus(user.id, user.plan, status);
+
+          // A subscription that's gone for good must not leave a stale paid
+          // plan sitting on the account forever — there's nothing left to
+          // re-derive it from, and the account should read as "free" going
+          // forward, matching the product's cancellation policy.
+          const TERMINAL_STATUSES = new Set(["canceled", "incomplete_expired"]);
+          let plan = user.plan;
+          if (TERMINAL_STATUSES.has(status)) {
+            plan = "free";
+          } else {
+            // Re-derive the plan from Stripe's own current price rather
+            // than trusting the previously stored value. This event fires
+            // for a self-service upgrade or downgrade through the Customer
+            // Portal too — trusting the old plan here is exactly how an
+            // account keeps Tier 2 access forever after downgrading to
+            // Tier 1 (or losing access after upgrading, in the other
+            // direction).
+            const priceId = subscription.items.data[0]?.price?.id;
+            const derivedPlan = priceId ? planForPriceId(priceId) : null;
+            if (derivedPlan) plan = derivedPlan;
+          }
+
+          setSubscriptionStatus(user.id, plan, status);
         }
       }
       break;
@@ -152,6 +186,7 @@ billingWebhookRouter.post("/api/billing/webhook", raw({ type: "application/json"
     }
   }
 
-  markStripeEventProcessed(event.id, event.type);
+  // The event was already atomically claimed above, before any of the side
+  // effects in the switch ran — nothing left to mark here.
   res.json({ received: true });
 });

@@ -1,3 +1,8 @@
+# NOTE: this workflow's steps (checkout, setup-node, npm ci, lint, test,
+# build) are identical to ci.yml's frontend-quality job — every PR touching
+# frontend/** currently runs both. Not consolidated in this pass: see the
+# same note in backend-ci.yml about verifying branch-protection
+# required-status-check names before removing either.
 name: Frontend CI
 
 on:
@@ -9,6 +14,9 @@ on:
     paths:
       - "frontend/**"
 
+permissions:
+  contents: read
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -16,8 +24,8 @@ jobs:
       run:
         working-directory: frontend
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: "22"
           cache: "npm"

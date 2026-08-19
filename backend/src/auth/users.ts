@@ -103,11 +103,18 @@ export async function createUser(email: string, password: string): Promise<User>
   };
 }
 
+// Used only when no account matches the given email, so verifyCredentials
+// below still pays the real scrypt cost either way — otherwise an unknown
+// email returns near-instantly while a known one takes the full hash time,
+// and that timing difference alone reveals which emails are registered.
+// The value itself is arbitrary; it just needs the same salt:hash shape a
+// real stored hash has and will never validly match any real password.
+const DUMMY_PASSWORD_HASH = `${"a".repeat(32)}:${"b".repeat(128)}`;
+
 export async function verifyCredentials(email: string, password: string): Promise<User | null> {
   const row = db.prepare("SELECT * FROM users WHERE email = ?").get(email) as UserRow | undefined;
-  if (!row) return null;
-  const valid = await verifyPassword(password, row.password_hash);
-  return valid ? toUser(row) : null;
+  const valid = await verifyPassword(password, row?.password_hash ?? DUMMY_PASSWORD_HASH);
+  return row && valid ? toUser(row) : null;
 }
 
 export function getUserById(id: string): User | null {
@@ -239,10 +246,16 @@ export function updateEmail(userId: string, newEmail: string): User | null {
  * Every table with a project_id/user_id foreign key back to this account
  * gets purged here — this list has drifted behind new feature tables
  * before (webhooks, notification channels, custom rules, api_keys,
- * detection_settings, finding_history, the ml_* tables, and scan_usage
- * were all added without ever being added here), leaving orphaned rows in
- * the database after "deletion". When adding a new table keyed off
- * project_id or user_id, add its purge here too.
+ * detection_settings, finding_history, the ml_* tables, scan_usage, and
+ * notification_deliveries were all added without ever being added here),
+ * leaving orphaned rows — including, for notification_deliveries, a
+ * deleted account's real destination email/phone — in the database after
+ * "deletion". When adding a new table keyed off project_id or user_id, add
+ * its purge here too. (Cross-checked against every CREATE TABLE in
+ * db/index.ts as of this comment: the only tables intentionally excluded
+ * are `users` itself, deleted last below, and `stripe_events`, which has
+ * no user/project ownership at all — it's a global Stripe event-id dedup
+ * table, not account data.)
  */
 export function deleteUser(userId: string): void {
   db.prepare("DELETE FROM password_resets WHERE user_id = ?").run(userId);
@@ -259,6 +272,7 @@ export function deleteUser(userId: string): void {
     }
     db.prepare("DELETE FROM webhooks WHERE project_id = ?").run(p.id);
     db.prepare("DELETE FROM notification_channels WHERE project_id = ?").run(p.id);
+    db.prepare("DELETE FROM notification_deliveries WHERE project_id = ?").run(p.id);
 
     const ruleIds = db.prepare("SELECT id FROM custom_rules WHERE project_id = ?").all(p.id) as unknown as { id: string }[];
     for (const r of ruleIds) {

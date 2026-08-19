@@ -164,13 +164,21 @@ export interface SafeFetchResult {
  * gate — resolveAndValidate above is what actually enforces safety, and
  * it's tested separately (see ssrfSafeFetch.test.ts).
  */
+export interface RequestOptions {
+  method?: string;
+  headers?: Record<string, string>;
+  body?: string;
+}
+
 export async function performValidatedRequest(
   url: URL,
   address: string,
-  family: 4 | 6
+  family: 4 | 6,
+  options: RequestOptions = {}
 ): Promise<{ res: IncomingMessage; body: string }> {
   const isHttps = url.protocol === "https:";
   const client = isHttps ? https : http;
+  const method = options.method ?? "GET";
 
   return new Promise<{ res: IncomingMessage; body: string }>((resolve, reject) => {
     const req = client.request(
@@ -182,10 +190,10 @@ export async function performValidatedRequest(
         family,
         servername: isHttps ? url.hostname : undefined,
         setHost: false,
-        headers: { Host: url.hostname },
+        headers: { Host: url.hostname, ...options.headers },
         port: url.port || (isHttps ? 443 : 80),
         path: url.pathname + url.search,
-        method: "GET",
+        method,
         timeout: REQUEST_TIMEOUT_MS,
         // Custom lookup pins DNS to the address we already validated,
         // so nothing re-resolves (and potentially rebinds) after the fact.
@@ -212,6 +220,7 @@ export async function performValidatedRequest(
       req.destroy(new Error(`Request timed out after ${REQUEST_TIMEOUT_MS}ms`));
     });
     req.on("error", reject);
+    if (options.body) req.write(options.body);
     req.end();
   });
 }
@@ -239,11 +248,18 @@ function extractTls(res: IncomingMessage, isHttps: boolean): SafeFetchResult["tl
  * validated address, follows redirects (re-validating each hop through
  * the exact same gate, since this just calls itself), and enforces
  * size/time limits.
+ *
+ * `options` defaults to a plain GET (the URL-scanner's use case). Passing
+ * `{ method: "POST", headers, body }` is what makes this safe to reuse for
+ * outbound webhook delivery too — same DNS-rebinding-safe resolution,
+ * same redirect re-validation, same timeout/size caps, just a different
+ * HTTP method and a request body.
  */
 export async function ssrfSafeFetch(
   targetUrl: string,
   redirectsLeft = MAX_REDIRECTS,
-  chainSoFar: string[] = []
+  chainSoFar: string[] = [],
+  options: RequestOptions = {}
 ): Promise<SafeFetchResult> {
   const url = new URL(targetUrl);
   if (url.protocol !== "http:" && url.protocol !== "https:") {
@@ -253,13 +269,13 @@ export async function ssrfSafeFetch(
   const { address, family } = await resolveAndValidate(url.hostname);
   const isHttps = url.protocol === "https:";
 
-  const { res, body } = await performValidatedRequest(url, address, family);
+  const { res, body } = await performValidatedRequest(url, address, family, options);
   const statusCode = res.statusCode ?? 0;
   const tls = extractTls(res, isHttps);
 
   if (statusCode >= 300 && statusCode < 400 && res.headers.location && redirectsLeft > 0) {
     const nextUrl = new URL(res.headers.location, url).toString();
-    return ssrfSafeFetch(nextUrl, redirectsLeft - 1, [...chainSoFar, url.toString()]);
+    return ssrfSafeFetch(nextUrl, redirectsLeft - 1, [...chainSoFar, url.toString()], options);
   }
   if (statusCode >= 300 && statusCode < 400 && redirectsLeft <= 0) {
     throw new SsrfBlockedError(`Too many redirects while fetching ${targetUrl}`);

@@ -49,6 +49,13 @@ interface ScanJobMeta {
   projectId: string | null;
   billedUserId: string | null;
   onComplete?: (report: ScanReport) => void;
+  // Fired for a "failed" or "cancelled" terminal state (never "completed").
+  // Exists so a caller that reserved something up front (e.g. scan quota
+  // usage, see scanJobs.routes.ts) can release it when the job doesn't
+  // actually succeed — quota is metered per successful scan, and a job
+  // can fail or be cancelled long after it was created, well outside the
+  // request that created it.
+  onFailure?: () => void;
 }
 
 interface InternalJob {
@@ -137,13 +144,31 @@ function tryDequeue() {
   }
 }
 
+// A worker_thread's memory ceiling — real and enforced by V8/Node, but a
+// resource-exhaustion mitigation, not a security sandbox: worker_threads
+// share the host process's OS-level privileges (same filesystem, same
+// network, same user), so this bounds how much memory one runaway scan can
+// consume, nothing more. Genuine per-scan isolation (a Fargate task per
+// scan, or a purpose-built untrusted-code runner) is real infrastructure
+// work — see backend/README.md and infra/README.md's "Known gaps".
+function workerMemoryLimitMb(): number {
+  const raw = process.env.NETTLE_SCAN_WORKER_MAX_MEMORY_MB;
+  const n = raw ? parseInt(raw, 10) : 512;
+  return Number.isFinite(n) && n > 0 ? n : 512;
+}
+
 function startJob(job: InternalJob) {
   runningCount++;
   job.status = "running";
   job.startedAt = new Date().toISOString();
 
   const { file, execArgv } = workerEntry();
-  const worker = new Worker(file, { execArgv, workerData: job.input });
+  const memoryLimitMb = workerMemoryLimitMb();
+  const worker = new Worker(file, {
+    execArgv,
+    workerData: job.input,
+    resourceLimits: { maxOldGenerationSizeMb: memoryLimitMb, maxYoungGenerationSizeMb: Math.min(64, memoryLimitMb) },
+  });
   job.worker = worker;
 
   worker.on("message", (message: ScanWorkerMessage) => {
@@ -221,6 +246,9 @@ function finishJob(job: InternalJob, status: "completed" | "failed" | "cancelled
   }
   if (status === "completed" && outcome.report && job.meta.onComplete) {
     job.meta.onComplete(outcome.report);
+  }
+  if ((status === "failed" || status === "cancelled") && job.meta.onFailure) {
+    job.meta.onFailure();
   }
   tryDequeue();
 }

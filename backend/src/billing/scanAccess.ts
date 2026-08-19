@@ -1,8 +1,7 @@
 import type { Finding, ScanReport, ScanAccess, Severity } from "../scanner/types";
+import { hasFullScanAccess, type EntitlementInput } from "./entitlement";
 
-// Plans that unlock the complete report. Everything else — including
-// logged-out one-off scans — gets the preview.
-const FULL_ACCESS_PLANS = new Set(["tier1", "tier2"]);
+export { hasFullScanAccess };
 
 // How many findings a preview reveals in full. Deliberately small but not
 // zero: the point is to prove the scan found real, specific problems, not to
@@ -16,10 +15,6 @@ const SEVERITY_RANK: Record<Severity, number> = {
   low: 3,
   info: 4,
 };
-
-export function hasFullScanAccess(plan: string | null | undefined): boolean {
-  return FULL_ACCESS_PLANS.has(plan ?? "free");
-}
 
 function fullAccess(total: number): ScanAccess {
   return {
@@ -47,11 +42,13 @@ function previewAccess(total: number, visible: number): ScanAccess {
 }
 
 /**
- * Trims a report down to what the given plan is entitled to see.
+ * Trims a report down to what the given entitlement is allowed to see.
  *
  * The stored report is always the complete one — redaction happens here, at
  * the response boundary, so that upgrading retroactively unlocks scans that
- * were run while the account was still on the free plan.
+ * were run while the account was still on the free plan (and, symmetrically,
+ * so that a lapsed subscription immediately stops seeing full reports on the
+ * next request, with no separate revocation step needed).
  *
  * A preview keeps everything that describes the *shape* of the problem —
  * score, per-severity counts, passed checks — and reveals the few most
@@ -59,10 +56,10 @@ function previewAccess(total: number, visible: number): ScanAccess {
  * returned with blanked-out fields, so a preview response never ships
  * details the caller hasn't paid for.
  */
-export function applyScanAccess(report: ScanReport, plan: string | null | undefined): ScanReport {
+export function applyScanAccess(report: ScanReport, entitlement: EntitlementInput): ScanReport {
   const total = report.findings.length;
 
-  if (hasFullScanAccess(plan)) {
+  if (hasFullScanAccess(entitlement)) {
     return { ...report, access: fullAccess(total) };
   }
 
@@ -81,8 +78,8 @@ export function applyScanAccess(report: ScanReport, plan: string | null | undefi
  * Preview-safe version of a standalone finding list (scan comparisons), which
  * has no surrounding report to carry the access block.
  */
-export function limitFindings(findings: Finding[], plan: string | null | undefined): Finding[] {
-  if (hasFullScanAccess(plan)) return findings;
+export function limitFindings(findings: Finding[], entitlement: EntitlementInput): Finding[] {
+  if (hasFullScanAccess(entitlement)) return findings;
   return [...findings]
     .sort((a, b) => SEVERITY_RANK[a.severity] - SEVERITY_RANK[b.severity])
     .slice(0, PREVIEW_FINDING_LIMIT);
