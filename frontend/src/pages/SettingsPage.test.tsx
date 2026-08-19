@@ -150,3 +150,20 @@ describe("SettingsPage email verification notice", () => {
     );
   });
 });
+
+describe("SettingsPage desktop topbar", () => {
+  beforeEach(() => {
+    mockUser = baseUser;
+    logout.mockReset();
+    vi.mocked(api.listSessions).mockReset().mockResolvedValue({ sessions: [] });
+  });
+
+  it("has a working Log out button, matching Dashboard's desktop topbar", async () => {
+    renderPage();
+
+    const button = await screen.findByRole("button", { name: "Log out" });
+    fireEvent.click(button);
+
+    expect(logout).toHaveBeenCalled();
+  });
+});

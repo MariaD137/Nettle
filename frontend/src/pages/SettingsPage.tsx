@@ -65,7 +65,12 @@ export default function SettingsPage() {
     <div className="shell">
       <div className="topbar">
         <Link to="/" className="brand"><NettleLogo size={22} title="" />nettle</Link>
-        <span className="muted">{user?.email}</span>
+        <div className="topbar-right">
+          <span className="muted">{user?.email}</span>
+          <button className="secondary" onClick={() => logout()}>
+            Log out
+          </button>
+        </div>
       </div>
 
       <h1>Settings</h1>
