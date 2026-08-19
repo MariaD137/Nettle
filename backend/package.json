@@ -7,11 +7,12 @@
     "nettle-local": "bin/nettle.js"
   },
   "scripts": {
-    "build": "tsc && mkdir -p dist/scanner/semgrep-rules dist/scanner/osv-data && cp src/scanner/semgrep-rules/*.yaml dist/scanner/semgrep-rules/ && cp src/scanner/osv-data/*.db dist/scanner/osv-data/",
+    "build": "tsc && mkdir -p dist/scanner/semgrep-rules dist/scanner/osv-data dist/db/postgres/migrations && cp src/scanner/semgrep-rules/*.yaml dist/scanner/semgrep-rules/ && cp src/scanner/osv-data/*.db dist/scanner/osv-data/ && cp src/db/postgres/migrations/*.sql dist/db/postgres/migrations/",
     "dev": "tsx watch src/index.ts",
     "start": "node dist/index.js",
     "test": "NETTLE_DB_PATH=:memory: node --import tsx --test test/*.test.ts",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "db:migrate:postgres": "tsx src/db/postgres/migrate.ts"
   },
   "dependencies": {
     "@types/geoip-lite": "^1.4.4",
@@ -21,6 +22,7 @@
     "geoip-lite": "^1.4.10",
     "multer": "^2.0.0",
     "nodemailer": "^9.0.5",
+    "pg": "^8.23.0",
     "stripe": "^22.3.2"
   },
   "devDependencies": {
@@ -28,6 +30,7 @@
     "@types/express": "^4.17.21",
     "@types/multer": "^1.4.11",
     "@types/node": "^22.10.0",
+    "@types/pg": "^8.23.1",
     "smtp-server": "^3.19.3",
     "tsx": "^4.19.0",
     "typescript": "^5.6.0"
