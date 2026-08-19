@@ -4,10 +4,15 @@ import { db, newId } from '../src/db/index';
 import { scanRateLimit, publicRateLimit, apiRateLimit, limiter } from '../src/middleware/rateLimit';
 import { Request, Response } from 'express';
 
-// Mock request and response objects
+// Mock request and response objects.
+// userId here mirrors what requireAuth/optionalAuth actually set on a real
+// request (req.userId — see auth/middleware.ts); req.user is not a real
+// property anywhere in this codebase, so a mock that only set req.user
+// tested RateLimiter.getKey()'s old bug (reading req.user?.id) rather than
+// its real per-user keying behavior.
 function createMockRequest(userId?: string, ip: string = '127.0.0.1'): Partial<Request> {
   return {
-    user: userId ? { id: userId } : undefined,
+    userId,
     ip,
     socket: { remoteAddress: ip } as any,
   };
