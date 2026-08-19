@@ -95,15 +95,81 @@ test("C-3: extraction timeout on decompression bomb", () => {
 
     const extractDir = fs.mkdtempSync(path.join(os.tmpdir(), "extract-"));
     try {
-      // Extract with very short timeout (100ms) — will fail
+      // A highly-compressible 100MB-of-zeros file is exactly what the
+      // compression-ratio check now catches pre-extraction (maxRatio is
+      // enforced, not just defined) — disable it here so this test still
+      // isolates and exercises the timeout backstop specifically.
       assert.throws(
         () =>
           safeExtractZip(zipPath, extractDir, {
             timeoutMs: 100,
             maxUncompressedBytes: 500 * 1024 * 1024,
+            maxRatio: Infinity,
           }),
         /timeout/i,
         "Extraction timeout should be enforced"
+      );
+    } finally {
+      fs.rmSync(extractDir, { recursive: true, force: true });
+    }
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
+test("C-3: oversized archive is rejected before anything is written to disk", () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "predecomp-test-"));
+  try {
+    // Same shape of bomb as the timeout test above (tiny compressed, huge
+    // uncompressed) — but this time assert on the actual point of the fix:
+    // the size cap must reject it from the central-directory listing alone,
+    // before unzip ever runs, not just eventually via a timeout after disk
+    // is already being filled.
+    const largeFile = path.join(tmpDir, "zeros.bin");
+    fs.writeFileSync(largeFile, Buffer.alloc(100 * 1024 * 1024)); // 100 MB of zeros
+    const zipPath = path.join(tmpDir, "bomb.zip");
+    execFileSync("zip", ["-q", "-9", zipPath, largeFile], { cwd: tmpDir });
+
+    const extractDir = fs.mkdtempSync(path.join(os.tmpdir(), "extract-"));
+    try {
+      assert.throws(
+        () =>
+          safeExtractZip(zipPath, extractDir, {
+            maxUncompressedBytes: 50 * 1024 * 1024, // below the 100MB real size
+            timeoutMs: 60_000, // generous — the point is it never gets here
+          }),
+        /exceeds limit/i,
+        "Oversized archive should be rejected on the pre-extraction size check"
+      );
+      // The whole point: nothing should have been extracted to disk.
+      assert.deepEqual(fs.readdirSync(extractDir), [], "extraction directory should remain empty");
+    } finally {
+      fs.rmSync(extractDir, { recursive: true, force: true });
+    }
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
+test("C-3: compression ratio limit enforced (rejects a bomb even under the absolute size cap)", () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "ratio-test-"));
+  try {
+    const largeFile = path.join(tmpDir, "zeros.bin");
+    fs.writeFileSync(largeFile, Buffer.alloc(100 * 1024 * 1024)); // 100 MB of zeros
+    const zipPath = path.join(tmpDir, "bomb.zip");
+    execFileSync("zip", ["-q", "-9", zipPath, largeFile], { cwd: tmpDir });
+
+    const extractDir = fs.mkdtempSync(path.join(os.tmpdir(), "extract-"));
+    try {
+      assert.throws(
+        () =>
+          safeExtractZip(zipPath, extractDir, {
+            maxUncompressedBytes: 500 * 1024 * 1024, // well above the 100MB real size
+            maxRatio: 10, // but a highly-compressible bomb still trips this
+            timeoutMs: 60_000,
+          }),
+        /ratio/i,
+        "Compression ratio limit should be enforced"
       );
     } finally {
       fs.rmSync(extractDir, { recursive: true, force: true });

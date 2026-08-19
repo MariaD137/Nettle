@@ -7,6 +7,11 @@ interface RateLimitOptions {
   windowMs: number;
   maxRequests: number;
   message?: string;
+  // Defaults to path+IP. Override to key by something else — e.g. the
+  // authenticated user ID once auth middleware has run, or a project API
+  // key for a public ingest endpoint where IP alone is the wrong unit (a
+  // customer's app server has one stable IP shared by all its traffic).
+  keyGenerator?: (req: import("express").Request) => string;
 }
 
 const buckets = new Map<string, RateLimitEntry>();
@@ -19,14 +24,14 @@ setInterval(() => {
 }, 60_000).unref();
 
 export function rateLimit(options: RateLimitOptions) {
-  const { windowMs, maxRequests, message = "Too many requests — try again later" } = options;
+  const { windowMs, maxRequests, message = "Too many requests — try again later", keyGenerator } = options;
 
   return function rateLimitMiddleware(
     req: import("express").Request,
     res: import("express").Response,
     next: import("express").NextFunction
   ) {
-    const key = `${req.path}:${req.ip}`;
+    const key = keyGenerator ? keyGenerator(req) : `${req.path}:${req.ip}`;
     const now = Date.now();
     let entry = buckets.get(key);
 

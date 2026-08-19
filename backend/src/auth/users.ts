@@ -1,5 +1,6 @@
 import { db, newId } from "../db";
 import { hashPassword, verifyPassword } from "./passwords";
+import { cancelAllSubscriptions } from "../billing/stripeClient";
 import crypto from "crypto";
 
 export interface User {
@@ -74,8 +75,32 @@ export function setStripeCustomerId(userId: string, stripeCustomerId: string): v
   db.prepare("UPDATE users SET stripe_customer_id = ? WHERE id = ?").run(stripeCustomerId, userId);
 }
 
-export function setSubscriptionStatus(userId: string, plan: string, status: string): void {
-  db.prepare("UPDATE users SET plan = ?, subscription_status = ? WHERE id = ?").run(plan, status, userId);
+/**
+ * Applies a subscription plan/status change. `eventCreatedAt` is Stripe's
+ * `event.created` (unix seconds) for the webhook event driving the change,
+ * when there is one — pass it so an out-of-order or replayed delivery (an
+ * "active" event processed after a "canceled" one has already landed)
+ * cannot resurrect a subscription Stripe itself considers cancelled.
+ * Returns false without writing anything if the event is stale.
+ */
+export function setSubscriptionStatus(
+  userId: string,
+  plan: string,
+  status: string,
+  eventCreatedAt?: number
+): boolean {
+  if (eventCreatedAt !== undefined) {
+    const row = db.prepare("SELECT last_subscription_event_at FROM users WHERE id = ?").get(userId) as
+      | { last_subscription_event_at: number | null }
+      | undefined;
+    if (row?.last_subscription_event_at != null && eventCreatedAt <= row.last_subscription_event_at) {
+      return false;
+    }
+  }
+
+  db.prepare(
+    "UPDATE users SET plan = ?, subscription_status = ?, last_subscription_event_at = COALESCE(?, last_subscription_event_at) WHERE id = ?"
+  ).run(plan, status, eventCreatedAt ?? null, userId);
 
   // Stamp the billing anchor the first time this account becomes active. It
   // is deliberately never overwritten: the monthly scan period is derived by
@@ -86,6 +111,7 @@ export function setSubscriptionStatus(userId: string, plan: string, status: stri
       "UPDATE users SET billing_anchor = ? WHERE id = ? AND billing_anchor IS NULL"
     ).run(new Date().toISOString(), userId);
   }
+  return true;
 }
 
 export function getUserByStripeCustomerId(stripeCustomerId: string): User | null {
@@ -134,7 +160,16 @@ export function updateEmail(userId: string, newEmail: string): User | null {
   return getUserById(userId);
 }
 
-export function deleteUser(userId: string): void {
+export async function deleteUser(userId: string): Promise<void> {
+  // Cancel any live Stripe subscription first. If this throws (Stripe is
+  // configured but the call fails), the error propagates and none of the
+  // deletes below run — better to leave the account in place and let the
+  // caller retry than to delete it locally while Stripe keeps billing it.
+  const user = getUserById(userId);
+  if (user?.stripeCustomerId) {
+    await cancelAllSubscriptions(user.stripeCustomerId);
+  }
+
   db.prepare("DELETE FROM password_resets WHERE user_id = ?").run(userId);
   db.prepare("DELETE FROM sessions WHERE user_id = ?").run(userId);
   const projectIds = db.prepare("SELECT id FROM projects WHERE user_id = ?").all(userId) as unknown as { id: string }[];

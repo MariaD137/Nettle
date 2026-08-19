@@ -54,6 +54,14 @@ export function destroyAllSessions(userId: string): void {
   db.prepare("DELETE FROM sessions WHERE user_id = ?").run(userId);
 }
 
+// Used after a password or email change: a stolen session token should not
+// survive the account holder locking the account down, but the request
+// making the change is itself carrying a valid session and should stay
+// signed in rather than being logged out by its own security action.
+export function destroyAllSessionsExcept(userId: string, keepToken: string): void {
+  db.prepare("DELETE FROM sessions WHERE user_id = ? AND token != ?").run(userId, keepToken);
+}
+
 export function destroySessionByPrefix(userId: string, tokenPrefix: string): boolean {
   const prefix = tokenPrefix.replace("…", "");
   const rows = db.prepare("SELECT token FROM sessions WHERE user_id = ? AND token LIKE ?").all(userId, `${prefix}%`) as unknown as { token: string }[];

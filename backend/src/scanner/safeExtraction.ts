@@ -43,8 +43,31 @@ export function safeExtractZip(zipPath: string, destDir: string, config: Extract
     // If unzip listing failed, the extraction phase will catch it
   }
 
-  // Phase 2: Extract with timeout, then validate
-  const startTime = Date.now();
+  // Phase 2: Check declared size/count/depth/ratio from the central
+  // directory BEFORE extracting anything. `unzip -l` reads only the zip's
+  // central directory (at the end of the file) — it does not decompress
+  // any file content, so this is fast and safe to run even against a
+  // maliciously huge archive. This is what actually stops a decompression
+  // bomb: rejecting it here means the bomb's content is never written to
+  // disk at all. The post-extraction walk below stays in place as
+  // defense-in-depth for the case of a zip whose central directory
+  // under-reports its real size.
+  const stats = getArchiveStats(zipPath, opts);
+  if (stats.totalBytes > opts.maxUncompressedBytes) {
+    throw new Error(`Uncompressed size exceeds limit (max ${opts.maxUncompressedBytes / (1024 * 1024)} MB)`);
+  }
+  if (stats.fileCount > opts.maxFileCount) {
+    throw new Error(`File count exceeds limit (max ${opts.maxFileCount})`);
+  }
+  if (stats.maxDepth > opts.maxDepth) {
+    throw new Error(`Directory depth exceeds limit (max ${opts.maxDepth})`);
+  }
+  const compressedSize = fs.statSync(zipPath).size;
+  if (compressedSize > 0 && stats.totalBytes / compressedSize > opts.maxRatio) {
+    throw new Error(`Compression ratio exceeds limit (max ${opts.maxRatio}:1) — likely a decompression bomb`);
+  }
+
+  // Phase 3: Extract with a wall-clock timeout as a further backstop
   try {
     // -j would exclude paths; we keep structure but will validate it below
     execFileSync("unzip", ["-q", "-o", zipPath, "-d", destDir], {
@@ -59,16 +82,59 @@ export function safeExtractZip(zipPath: string, destDir: string, config: Extract
     throw err;
   }
 
-  const elapsedMs = Date.now() - startTime;
-
-  // Phase 3: Verify extracted contents
+  // Phase 4: Verify extracted contents actually match what was declared
+  // (defense-in-depth against a central directory that lied)
   verifyExtractedArchive(destDir, opts);
+}
 
-  // Phase 4: Check ratio heuristic (rough, based on elapsed time)
-  // A legitimate 25MB should extract in < 2s on modern hardware
-  // A decompression bomb might hit timeout, but if it doesn't, the ratio of
-  // (items extracted / elapsed time) signals suspicious behavior
-  // This is a secondary check; the byte/count/depth limits are primary
+/**
+ * Reads the zip's central directory listing (`unzip -l`) to get the total
+ * uncompressed size, file count, and max path depth without extracting
+ * anything.
+ */
+function getArchiveStats(
+  zipPath: string,
+  opts: Required<ExtractionConfig>
+): { totalBytes: number; fileCount: number; maxDepth: number } {
+  const listOutput = execFileSync("unzip", ["-l", zipPath], { encoding: "utf8", maxBuffer: 10 * 1024 * 1024 });
+  const lines = listOutput.split("\n");
+
+  // Info-ZIP's -l output brackets the data rows between two dashed
+  // separator lines (one after the "Length Date Time Name" header, one
+  // before the "<total> <n> files" footer). Parsing between them, rather
+  // than matching a specific date format, keeps this working across
+  // Info-ZIP versions/locales that format the date column differently.
+  const separatorIndices: number[] = [];
+  lines.forEach((line, i) => {
+    if (/^-+\s+-+/.test(line.trim())) separatorIndices.push(i);
+  });
+  if (separatorIndices.length < 2) {
+    throw new Error("Could not read archive listing");
+  }
+  const dataLines = lines.slice(separatorIndices[0] + 1, separatorIndices[1]);
+
+  let totalBytes = 0;
+  let fileCount = 0;
+  let maxDepth = 0;
+
+  for (const line of dataLines) {
+    const match = line.match(/^\s*(\d+)\s+\S+\s+\S+\s+(.+)$/);
+    if (!match) continue;
+    const length = Number(match[1]);
+    const name = match[2].trim();
+
+    const depth = name.split("/").filter(Boolean).length;
+    if (depth > maxDepth) maxDepth = depth;
+
+    // Directory entries (trailing "/") have no content of their own —
+    // matches how the post-extraction walk below counts files vs dirs.
+    if (!name.endsWith("/")) {
+      fileCount++;
+      totalBytes += length;
+    }
+  }
+
+  return { totalBytes, fileCount, maxDepth };
 }
 
 /**

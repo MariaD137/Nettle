@@ -12,13 +12,26 @@ import {
   consumePasswordResetToken,
   EmailAlreadyRegisteredError,
 } from "../auth/users";
-import { createSession, destroySession, listSessions, destroyAllSessions, destroySessionByPrefix } from "../auth/sessions";
+import {
+  createSession,
+  destroySession,
+  listSessions,
+  destroyAllSessions,
+  destroyAllSessionsExcept,
+  destroySessionByPrefix,
+} from "../auth/sessions";
 import { requireAuth } from "../auth/middleware";
 import { rateLimit } from "../middleware/rateLimit";
+import { sendEmail } from "../email/mailer";
 
 export const authRouter = Router();
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+function currentToken(req: import("express").Request): string {
+  const header = req.header("authorization") || "";
+  return header.startsWith("Bearer ") ? header.slice("Bearer ".length) : "";
+}
 
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
@@ -62,9 +75,7 @@ authRouter.post("/api/auth/login", authLimiter, async (req, res) => {
 });
 
 authRouter.post("/api/auth/logout", requireAuth, (req, res) => {
-  const header = req.header("authorization") || "";
-  const token = header.slice("Bearer ".length);
-  destroySession(token);
+  destroySession(currentToken(req));
   res.status(204).end();
 });
 
@@ -74,19 +85,36 @@ authRouter.get("/api/auth/me", requireAuth, (req, res) => {
   res.json({ user });
 });
 
-authRouter.post("/api/auth/forgot-password", authLimiter, (req, res) => {
+authRouter.post("/api/auth/forgot-password", authLimiter, async (req, res) => {
   const email = typeof req.body?.email === "string" ? req.body.email.trim().toLowerCase() : "";
   if (!EMAIL_PATTERN.test(email)) {
     return res.status(400).json({ error: "Provide a valid email address" });
   }
 
   const user = getUserByEmail(email);
+  let devToken: string | undefined;
   if (user) {
     const resetToken = createPasswordResetToken(user.id);
-    console.log(`[password-reset] token for ${email}: ${resetToken}`);
+    const resetUrl = `${process.env.FRONTEND_BASE_URL ?? "http://localhost:5173"}/reset-password?token=${resetToken}`;
+    const sent = await sendEmail({
+      to: email,
+      subject: "Reset your Nettle password",
+      text: `Reset your password: ${resetUrl}\nThis link expires in 1 hour. If you didn't request this, ignore this email.`,
+    });
+    // No email provider is wired up yet (see email/mailer.ts). Outside
+    // production, hand the token back directly so local dev and tests can
+    // drive the reset flow without one — this must never happen once a real
+    // provider exists or in production, since it would hand the reset
+    // credential to whoever can reach this endpoint, not just the inbox.
+    if (!sent && process.env.NODE_ENV !== "production") {
+      devToken = resetToken;
+    }
   }
 
-  res.json({ message: "If that email is registered, a reset link has been sent" });
+  res.json({
+    message: "If that email is registered, a reset link has been sent",
+    ...(devToken ? { devToken } : {}),
+  });
 });
 
 authRouter.post("/api/auth/reset-password", authLimiter, async (req, res) => {
@@ -128,7 +156,12 @@ authRouter.post("/api/auth/change-password", requireAuth, async (req, res) => {
   }
 
   await updatePassword(req.userId!, newPassword);
-  res.json({ message: "Password updated" });
+  // A stolen session token shouldn't survive the legitimate owner changing
+  // their password — sign out every other session, but keep this one (the
+  // request making the change) alive rather than logging the caller out of
+  // their own security action.
+  destroyAllSessionsExcept(req.userId!, currentToken(req));
+  res.json({ message: "Password updated — other sessions have been signed out" });
 });
 
 authRouter.patch("/api/auth/email", requireAuth, async (req, res) => {
@@ -149,6 +182,7 @@ authRouter.patch("/api/auth/email", requireAuth, async (req, res) => {
 
   try {
     const updated = updateEmail(req.userId!, newEmail);
+    destroyAllSessionsExcept(req.userId!, currentToken(req));
     res.json({ user: updated });
   } catch (err) {
     if (err instanceof EmailAlreadyRegisteredError) {
@@ -187,6 +221,13 @@ authRouter.delete("/api/auth/account", requireAuth, async (req, res) => {
     return res.status(401).json({ error: "Password is incorrect" });
   }
 
-  deleteUser(req.userId!);
+  try {
+    await deleteUser(req.userId!);
+  } catch (err) {
+    return res.status(502).json({
+      error: "Couldn't cancel your Stripe subscription, so the account was not deleted. Please try again.",
+      detail: (err as Error).message,
+    });
+  }
   res.status(204).end();
 });

@@ -14,9 +14,20 @@ import { getUserById } from "../auth/users";
 import { applyScanAccess } from "../billing/scanAccess";
 import { getQuotaState, recordScanUsage } from "../billing/scanQuota";
 import { safeExtractZip } from "../scanner/safeExtraction";
+import { rateLimit } from "../middleware/rateLimit";
 import type { Request as ExpressRequest } from "express";
 
 export const scansRouter = Router();
+
+// Scanning is the most expensive operation in the product — extraction,
+// filesystem walk, Semgrep, OSV lookups — and the monthly quota caps usage
+// per billing period, not per second. Without this, nothing stops 30
+// concurrent 25MB uploads (or repo clones) from one caller.
+const scanLimiter = rateLimit({
+  windowMs: 10 * 60 * 1000,
+  maxRequests: 10,
+  message: "Too many scans — try again in a few minutes",
+});
 
 /**
  * Refuses the scan when the billing account has used its monthly allowance.
@@ -59,7 +70,7 @@ const upload = multer({
   limits: { fileSize: 25 * 1024 * 1024 }, // 25MB — plenty for source code, not for asset-heavy repos
 });
 
-scansRouter.post("/api/scans", optionalAuth, upload.single("codebase"), (req: Request, res: Response) => {
+scansRouter.post("/api/scans", scanLimiter, optionalAuth, upload.single("codebase"), (req: Request, res: Response) => {
   if (!req.file) {
     return res.status(400).json({ error: "Upload a zip file under the 'codebase' field" });
   }
@@ -126,7 +137,7 @@ scansRouter.post("/api/scans", optionalAuth, upload.single("codebase"), (req: Re
 const ALLOWED_HOSTS = ["github.com", "gitlab.com", "bitbucket.org"];
 const REPO_URL_PATTERN = /^https:\/\/(github\.com|gitlab\.com|bitbucket\.org)\/[\w.\-]+\/[\w.\-]+(\.git)?$/;
 
-scansRouter.post("/api/scans/repo", requireAuth, requireSubscription, (req: Request, res: Response) => {
+scansRouter.post("/api/scans/repo", scanLimiter, requireAuth, requireSubscription, (req: Request, res: Response) => {
   const repoUrl = typeof req.body?.repoUrl === "string" ? req.body.repoUrl.trim() : "";
   const branch = typeof req.body?.branch === "string" ? req.body.branch.trim() : "";
   const apiKey = typeof req.body?.apiKey === "string" ? req.body.apiKey.trim() : "";

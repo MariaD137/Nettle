@@ -161,6 +161,26 @@ if (!columnExists("scans", "status")) {
   db.exec("ALTER TABLE scans ADD COLUMN status TEXT NOT NULL DEFAULT 'COMPLETED'");
 }
 
+// Unix-seconds timestamp (Stripe's `event.created`) of the last subscription
+// webhook event actually applied to this user. Lets the webhook handler
+// reject a stale or out-of-order delivery — e.g. an "active" event that
+// arrives after a "canceled" one has already landed — instead of quietly
+// reverting a subscription Stripe itself considers cancelled.
+if (!columnExists("users", "last_subscription_event_at")) {
+  db.exec("ALTER TABLE users ADD COLUMN last_subscription_event_at INTEGER");
+}
+
+// Idempotency ledger for Stripe webhook events: Stripe can and does deliver
+// the same event more than once (retries on a slow/failed response). The
+// event id is unique per event, so recording it here lets the webhook
+// handler skip a duplicate delivery instead of applying it twice.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS processed_stripe_events (
+    event_id TEXT PRIMARY KEY,
+    processed_at TEXT NOT NULL
+  );
+`);
+
 export function newId(): string {
   return crypto.randomUUID();
 }

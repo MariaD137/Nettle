@@ -7,9 +7,23 @@ import { hashFinding, upsertFindingStatus, listFindingStatuses } from "../patrol
 import { requireAuth } from "../auth/middleware";
 import { requireSubscription } from "../billing/subscription";
 import { getQuotaState } from "../billing/scanQuota";
+import { rateLimit } from "../middleware/rateLimit";
 import type { AlertStatus, FindingStatus } from "../patrol/types";
 
 export const projectsRouter = Router();
+
+// Router-level, not per-route: safe because this only affects requests
+// handled by this specific Router instance, not every route mounted at the
+// same URL prefix (badgeRouter is a separate router and is unaffected).
+// Every route in this file is dashboard-driven CRUD, not a public endpoint,
+// so one generous per-route-per-IP budget covers all of them.
+projectsRouter.use(
+  rateLimit({
+    windowMs: 60 * 1000,
+    maxRequests: 120,
+    message: "Too many requests — try again shortly",
+  })
+);
 
 // The paywall runs per-route rather than as router-level middleware. Two
 // reasons it has to: this router is mounted at the app root, so a bare

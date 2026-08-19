@@ -114,3 +114,156 @@ test("HTTP login fails with the wrong password", async () => {
     server.close();
   }
 });
+
+test("changing password signs out every other session but keeps the current one", async () => {
+  const app = express();
+  app.use(express.json());
+  app.use(authRouter);
+  const { server, base } = await listen(app);
+
+  try {
+    const signup = await fetch(`${base}/api/auth/signup`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email: "revoke-on-pw-change@example.com", password: "correct horse battery staple" }),
+    });
+    const { token: tokenA } = await signup.json();
+
+    // A second, independent session — e.g. logged in on another device.
+    const login = await fetch(`${base}/api/auth/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email: "revoke-on-pw-change@example.com", password: "correct horse battery staple" }),
+    });
+    const { token: tokenB } = await login.json();
+
+    const changeRes = await fetch(`${base}/api/auth/change-password`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${tokenA}` },
+      body: JSON.stringify({ currentPassword: "correct horse battery staple", newPassword: "new correct horse battery" }),
+    });
+    assert.equal(changeRes.status, 200);
+
+    // tokenA (the session that made the change) must still work.
+    const meA = await fetch(`${base}/api/auth/me`, { headers: { Authorization: `Bearer ${tokenA}` } });
+    assert.equal(meA.status, 200);
+
+    // tokenB (the other session) must have been signed out.
+    const meB = await fetch(`${base}/api/auth/me`, { headers: { Authorization: `Bearer ${tokenB}` } });
+    assert.equal(meB.status, 401);
+  } finally {
+    server.close();
+  }
+});
+
+test("changing email signs out every other session but keeps the current one", async () => {
+  const app = express();
+  app.use(express.json());
+  app.use(authRouter);
+  const { server, base } = await listen(app);
+
+  try {
+    const signup = await fetch(`${base}/api/auth/signup`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email: "revoke-on-email-change@example.com", password: "correct horse battery staple" }),
+    });
+    const { token: tokenA } = await signup.json();
+
+    const login = await fetch(`${base}/api/auth/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email: "revoke-on-email-change@example.com", password: "correct horse battery staple" }),
+    });
+    const { token: tokenB } = await login.json();
+
+    const changeRes = await fetch(`${base}/api/auth/email`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${tokenA}` },
+      body: JSON.stringify({ email: "new-address@example.com", password: "correct horse battery staple" }),
+    });
+    assert.equal(changeRes.status, 200);
+
+    const meA = await fetch(`${base}/api/auth/me`, { headers: { Authorization: `Bearer ${tokenA}` } });
+    assert.equal(meA.status, 200);
+
+    const meB = await fetch(`${base}/api/auth/me`, { headers: { Authorization: `Bearer ${tokenB}` } });
+    assert.equal(meB.status, 401);
+  } finally {
+    server.close();
+  }
+});
+
+test("forgot-password no longer logs the raw reset token", async () => {
+  const app = express();
+  app.use(express.json());
+  app.use(authRouter);
+  const { server, base } = await listen(app);
+
+  try {
+    await fetch(`${base}/api/auth/signup`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email: "reset-no-log@example.com", password: "correct horse battery staple" }),
+    });
+
+    const originalNodeEnv = process.env.NODE_ENV;
+    try {
+      // Outside production, with no email provider configured, the token
+      // comes back in the response body (for dev/test use) instead of
+      // being written to the process log.
+      delete process.env.NODE_ENV;
+      const res = await fetch(`${base}/api/auth/forgot-password`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: "reset-no-log@example.com" }),
+      });
+      assert.equal(res.status, 200);
+      const body = await res.json();
+      assert.equal(typeof body.devToken, "string");
+
+      // And that token actually works end to end.
+      const resetRes = await fetch(`${base}/api/auth/reset-password`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token: body.devToken, password: "brand new password here" }),
+      });
+      assert.equal(resetRes.status, 200);
+    } finally {
+      if (originalNodeEnv === undefined) delete process.env.NODE_ENV;
+      else process.env.NODE_ENV = originalNodeEnv;
+    }
+  } finally {
+    server.close();
+  }
+});
+
+test("forgot-password never exposes the reset token in production", async () => {
+  const app = express();
+  app.use(express.json());
+  app.use(authRouter);
+  const { server, base } = await listen(app);
+
+  const originalNodeEnv = process.env.NODE_ENV;
+  try {
+    await fetch(`${base}/api/auth/signup`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email: "reset-prod@example.com", password: "correct horse battery staple" }),
+    });
+
+    process.env.NODE_ENV = "production";
+    const res = await fetch(`${base}/api/auth/forgot-password`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email: "reset-prod@example.com" }),
+    });
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.equal(body.devToken, undefined, "the reset token must never be returned in production");
+  } finally {
+    if (originalNodeEnv === undefined) delete process.env.NODE_ENV;
+    else process.env.NODE_ENV = originalNodeEnv;
+    server.close();
+  }
+});
