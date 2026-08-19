@@ -29,6 +29,20 @@ export function requireAuth(req: Request, res: Response, next: NextFunction) {
 }
 
 /**
+ * Must run after requireAuth. Grants are entirely out-of-band (see
+ * auth/users.ts#syncAdminEmails) — there is no request path, here or
+ * anywhere else, that can make an account an admin, so this check is the
+ * only gate and it fails closed: no session, no admin row, no access.
+ */
+export function requireAdmin(req: Request, res: Response, next: NextFunction) {
+  const user = req.userId ? getUserById(req.userId) : null;
+  if (!user?.isAdmin) {
+    return res.status(403).json({ error: "Admin access required" });
+  }
+  next();
+}
+
+/**
  * Populates req.userId/req.userPlan when a valid token is present, but lets
  * anonymous callers through. Used by routes that work logged-out yet still
  * need to know the caller's plan — a one-off scan is free to run, but how

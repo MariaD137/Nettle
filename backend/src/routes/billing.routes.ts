@@ -4,6 +4,7 @@ import { requireAuth } from "../auth/middleware";
 import { getUserById, setStripeCustomerId, setSubscriptionStatus, getUserByStripeCustomerId } from "../auth/users";
 import { isStripeEventProcessed, markStripeEventProcessed, recordPaymentFailure, getPaymentFailures } from "../billing/stripeEvents";
 import { sendEmail } from "../integrations/email";
+import { incrementCounter, Metric } from "../observability/metrics";
 import type Stripe from "stripe";
 
 // Split in two deliberately: the webhook needs the exact raw request bytes
@@ -77,6 +78,7 @@ billingWebhookRouter.post("/api/billing/webhook", raw({ type: "application/json"
   const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
 
   if (!signature || !webhookSecret) {
+    incrementCounter(Metric.StripeWebhookFailures);
     return res.status(400).json({ error: "Missing signature or webhook secret not configured" });
   }
 
@@ -85,6 +87,7 @@ billingWebhookRouter.post("/api/billing/webhook", raw({ type: "application/json"
     const stripe = getStripeClient();
     event = stripe.webhooks.constructEvent(req.body, signature, webhookSecret);
   } catch (err) {
+    incrementCounter(Metric.StripeWebhookFailures);
     return res.status(400).json({ error: `Webhook signature verification failed: ${(err as Error).message}` });
   }
 

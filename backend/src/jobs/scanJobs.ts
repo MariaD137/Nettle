@@ -20,6 +20,7 @@ import fs from "fs";
 import { sourceScanSteps, URL_SCAN_STEPS, type ScanStepEvent } from "../scanner/index";
 import type { ScanReport } from "../scanner/types";
 import type { ScanWorkerInput, ScanWorkerMessage } from "../scanner/scanWorker";
+import { incrementCounter, observeDuration, Metric } from "../observability/metrics";
 
 export type ScanJobStatus = "queued" | "running" | "completed" | "failed" | "cancelled";
 export type ScanJobStepStatus = "pending" | "running" | "done";
@@ -192,6 +193,10 @@ function finishJob(job: InternalJob, status: "completed" | "failed" | "cancelled
   if (job.status !== "running" && job.status !== "queued") return; // already resolved
   job.status = status;
   job.finishedAt = new Date().toISOString();
+  if (job.startedAt) {
+    observeDuration(Metric.ScanDuration, new Date(job.finishedAt).getTime() - new Date(job.startedAt).getTime());
+  }
+  if (status === "failed") incrementCounter(Metric.ScanFailures);
   job.report = outcome.report ?? null;
   job.error = outcome.error ?? null;
   if (status === "completed") {
@@ -218,6 +223,11 @@ function finishJob(job: InternalJob, status: "completed" | "failed" | "cancelled
     job.meta.onComplete(outcome.report);
   }
   tryDequeue();
+}
+
+/** For the admin overview — real current queue/concurrency state, not a metric snapshot. */
+export function getQueueStats(): { queued: number; running: number; maxConcurrent: number } {
+  return { queued: queue.length, running: runningCount, maxConcurrent: maxConcurrent() };
 }
 
 export function getScanJob(id: string): ScanJob | null {

@@ -11,6 +11,7 @@ export interface User {
   billingAnchor: string | null;
   onboardingCompletedAt: string | null;
   emailVerifiedAt: string | null;
+  isAdmin: boolean;
   createdAt: string;
 }
 
@@ -24,6 +25,7 @@ interface UserRow {
   billing_anchor: string | null;
   onboarding_completed_at: string | null;
   email_verified_at: string | null;
+  is_admin: number;
   created_at: string;
 }
 
@@ -37,8 +39,39 @@ function toUser(row: UserRow): User {
     billingAnchor: row.billing_anchor,
     onboardingCompletedAt: row.onboarding_completed_at,
     emailVerifiedAt: row.email_verified_at,
+    isAdmin: row.is_admin === 1,
     createdAt: row.created_at,
   };
+}
+
+// Declarative, restart-to-apply admin grants — there is no API or UI path
+// that can make an account an admin. NETTLE_ADMIN_EMAILS is a
+// comma-separated allowlist read fresh on every call (startup, and tests
+// call it directly), and it's the single source of truth: an email
+// removed from the list is actually de-admin'd, not just no-longer-added,
+// so access doesn't silently outlive being taken off the list.
+export function syncAdminEmails(): void {
+  const raw = process.env.NETTLE_ADMIN_EMAILS || "";
+  const allowed = new Set(
+    raw
+      .split(",")
+      .map((e) => e.trim().toLowerCase())
+      .filter(Boolean)
+  );
+
+  const rows = db.prepare("SELECT id, email, is_admin FROM users").all() as unknown as {
+    id: string;
+    email: string;
+    is_admin: number;
+  }[];
+
+  for (const row of rows) {
+    const shouldBeAdmin = allowed.has(row.email.toLowerCase());
+    const isAdmin = row.is_admin === 1;
+    if (shouldBeAdmin !== isAdmin) {
+      db.prepare("UPDATE users SET is_admin = ? WHERE id = ?").run(shouldBeAdmin ? 1 : 0, row.id);
+    }
+  }
 }
 
 export class EmailAlreadyRegisteredError extends Error {}
@@ -65,6 +98,7 @@ export async function createUser(email: string, password: string): Promise<User>
     billingAnchor: null,
     onboardingCompletedAt: null,
     emailVerifiedAt: null,
+    isAdmin: false,
     createdAt,
   };
 }

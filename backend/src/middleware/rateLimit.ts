@@ -1,4 +1,5 @@
 import { Request, Response, NextFunction } from 'express';
+import { incrementCounter, Metric } from '../observability/metrics';
 
 interface RateLimitOptions {
   windowMs: number;
@@ -42,6 +43,7 @@ export function rateLimit(options: RateLimitOptions) {
     res.setHeader("X-RateLimit-Reset", Math.ceil(entry.resetAt / 1000));
 
     if (entry.count > maxRequests) {
+      incrementCounter(Metric.RateLimitExceeded);
       const retryAfter = Math.ceil((entry.resetAt - now) / 1000);
       res.setHeader("Retry-After", retryAfter);
       return res.status(429).json({ error: message });
@@ -118,6 +120,7 @@ const limiter = new RateLimiter();
 // Scan endpoint rate limiter: 30 concurrent requests per minute per user
 export function scanRateLimit(req: Request, res: Response, next: NextFunction) {
   if (limiter.isLimited(req, 30, 60, 'scan')) {
+    incrementCounter(Metric.RateLimitExceeded);
     const retryAfter = limiter.getRetryAfter(req, 'scan');
     return res.status(429).json({
       error: 'Too many scan requests. Please try again later.',
@@ -130,6 +133,7 @@ export function scanRateLimit(req: Request, res: Response, next: NextFunction) {
 // Public endpoint rate limiter: 100 requests per 5 minutes per IP
 export function publicRateLimit(req: Request, res: Response, next: NextFunction) {
   if (limiter.isLimited(req, 100, 300, 'public')) {
+    incrementCounter(Metric.RateLimitExceeded);
     const retryAfter = limiter.getRetryAfter(req, 'public');
     return res.status(429).json({
       error: 'Too many requests. Please try again later.',
@@ -145,6 +149,7 @@ export function webhookRateLimit(req: Request, res: Response, next: NextFunction
   const key = `webhook:${projectId}`;
 
   if (limiter.isLimited(req, 1000, 60, key)) {
+    incrementCounter(Metric.RateLimitExceeded);
     const retryAfter = limiter.getRetryAfter(req, key);
     return res.status(429).json({
       error: 'Webhook delivery rate limit exceeded.',
@@ -157,6 +162,7 @@ export function webhookRateLimit(req: Request, res: Response, next: NextFunction
 // General API rate limiter: 500 requests per minute per authenticated user
 export function apiRateLimit(req: Request, res: Response, next: NextFunction) {
   if (limiter.isLimited(req, 500, 60, 'api')) {
+    incrementCounter(Metric.RateLimitExceeded);
     const retryAfter = limiter.getRetryAfter(req, 'api');
     res.set('Retry-After', String(retryAfter));
     return res.status(429).json({

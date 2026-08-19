@@ -16,6 +16,10 @@ import { apiRateLimit } from "./middleware/rateLimit";
 import { initializeScanner } from "./scanner/initialization";
 import { backfillFindingHistory } from "./patrol/findingHistory";
 import { backfillApiKeys, backfillHashedApiKeys } from "./patrol/apiKeys";
+import { adminRouter } from "./routes/admin.routes";
+import { syncAdminEmails } from "./auth/users";
+import { logger } from "./observability/logger";
+import { incrementCounter, Metric } from "./observability/metrics";
 
 const app = express();
 const PORT = process.env.PORT || 8080;
@@ -34,7 +38,27 @@ app.use(cors());
 app.use(billingWebhookRouter);
 
 app.use(express.json());
+
+// Structured request logging + counters, mounted before everything else
+// that isn't the webhook raw-body handler above, so every request is
+// counted regardless of which router (or no router) ends up handling it.
+app.use((req: Request, res: Response, next: NextFunction) => {
+  const startedAt = Date.now();
+  res.on("finish", () => {
+    incrementCounter(Metric.HttpRequests);
+    if (res.statusCode >= 500) incrementCounter(Metric.HttpErrors);
+    logger.info("http_request", {
+      method: req.method,
+      path: req.path,
+      status: res.statusCode,
+      durationMs: Date.now() - startedAt,
+    });
+  });
+  next();
+});
+
 app.use(healthRouter);
+app.use(adminRouter);
 // apiRateLimit is intentionally the only rate limiter mounted app-wide —
 // scanRateLimit/publicRateLimit used to be mounted the same way
 // (`app.use(scanRateLimit, scansRouter)`), but since that middleware form
@@ -70,6 +94,12 @@ app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
 
 // Initialize scanner at startup
 initializeScanner();
+
+// Declarative admin grants: NETTLE_ADMIN_EMAILS (comma-separated) is the
+// source of truth, re-read on every startup — removing an email from the
+// list actually revokes access on next restart rather than leaving a
+// stale is_admin flag in the database forever. See auth/users.ts.
+syncAdminEmails();
 
 // One-time seed of first/last-detected history for scans recorded before
 // this table existed — a no-op after the first successful run. Runs

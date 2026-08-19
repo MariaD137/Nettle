@@ -336,6 +336,13 @@ if (!columnExists("users", "email_verified_at")) {
   db.exec("UPDATE users SET email_verified_at = created_at WHERE email_verified_at IS NULL");
 }
 
+// Minimal operator visibility — never self-serve. Set only by
+// syncAdminEmails() at startup, from NETTLE_ADMIN_EMAILS. See
+// auth/middleware.ts#requireAdmin and routes/admin.routes.ts.
+if (!columnExists("users", "is_admin")) {
+  db.exec("ALTER TABLE users ADD COLUMN is_admin INTEGER NOT NULL DEFAULT 0");
+}
+
 // Phase 15: Performance Optimization — Additional Indexes
 db.exec(`
   CREATE INDEX IF NOT EXISTS idx_scans_project_status ON scans(project_id, status);

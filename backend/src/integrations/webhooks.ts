@@ -1,4 +1,5 @@
 import { db, newId } from '../db/index';
+import { incrementCounter, Metric } from '../observability/metrics';
 
 export interface WebhookConfig {
   id: string;
@@ -220,6 +221,8 @@ function updateWebhookEventStatus(
     SET status = ?, sent_at = ?, last_error = ?
     WHERE id = ?
   `).run(status, status === 'sent' ? now : null, error || null, eventId);
+
+  if (status === 'failed') incrementCounter(Metric.WebhookDeliveryFailures);
 }
 
 export class MissingWebhookSecretError extends Error {

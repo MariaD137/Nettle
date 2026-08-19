@@ -20,6 +20,7 @@ import { createSession, destroySession, listSessions, destroyAllSessions, destro
 import { requireAuth } from "../auth/middleware";
 import { rateLimit } from "../middleware/rateLimit";
 import { sendEmail } from "../integrations/email";
+import { incrementCounter, Metric } from "../observability/metrics";
 
 export const authRouter = Router();
 
@@ -111,6 +112,7 @@ authRouter.post("/api/auth/login", authLimiter, async (req, res) => {
 
   const user = await verifyCredentials(email, password);
   if (!user) {
+    incrementCounter(Metric.AuthFailures);
     return res.status(401).json({ error: "Incorrect email or password" });
   }
   const token = createSession(user.id);
