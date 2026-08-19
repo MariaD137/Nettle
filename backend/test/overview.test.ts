@@ -28,10 +28,10 @@ test("GET /api/overview includes each project's environment tag", async () => {
   const { server, base } = await listen(app);
   try {
     const user = await createUser("overview-env@example.com", "correct horse battery staple");
-    setSubscriptionStatus(user.id, "tier1", "active");
-    const token = createSession(user.id);
-    createProject(user.id, "Staging App", { environment: "staging" });
-    createProject(user.id, "No Env Set");
+    await setSubscriptionStatus(user.id, "tier1", "active");
+    const token = await createSession(user.id);
+    await createProject(user.id, "Staging App", { environment: "staging" });
+    await createProject(user.id, "No Env Set");
 
     const res = await fetch(`${base}/api/overview`, { headers: { Authorization: `Bearer ${token}` } });
     assert.equal(res.status, 200);

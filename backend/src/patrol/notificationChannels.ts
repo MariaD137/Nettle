@@ -40,12 +40,12 @@ function toChannel(row: ChannelRow): NotificationChannel {
   };
 }
 
-export function createNotificationChannel(
+export async function createNotificationChannel(
   projectId: string,
   channel: NotificationChannelType,
   destination: string,
   eventTypes: string[]
-): NotificationChannel {
+): Promise<NotificationChannel> {
   const now = new Date().toISOString();
   const row: ChannelRow = {
     id: newId(),
@@ -57,15 +57,19 @@ export function createNotificationChannel(
     created_at: now,
     updated_at: now,
   };
-  db.prepare(
-    "INSERT INTO notification_channels (id, project_id, channel, destination, is_active, event_types, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
-  ).run(row.id, row.project_id, row.channel, row.destination, row.is_active, row.event_types, row.created_at, row.updated_at);
+  await db
+    .prepare(
+      "INSERT INTO notification_channels (id, project_id, channel, destination, is_active, event_types, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+    )
+    .run(row.id, row.project_id, row.channel, row.destination, row.is_active, row.event_types, row.created_at, row.updated_at);
   return toChannel(row);
 }
 
 /** Every project with at least one active channel subscribed to `eventType` — used to know which projects need a digest composed for them, without loading every channel for every project up front. */
-export function getProjectIdsSubscribedTo(eventType: string): string[] {
-  const rows = db.prepare("SELECT DISTINCT project_id, event_types, is_active FROM notification_channels").all() as unknown as {
+export async function getProjectIdsSubscribedTo(eventType: string): Promise<string[]> {
+  const rows = (await db
+    .prepare("SELECT DISTINCT project_id, event_types, is_active FROM notification_channels")
+    .all()) as unknown as {
     project_id: string;
     event_types: string;
     is_active: number;
@@ -79,40 +83,53 @@ export function getProjectIdsSubscribedTo(eventType: string): string[] {
   return [...projectIds];
 }
 
-export function getNotificationChannels(projectId: string, channel?: NotificationChannelType): NotificationChannel[] {
+export async function getNotificationChannels(
+  projectId: string,
+  channel?: NotificationChannelType
+): Promise<NotificationChannel[]> {
   const rows = channel
-    ? (db.prepare("SELECT * FROM notification_channels WHERE project_id = ? AND channel = ?").all(projectId, channel) as unknown as ChannelRow[])
-    : (db.prepare("SELECT * FROM notification_channels WHERE project_id = ?").all(projectId) as unknown as ChannelRow[]);
+    ? ((await db
+        .prepare("SELECT * FROM notification_channels WHERE project_id = ? AND channel = ?")
+        .all(projectId, channel)) as unknown as ChannelRow[])
+    : ((await db.prepare("SELECT * FROM notification_channels WHERE project_id = ?").all(projectId)) as unknown as ChannelRow[]);
   return rows.map(toChannel);
 }
 
-export function getNotificationChannel(id: string): NotificationChannel | null {
-  const row = db.prepare("SELECT * FROM notification_channels WHERE id = ?").get(id) as ChannelRow | undefined;
+export async function getNotificationChannel(id: string): Promise<NotificationChannel | null> {
+  const row = (await db.prepare("SELECT * FROM notification_channels WHERE id = ?").get(id)) as
+    | ChannelRow
+    | undefined;
   return row ? toChannel(row) : null;
 }
 
-export function updateNotificationChannel(
+export async function updateNotificationChannel(
   id: string,
   updates: { destination?: string; eventTypes?: string[]; isActive?: boolean }
-): NotificationChannel | null {
-  const existing = db.prepare("SELECT * FROM notification_channels WHERE id = ?").get(id) as ChannelRow | undefined;
+): Promise<NotificationChannel | null> {
+  const existing = (await db.prepare("SELECT * FROM notification_channels WHERE id = ?").get(id)) as
+    | ChannelRow
+    | undefined;
   if (!existing) return null;
 
   const now = new Date().toISOString();
-  db.prepare(
-    "UPDATE notification_channels SET destination = ?, event_types = ?, is_active = ?, updated_at = ? WHERE id = ?"
-  ).run(
-    updates.destination !== undefined ? updates.destination : existing.destination,
-    updates.eventTypes !== undefined ? JSON.stringify(updates.eventTypes) : existing.event_types,
-    updates.isActive !== undefined ? (updates.isActive ? 1 : 0) : existing.is_active,
-    now,
-    id
+  await db
+    .prepare(
+      "UPDATE notification_channels SET destination = ?, event_types = ?, is_active = ?, updated_at = ? WHERE id = ?"
+    )
+    .run(
+      updates.destination !== undefined ? updates.destination : existing.destination,
+      updates.eventTypes !== undefined ? JSON.stringify(updates.eventTypes) : existing.event_types,
+      updates.isActive !== undefined ? (updates.isActive ? 1 : 0) : existing.is_active,
+      now,
+      id
+    );
+  return toChannel(
+    (await db.prepare("SELECT * FROM notification_channels WHERE id = ?").get(id)) as unknown as ChannelRow
   );
-  return toChannel(db.prepare("SELECT * FROM notification_channels WHERE id = ?").get(id) as unknown as ChannelRow);
 }
 
-export function deleteNotificationChannel(id: string): void {
-  db.prepare("DELETE FROM notification_channels WHERE id = ?").run(id);
+export async function deleteNotificationChannel(id: string): Promise<void> {
+  await db.prepare("DELETE FROM notification_channels WHERE id = ?").run(id);
 }
 
 const DELIVERY_RETRY_BACKOFF_MS = [500, 2000];
@@ -131,18 +148,22 @@ async function deliverWithRetry(
     }
     const result = await send();
     if (result.sent) {
-      db.prepare(
-        "INSERT INTO notification_deliveries (id, project_id, channel, destination, event_type, status, attempt_count, created_at) VALUES (?, ?, ?, ?, ?, 'sent', ?, ?)"
-      ).run(newId(), channel.projectId, channel.channel, channel.destination, eventType, attempt + 1, new Date().toISOString());
+      await db
+        .prepare(
+          "INSERT INTO notification_deliveries (id, project_id, channel, destination, event_type, status, attempt_count, created_at) VALUES (?, ?, ?, ?, ?, 'sent', ?, ?)"
+        )
+        .run(newId(), channel.projectId, channel.channel, channel.destination, eventType, attempt + 1, new Date().toISOString());
       return;
     }
     lastError = result.error;
   }
 
   incrementCounter(Metric.NotificationDeliveryFailures);
-  db.prepare(
-    "INSERT INTO notification_deliveries (id, project_id, channel, destination, event_type, status, attempt_count, last_error, created_at) VALUES (?, ?, ?, ?, ?, 'failed', ?, ?, ?)"
-  ).run(newId(), channel.projectId, channel.channel, channel.destination, eventType, attempt, lastError || null, new Date().toISOString());
+  await db
+    .prepare(
+      "INSERT INTO notification_deliveries (id, project_id, channel, destination, event_type, status, attempt_count, last_error, created_at) VALUES (?, ?, ?, ?, ?, 'failed', ?, ?, ?)"
+    )
+    .run(newId(), channel.projectId, channel.channel, channel.destination, eventType, attempt, lastError || null, new Date().toISOString());
   console.error(`Notification channel delivery failed after ${attempt} attempt(s):`, lastError);
 }
 
@@ -155,23 +176,37 @@ async function deliverWithRetry(
  * persisted to notification_deliveries, the direct-channel counterpart to
  * webhook_events. `smsBody` should be short (SMS carriers truncate/split
  * long messages); it defaults to `subject` when omitted.
+ *
+ * Still fire-and-forget after the PostgreSQL conversion: this function is
+ * itself async now (it has to look channels up), but every existing caller
+ * still calls it without awaiting, exactly as before, and it never rejects
+ * — even a failure looking channels up (e.g. a DB hiccup) is caught and
+ * logged internally rather than surfacing as an unhandled rejection or
+ * propagating into the caller, matching the "never blocks or fails the
+ * triggering request" contract this always had.
  */
-export function notifyChannels(
+export async function notifyChannels(
   projectId: string,
   eventType: string,
   subject: string,
   textBody: string,
   opts?: { html?: string; smsBody?: string }
-): void {
-  const channels = getNotificationChannels(projectId).filter((c) => c.isActive && c.eventTypes.includes(eventType));
+): Promise<void> {
+  try {
+    const channels = (await getNotificationChannels(projectId)).filter(
+      (c) => c.isActive && c.eventTypes.includes(eventType)
+    );
 
-  for (const channel of channels) {
-    const send =
-      channel.channel === "email"
-        ? () => sendEmail(channel.destination, subject, textBody, opts?.html)
-        : () => sendSms(channel.destination, opts?.smsBody || subject);
-    deliverWithRetry(channel, send, eventType).catch((err) => {
-      console.error("Notification delivery threw unexpectedly:", err);
-    });
+    for (const channel of channels) {
+      const send =
+        channel.channel === "email"
+          ? () => sendEmail(channel.destination, subject, textBody, opts?.html)
+          : () => sendSms(channel.destination, opts?.smsBody || subject);
+      deliverWithRetry(channel, send, eventType).catch((err) => {
+        console.error("Notification delivery threw unexpectedly:", err);
+      });
+    }
+  } catch (err) {
+    console.error("notifyChannels failed to look up channels:", err);
   }
 }

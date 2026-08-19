@@ -21,6 +21,7 @@ import { requireAuth } from "../auth/middleware";
 import { rateLimit } from "../middleware/rateLimit";
 import { sendEmail } from "../integrations/email";
 import { incrementCounter, Metric } from "../observability/metrics";
+import { asyncHandler } from "../middleware/asyncHandler";
 
 export const authRouter = Router();
 
@@ -41,8 +42,8 @@ const resendVerificationLimiter = rateLimit({
   message: "Too many verification emails requested — try again in an hour",
 });
 
-function sendVerificationEmail(userId: string, email: string) {
-  const verifyToken = createEmailVerificationToken(userId);
+async function sendVerificationEmail(userId: string, email: string): Promise<void> {
+  const verifyToken = await createEmailVerificationToken(userId);
   const verifyUrl = `${process.env.FRONTEND_URL || "http://localhost:5173"}/verify-email?token=${verifyToken}`;
   // Fire-and-forget, same reasoning as the password-reset email below: a
   // slow/failing mail provider must not delay the caller's response.
@@ -56,7 +57,7 @@ function sendVerificationEmail(userId: string, email: string) {
   });
 }
 
-authRouter.post("/api/auth/signup", authLimiter, async (req, res) => {
+authRouter.post("/api/auth/signup", authLimiter, asyncHandler(async (req, res) => {
   const email = typeof req.body?.email === "string" ? req.body.email.trim().toLowerCase() : "";
   const password = typeof req.body?.password === "string" ? req.body.password : "";
 
@@ -69,8 +70,8 @@ authRouter.post("/api/auth/signup", authLimiter, async (req, res) => {
 
   try {
     const user = await createUser(email, password);
-    const token = createSession(user.id);
-    sendVerificationEmail(user.id, user.email);
+    const token = await createSession(user.id);
+    await sendVerificationEmail(user.id, user.email);
     res.status(201).json({ token, user });
   } catch (err) {
     if (err instanceof EmailAlreadyRegisteredError) {
@@ -78,35 +79,35 @@ authRouter.post("/api/auth/signup", authLimiter, async (req, res) => {
     }
     throw err;
   }
-});
+}));
 
-authRouter.post("/api/auth/verify-email", authLimiter, (req, res) => {
+authRouter.post("/api/auth/verify-email", authLimiter, asyncHandler(async (req, res) => {
   const token = typeof req.body?.token === "string" ? req.body.token : "";
   if (!token) {
     return res.status(400).json({ error: "Verification token is required" });
   }
 
-  const resolved = resolveEmailVerificationToken(token);
+  const resolved = await resolveEmailVerificationToken(token);
   if (!resolved) {
     return res.status(400).json({ error: "Invalid or expired verification link" });
   }
 
-  const user = markEmailVerified(resolved.userId);
+  const user = await markEmailVerified(resolved.userId);
   res.json({ message: "Email verified", user });
-});
+}));
 
-authRouter.post("/api/auth/resend-verification", requireAuth, resendVerificationLimiter, (req, res) => {
-  const user = getUserById(req.userId!);
+authRouter.post("/api/auth/resend-verification", requireAuth, resendVerificationLimiter, asyncHandler(async (req, res) => {
+  const user = await getUserById(req.userId!);
   if (!user) return res.status(401).json({ error: "Invalid session" });
   if (user.emailVerifiedAt) {
     return res.status(400).json({ error: "This email is already verified" });
   }
 
-  sendVerificationEmail(user.id, user.email);
+  await sendVerificationEmail(user.id, user.email);
   res.json({ message: "Verification email sent" });
-});
+}));
 
-authRouter.post("/api/auth/login", authLimiter, async (req, res) => {
+authRouter.post("/api/auth/login", authLimiter, asyncHandler(async (req, res) => {
   const email = typeof req.body?.email === "string" ? req.body.email.trim().toLowerCase() : "";
   const password = typeof req.body?.password === "string" ? req.body.password : "";
 
@@ -115,38 +116,38 @@ authRouter.post("/api/auth/login", authLimiter, async (req, res) => {
     incrementCounter(Metric.AuthFailures);
     return res.status(401).json({ error: "Incorrect email or password" });
   }
-  const token = createSession(user.id);
+  const token = await createSession(user.id);
   res.json({ token, user });
-});
+}));
 
-authRouter.post("/api/auth/logout", requireAuth, (req, res) => {
+authRouter.post("/api/auth/logout", requireAuth, asyncHandler(async (req, res) => {
   const header = req.header("authorization") || "";
   const token = header.slice("Bearer ".length);
-  destroySession(token);
+  await destroySession(token);
   res.status(204).end();
-});
+}));
 
-authRouter.get("/api/auth/me", requireAuth, (req, res) => {
-  const user = getUserById(req.userId!);
+authRouter.get("/api/auth/me", requireAuth, asyncHandler(async (req, res) => {
+  const user = await getUserById(req.userId!);
   if (!user) return res.status(401).json({ error: "Invalid session" });
   res.json({ user });
-});
+}));
 
-authRouter.post("/api/auth/onboarding/complete", requireAuth, (req, res) => {
-  const user = completeOnboarding(req.userId!);
+authRouter.post("/api/auth/onboarding/complete", requireAuth, asyncHandler(async (req, res) => {
+  const user = await completeOnboarding(req.userId!);
   if (!user) return res.status(401).json({ error: "Invalid session" });
   res.json({ user });
-});
+}));
 
-authRouter.post("/api/auth/forgot-password", authLimiter, (req, res) => {
+authRouter.post("/api/auth/forgot-password", authLimiter, asyncHandler(async (req, res) => {
   const email = typeof req.body?.email === "string" ? req.body.email.trim().toLowerCase() : "";
   if (!EMAIL_PATTERN.test(email)) {
     return res.status(400).json({ error: "Provide a valid email address" });
   }
 
-  const user = getUserByEmail(email);
+  const user = await getUserByEmail(email);
   if (user) {
-    const resetToken = createPasswordResetToken(user.id);
+    const resetToken = await createPasswordResetToken(user.id);
     const resetUrl = `${process.env.FRONTEND_URL || "http://localhost:5173"}/reset-password?token=${resetToken}`;
     // Fire-and-forget: a slow/failing mail provider must not delay or
     // change this endpoint's response, which is deliberately identical
@@ -162,9 +163,9 @@ authRouter.post("/api/auth/forgot-password", authLimiter, (req, res) => {
   }
 
   res.json({ message: "If that email is registered, a reset link has been sent" });
-});
+}));
 
-authRouter.post("/api/auth/reset-password", authLimiter, async (req, res) => {
+authRouter.post("/api/auth/reset-password", authLimiter, asyncHandler(async (req, res) => {
   const token = typeof req.body?.token === "string" ? req.body.token : "";
   const newPassword = typeof req.body?.password === "string" ? req.body.password : "";
 
@@ -175,18 +176,18 @@ authRouter.post("/api/auth/reset-password", authLimiter, async (req, res) => {
     return res.status(400).json({ error: "Password must be at least 8 characters" });
   }
 
-  const resolved = resolvePasswordResetToken(token);
+  const resolved = await resolvePasswordResetToken(token);
   if (!resolved) {
     return res.status(400).json({ error: "Invalid or expired reset token" });
   }
 
   await updatePassword(resolved.userId, newPassword);
-  consumePasswordResetToken(token);
+  await consumePasswordResetToken(token);
 
   res.json({ message: "Password has been reset — you can now log in" });
-});
+}));
 
-authRouter.post("/api/auth/change-password", requireAuth, async (req, res) => {
+authRouter.post("/api/auth/change-password", requireAuth, asyncHandler(async (req, res) => {
   const currentPassword = typeof req.body?.currentPassword === "string" ? req.body.currentPassword : "";
   const newPassword = typeof req.body?.newPassword === "string" ? req.body.newPassword : "";
 
@@ -194,7 +195,7 @@ authRouter.post("/api/auth/change-password", requireAuth, async (req, res) => {
     return res.status(400).json({ error: "New password must be at least 8 characters" });
   }
 
-  const user = getUserById(req.userId!);
+  const user = await getUserById(req.userId!);
   if (!user) return res.status(401).json({ error: "Invalid session" });
 
   const valid = await verifyCredentials(user.email, currentPassword);
@@ -204,9 +205,9 @@ authRouter.post("/api/auth/change-password", requireAuth, async (req, res) => {
 
   await updatePassword(req.userId!, newPassword);
   res.json({ message: "Password updated" });
-});
+}));
 
-authRouter.patch("/api/auth/email", requireAuth, async (req, res) => {
+authRouter.patch("/api/auth/email", requireAuth, asyncHandler(async (req, res) => {
   const newEmail = typeof req.body?.email === "string" ? req.body.email.trim().toLowerCase() : "";
   const password = typeof req.body?.password === "string" ? req.body.password : "";
 
@@ -214,7 +215,7 @@ authRouter.patch("/api/auth/email", requireAuth, async (req, res) => {
     return res.status(400).json({ error: "Provide a valid email address" });
   }
 
-  const user = getUserById(req.userId!);
+  const user = await getUserById(req.userId!);
   if (!user) return res.status(401).json({ error: "Invalid session" });
 
   const valid = await verifyCredentials(user.email, password);
@@ -223,7 +224,7 @@ authRouter.patch("/api/auth/email", requireAuth, async (req, res) => {
   }
 
   try {
-    const updated = updateEmail(req.userId!, newEmail);
+    const updated = await updateEmail(req.userId!, newEmail);
     res.json({ user: updated });
   } catch (err) {
     if (err instanceof EmailAlreadyRegisteredError) {
@@ -231,30 +232,30 @@ authRouter.patch("/api/auth/email", requireAuth, async (req, res) => {
     }
     throw err;
   }
-});
+}));
 
-authRouter.get("/api/auth/sessions", requireAuth, (req, res) => {
+authRouter.get("/api/auth/sessions", requireAuth, asyncHandler(async (req, res) => {
   const header = req.header("authorization") || "";
   const currentToken = header.startsWith("Bearer ") ? header.slice("Bearer ".length) : undefined;
-  const sessions = listSessions(req.userId!, currentToken);
+  const sessions = await listSessions(req.userId!, currentToken);
   res.json({ sessions });
-});
+}));
 
-authRouter.delete("/api/auth/sessions/:tokenPrefix", requireAuth, (req, res) => {
-  const destroyed = destroySessionByPrefix(req.userId!, req.params.tokenPrefix);
+authRouter.delete("/api/auth/sessions/:tokenPrefix", requireAuth, asyncHandler(async (req, res) => {
+  const destroyed = await destroySessionByPrefix(req.userId!, req.params.tokenPrefix);
   if (!destroyed) return res.status(404).json({ error: "Session not found" });
   res.status(204).end();
-});
+}));
 
-authRouter.post("/api/auth/sessions/revoke-all", requireAuth, (req, res) => {
-  destroyAllSessions(req.userId!);
-  const newToken = createSession(req.userId!);
+authRouter.post("/api/auth/sessions/revoke-all", requireAuth, asyncHandler(async (req, res) => {
+  await destroyAllSessions(req.userId!);
+  const newToken = await createSession(req.userId!);
   res.json({ token: newToken, message: "All other sessions have been revoked" });
-});
+}));
 
-authRouter.delete("/api/auth/account", requireAuth, async (req, res) => {
+authRouter.delete("/api/auth/account", requireAuth, asyncHandler(async (req, res) => {
   const password = typeof req.body?.password === "string" ? req.body.password : "";
-  const user = getUserById(req.userId!);
+  const user = await getUserById(req.userId!);
   if (!user) return res.status(401).json({ error: "Invalid session" });
 
   const valid = await verifyCredentials(user.email, password);
@@ -262,6 +263,6 @@ authRouter.delete("/api/auth/account", requireAuth, async (req, res) => {
     return res.status(401).json({ error: "Password is incorrect" });
   }
 
-  deleteUser(req.userId!);
+  await deleteUser(req.userId!);
   res.status(204).end();
-});
+}));

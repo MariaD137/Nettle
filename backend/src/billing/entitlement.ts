@@ -1,5 +1,6 @@
 import type { NextFunction, Request, Response } from "express";
 import { getUserById, type User } from "../auth/users";
+import { asyncHandler } from "../middleware/asyncHandler";
 
 /**
  * THE single source of truth for "does this account currently have paid
@@ -44,9 +45,12 @@ export const hasFullScanAccess = hasPaidEntitlement;
  * entitlement, and a subscription that lapsed seconds ago must be honored
  * immediately, not after whatever cached it happens to refresh.
  */
-export function resolveEntitlement(userId: string | undefined, apiKeyProjectUserId?: string): Pick<User, "plan" | "subscriptionStatus"> {
+export async function resolveEntitlement(
+  userId: string | undefined,
+  apiKeyProjectUserId?: string
+): Promise<Pick<User, "plan" | "subscriptionStatus">> {
   const id = userId ?? apiKeyProjectUserId;
-  const user = id ? getUserById(id) : null;
+  const user = id ? await getUserById(id) : null;
   if (user) return { plan: user.plan, subscriptionStatus: user.subscriptionStatus };
   return { plan: "free", subscriptionStatus: "none" };
 }
@@ -59,8 +63,8 @@ export function resolveEntitlement(userId: string | undefined, apiKeyProjectUser
  * The 402 body carries `subscriptionRequired` so the frontend can tell a
  * paywall bounce apart from any other error and route to /subscribe.
  */
-export function requireSubscription(req: Request, res: Response, next: NextFunction) {
-  const user = req.userId ? getUserById(req.userId) : null;
+export const requireSubscription = asyncHandler(async (req: Request, res: Response, next: NextFunction) => {
+  const user = req.userId ? await getUserById(req.userId) : null;
   if (!hasPaidEntitlement(user)) {
     return res.status(402).json({
       error: "An active Tier 1 or Tier 2 subscription is required",
@@ -70,4 +74,4 @@ export function requireSubscription(req: Request, res: Response, next: NextFunct
     });
   }
   next();
-}
+});

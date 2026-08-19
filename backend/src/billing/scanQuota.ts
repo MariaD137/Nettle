@@ -1,4 +1,4 @@
-import { db, newId } from "../db";
+import { db, newId, withTransaction, type DbHandle } from "../db";
 import { getUserById } from "../auth/users";
 import { hasPaidEntitlement } from "./entitlement";
 
@@ -61,23 +61,27 @@ export function currentPeriod(anchorIso: string, now = new Date()): { start: Dat
   return { start, end };
 }
 
-export function recordScanUsage(userId: string, projectId: string | null, source: "upload" | "repo" | "url"): void {
-  db.prepare(
-    "INSERT INTO scan_usage (id, user_id, project_id, source, occurred_at) VALUES (?, ?, ?, ?, ?)"
-  ).run(newId(), userId, projectId, source, new Date().toISOString());
+export async function recordScanUsage(
+  userId: string,
+  projectId: string | null,
+  source: "upload" | "repo" | "url"
+): Promise<void> {
+  await db
+    .prepare("INSERT INTO scan_usage (id, user_id, project_id, source, occurred_at) VALUES (?, ?, ?, ?, ?)")
+    .run(newId(), userId, projectId, source, new Date().toISOString());
 }
 
-export function countScanUsage(userId: string, since: Date): number {
-  const row = db
+export async function countScanUsage(userId: string, since: Date): Promise<number> {
+  const row = (await db
     .prepare("SELECT COUNT(*) AS n FROM scan_usage WHERE user_id = ? AND occurred_at >= ?")
-    .get(userId, since.toISOString()) as { n: number } | undefined;
-  return row?.n ?? 0;
+    .get(userId, since.toISOString())) as { n: number | string } | undefined;
+  return row?.n !== undefined ? Number(row.n) : 0;
 }
 
 /** Shared by getQuotaState and reserveScanUsage — the plan/period/limit an
  * account is metered against right now, or null if it isn't metered at all. */
-function meteredContext(userId: string): { limit: number; anchor: string } | null {
-  const user = getUserById(userId);
+async function meteredContext(userId: string): Promise<{ limit: number; anchor: string } | null> {
+  const user = await getUserById(userId);
   if (!user) return null;
   if (!hasPaidEntitlement(user)) return null;
 
@@ -97,12 +101,12 @@ function meteredContext(userId: string): { limit: number; anchor: string } | nul
  * to preview-tier scanning like any other free caller; there is no metered
  * quota to report because there is no paid allowance to meter.
  */
-export function getQuotaState(userId: string): QuotaState | null {
-  const ctx = meteredContext(userId);
+export async function getQuotaState(userId: string): Promise<QuotaState | null> {
+  const ctx = await meteredContext(userId);
   if (!ctx) return null;
 
   const { start, end } = currentPeriod(ctx.anchor);
-  const used = countScanUsage(userId, start);
+  const used = await countScanUsage(userId, start);
 
   return {
     limit: ctx.limit,
@@ -127,71 +131,106 @@ export interface QuotaReservation {
 }
 
 /**
- * Atomically checks quota and reserves one unit of usage in a single pass,
- * with no `await` between the check and the insert.
+ * Atomically checks quota and reserves one unit of usage.
  *
- * This replaces the previous pattern of checking quota, then — only after
- * the scan itself had already run — calling recordScanUsage(). That left a
- * real TOCTOU window: several scan submissions from the same account,
- * arriving close together, could each observe the same not-yet-exhausted
- * count before any of them recorded usage, together exceeding the
- * account's allowance. node:sqlite executes each statement synchronously,
- * so as long as nothing yields the event loop between the COUNT and the
- * INSERT below, two concurrent callers can't both observe "not yet at the
- * limit" for what should have been the last available slot.
+ * This used to rely on node:sqlite's DatabaseSync being fully synchronous:
+ * as long as nothing yielded the event loop between the COUNT and the
+ * INSERT, two "concurrent" requests in the same single-threaded process
+ * couldn't interleave. PostgreSQL is genuinely concurrent across
+ * connections (and, once deployed, across every App Runner instance), so
+ * that guarantee no longer holds — two real concurrent reservations for
+ * the same user could both COUNT before either INSERTs, together
+ * exceeding the account's allowance.
+ *
+ * pg_advisory_xact_lock(hashtext(userId)) closes that window: it's a
+ * transaction-scoped lock keyed by this user's id, so a second concurrent
+ * reservation for the *same* user blocks until the first transaction
+ * commits or rolls back (auto-releasing the lock either way), then sees
+ * that reservation's effect on the COUNT. Reservations for different users
+ * never contend with each other. This reproduces exactly the "one
+ * reservation attempt at a time per account" behavior the old
+ * single-threaded implementation had, without serializing unrelated users.
  */
-export function reserveScanUsage(
+export async function reserveScanUsage(
   userId: string | undefined,
   projectId: string | null,
   source: "upload" | "repo" | "url"
-): QuotaReservation {
+): Promise<QuotaReservation> {
   if (!userId) return { blocked: false, usageId: null, quota: null };
 
-  const ctx = meteredContext(userId);
-  if (!ctx) return { blocked: false, usageId: null, quota: null };
+  return withTransaction(async (tx) => {
+    await tx.prepare("SELECT pg_advisory_xact_lock(hashtext(?))").get(userId);
 
-  const { start, end } = currentPeriod(ctx.anchor);
-  const used = countScanUsage(userId, start);
+    const ctx = await meteredContextTx(tx, userId);
+    if (!ctx) return { blocked: false, usageId: null, quota: null };
 
-  if (used >= ctx.limit) {
+    const { start, end } = currentPeriod(ctx.anchor);
+    const used = await countScanUsageTx(tx, userId, start);
+
+    if (used >= ctx.limit) {
+      return {
+        blocked: true,
+        usageId: null,
+        quota: {
+          limit: ctx.limit,
+          used,
+          remaining: 0,
+          periodStart: start.toISOString(),
+          periodEnd: end.toISOString(),
+          exhausted: true,
+        },
+      };
+    }
+
+    const usageId = newId();
+    await tx
+      .prepare("INSERT INTO scan_usage (id, user_id, project_id, source, occurred_at) VALUES (?, ?, ?, ?, ?)")
+      .run(usageId, userId, projectId, source, new Date().toISOString());
+
+    const newUsed = used + 1;
     return {
-      blocked: true,
-      usageId: null,
+      blocked: false,
+      usageId,
       quota: {
         limit: ctx.limit,
-        used,
-        remaining: 0,
+        used: newUsed,
+        remaining: Math.max(0, ctx.limit - newUsed),
         periodStart: start.toISOString(),
         periodEnd: end.toISOString(),
-        exhausted: true,
+        exhausted: newUsed >= ctx.limit,
       },
     };
-  }
+  });
+}
 
-  const usageId = newId();
-  db.prepare(
-    "INSERT INTO scan_usage (id, user_id, project_id, source, occurred_at) VALUES (?, ?, ?, ?, ?)"
-  ).run(usageId, userId, projectId, source, new Date().toISOString());
+// Transaction-scoped duplicates of meteredContext/countScanUsage: they must
+// run against the same locked transaction client (`tx`) as the reservation
+// insert above, not a fresh pooled connection, or the advisory lock and the
+// read it's meant to protect would be on different sessions.
+async function meteredContextTx(tx: DbHandle, userId: string): Promise<{ limit: number; anchor: string } | null> {
+  const row = (await tx.prepare("SELECT plan, subscription_status, billing_anchor, created_at FROM users WHERE id = ?").get(
+    userId
+  )) as { plan: string; subscription_status: string; billing_anchor: string | null; created_at: string } | undefined;
+  if (!row) return null;
+  if (!hasPaidEntitlement({ plan: row.plan, subscriptionStatus: row.subscription_status })) return null;
 
-  const newUsed = used + 1;
-  return {
-    blocked: false,
-    usageId,
-    quota: {
-      limit: ctx.limit,
-      used: newUsed,
-      remaining: Math.max(0, ctx.limit - newUsed),
-      periodStart: start.toISOString(),
-      periodEnd: end.toISOString(),
-      exhausted: newUsed >= ctx.limit,
-    },
-  };
+  const limit = SCAN_QUOTAS[row.plan];
+  if (limit === undefined) return null;
+
+  return { limit, anchor: row.billing_anchor ?? row.created_at };
+}
+
+async function countScanUsageTx(tx: DbHandle, userId: string, since: Date): Promise<number> {
+  const row = (await tx
+    .prepare("SELECT COUNT(*) AS n FROM scan_usage WHERE user_id = ? AND occurred_at >= ?")
+    .get(userId, since.toISOString())) as { n: number | string } | undefined;
+  return row?.n !== undefined ? Number(row.n) : 0;
 }
 
 /** Refunds a reservation for a scan that didn't actually succeed. No-op for
  * a null id (an unmetered account's reservation, which never reserved
  * anything to begin with). */
-export function releaseScanUsage(usageId: string | null): void {
+export async function releaseScanUsage(usageId: string | null): Promise<void> {
   if (!usageId) return;
-  db.prepare("DELETE FROM scan_usage WHERE id = ?").run(usageId);
+  await db.prepare("DELETE FROM scan_usage WHERE id = ?").run(usageId);
 }

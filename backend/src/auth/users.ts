@@ -50,7 +50,7 @@ function toUser(row: UserRow): User {
 // call it directly), and it's the single source of truth: an email
 // removed from the list is actually de-admin'd, not just no-longer-added,
 // so access doesn't silently outlive being taken off the list.
-export function syncAdminEmails(): void {
+export async function syncAdminEmails(): Promise<void> {
   const raw = process.env.NETTLE_ADMIN_EMAILS || "";
   const allowed = new Set(
     raw
@@ -59,7 +59,7 @@ export function syncAdminEmails(): void {
       .filter(Boolean)
   );
 
-  const rows = db.prepare("SELECT id, email, is_admin FROM users").all() as unknown as {
+  const rows = (await db.prepare("SELECT id, email, is_admin FROM users").all()) as unknown as {
     id: string;
     email: string;
     is_admin: number;
@@ -69,7 +69,7 @@ export function syncAdminEmails(): void {
     const shouldBeAdmin = allowed.has(row.email.toLowerCase());
     const isAdmin = row.is_admin === 1;
     if (shouldBeAdmin !== isAdmin) {
-      db.prepare("UPDATE users SET is_admin = ? WHERE id = ?").run(shouldBeAdmin ? 1 : 0, row.id);
+      await db.prepare("UPDATE users SET is_admin = ? WHERE id = ?").run(shouldBeAdmin ? 1 : 0, row.id);
     }
   }
 }
@@ -77,13 +77,13 @@ export function syncAdminEmails(): void {
 export class EmailAlreadyRegisteredError extends Error {}
 
 export async function createUser(email: string, password: string): Promise<User> {
-  const existing = db.prepare("SELECT 1 FROM users WHERE email = ?").get(email);
+  const existing = await db.prepare("SELECT 1 FROM users WHERE email = ?").get(email);
   if (existing) throw new EmailAlreadyRegisteredError();
 
   const passwordHash = await hashPassword(password);
   const id = newId();
   const createdAt = new Date().toISOString();
-  db.prepare("INSERT INTO users (id, email, password_hash, created_at) VALUES (?, ?, ?, ?)").run(
+  await db.prepare("INSERT INTO users (id, email, password_hash, created_at) VALUES (?, ?, ?, ?)").run(
     id,
     email,
     passwordHash,
@@ -112,36 +112,36 @@ export async function createUser(email: string, password: string): Promise<User>
 const DUMMY_PASSWORD_HASH = `${"a".repeat(32)}:${"b".repeat(128)}`;
 
 export async function verifyCredentials(email: string, password: string): Promise<User | null> {
-  const row = db.prepare("SELECT * FROM users WHERE email = ?").get(email) as UserRow | undefined;
+  const row = (await db.prepare("SELECT * FROM users WHERE email = ?").get(email)) as UserRow | undefined;
   const valid = await verifyPassword(password, row?.password_hash ?? DUMMY_PASSWORD_HASH);
   return row && valid ? toUser(row) : null;
 }
 
-export function getUserById(id: string): User | null {
-  const row = db.prepare("SELECT * FROM users WHERE id = ?").get(id) as UserRow | undefined;
+export async function getUserById(id: string): Promise<User | null> {
+  const row = (await db.prepare("SELECT * FROM users WHERE id = ?").get(id)) as UserRow | undefined;
   return row ? toUser(row) : null;
 }
 
-export function getUserByEmail(email: string): User | null {
-  const row = db.prepare("SELECT * FROM users WHERE email = ?").get(email) as UserRow | undefined;
+export async function getUserByEmail(email: string): Promise<User | null> {
+  const row = (await db.prepare("SELECT * FROM users WHERE email = ?").get(email)) as UserRow | undefined;
   return row ? toUser(row) : null;
 }
 
-export function setStripeCustomerId(userId: string, stripeCustomerId: string): void {
-  db.prepare("UPDATE users SET stripe_customer_id = ? WHERE id = ?").run(stripeCustomerId, userId);
+export async function setStripeCustomerId(userId: string, stripeCustomerId: string): Promise<void> {
+  await db.prepare("UPDATE users SET stripe_customer_id = ? WHERE id = ?").run(stripeCustomerId, userId);
 }
 
-export function setSubscriptionStatus(userId: string, plan: string, status: string): void {
-  db.prepare("UPDATE users SET plan = ?, subscription_status = ? WHERE id = ?").run(plan, status, userId);
+export async function setSubscriptionStatus(userId: string, plan: string, status: string): Promise<void> {
+  await db.prepare("UPDATE users SET plan = ?, subscription_status = ? WHERE id = ?").run(plan, status, userId);
 
   // Stamp the billing anchor the first time this account becomes active. It
   // is deliberately never overwritten: the monthly scan period is derived by
   // rolling this date forward, so moving it would silently reset someone's
   // usage mid-cycle.
   if (status === "active" || status === "trialing") {
-    db.prepare(
-      "UPDATE users SET billing_anchor = ? WHERE id = ? AND billing_anchor IS NULL"
-    ).run(new Date().toISOString(), userId);
+    await db
+      .prepare("UPDATE users SET billing_anchor = ? WHERE id = ? AND billing_anchor IS NULL")
+      .run(new Date().toISOString(), userId);
   }
 }
 
@@ -151,15 +151,15 @@ export function setSubscriptionStatus(userId: string, plan: string, status: stri
  * revisits an already-completed flow (e.g. a stale tab) shouldn't be able to
  * reset their own completion timestamp.
  */
-export function completeOnboarding(userId: string): User | null {
-  db.prepare(
-    "UPDATE users SET onboarding_completed_at = ? WHERE id = ? AND onboarding_completed_at IS NULL"
-  ).run(new Date().toISOString(), userId);
+export async function completeOnboarding(userId: string): Promise<User | null> {
+  await db
+    .prepare("UPDATE users SET onboarding_completed_at = ? WHERE id = ? AND onboarding_completed_at IS NULL")
+    .run(new Date().toISOString(), userId);
   return getUserById(userId);
 }
 
-export function getUserByStripeCustomerId(stripeCustomerId: string): User | null {
-  const row = db.prepare("SELECT * FROM users WHERE stripe_customer_id = ?").get(stripeCustomerId) as
+export async function getUserByStripeCustomerId(stripeCustomerId: string): Promise<User | null> {
+  const row = (await db.prepare("SELECT * FROM users WHERE stripe_customer_id = ?").get(stripeCustomerId)) as
     | UserRow
     | undefined;
   return row ? toUser(row) : null;
@@ -167,54 +167,61 @@ export function getUserByStripeCustomerId(stripeCustomerId: string): User | null
 
 export async function updatePassword(userId: string, newPassword: string): Promise<void> {
   const passwordHash = await hashPassword(newPassword);
-  db.prepare("UPDATE users SET password_hash = ? WHERE id = ?").run(passwordHash, userId);
+  await db.prepare("UPDATE users SET password_hash = ? WHERE id = ?").run(passwordHash, userId);
 }
 
 const RESET_TOKEN_LIFETIME_MS = 60 * 60 * 1000; // 1 hour
 
-export function createPasswordResetToken(userId: string): string {
+export async function createPasswordResetToken(userId: string): Promise<string> {
   const token = crypto.randomBytes(32).toString("hex");
   const expiresAt = new Date(Date.now() + RESET_TOKEN_LIFETIME_MS).toISOString();
-  db.prepare(
-    "INSERT OR REPLACE INTO password_resets (token, user_id, expires_at) VALUES (?, ?, ?)"
-  ).run(token, userId, expiresAt);
+  // token is the primary key and freshly random every call, so a real
+  // conflict is not expected in practice — the upsert exists to preserve
+  // the original INSERT OR REPLACE's replace-on-PK-collision semantics
+  // exactly rather than assuming a collision can never happen.
+  await db
+    .prepare(
+      "INSERT INTO password_resets (token, user_id, expires_at) VALUES (?, ?, ?) " +
+        "ON CONFLICT (token) DO UPDATE SET user_id = EXCLUDED.user_id, expires_at = EXCLUDED.expires_at"
+    )
+    .run(token, userId, expiresAt);
   return token;
 }
 
-export function resolvePasswordResetToken(token: string): { userId: string } | null {
-  const row = db.prepare("SELECT user_id, expires_at FROM password_resets WHERE token = ?").get(token) as
+export async function resolvePasswordResetToken(token: string): Promise<{ userId: string } | null> {
+  const row = (await db.prepare("SELECT user_id, expires_at FROM password_resets WHERE token = ?").get(token)) as
     | { user_id: string; expires_at: string }
     | undefined;
   if (!row) return null;
   if (new Date(row.expires_at).getTime() < Date.now()) {
-    db.prepare("DELETE FROM password_resets WHERE token = ?").run(token);
+    await db.prepare("DELETE FROM password_resets WHERE token = ?").run(token);
     return null;
   }
   return { userId: row.user_id };
 }
 
-export function consumePasswordResetToken(token: string): void {
-  db.prepare("DELETE FROM password_resets WHERE token = ?").run(token);
+export async function consumePasswordResetToken(token: string): Promise<void> {
+  await db.prepare("DELETE FROM password_resets WHERE token = ?").run(token);
 }
 
 const EMAIL_VERIFICATION_TOKEN_LIFETIME_MS = 24 * 60 * 60 * 1000; // 24 hours
 
-export function createEmailVerificationToken(userId: string): string {
+export async function createEmailVerificationToken(userId: string): Promise<string> {
   const token = crypto.randomBytes(32).toString("hex");
   const expiresAt = new Date(Date.now() + EMAIL_VERIFICATION_TOKEN_LIFETIME_MS).toISOString();
-  db.prepare(
-    "INSERT INTO email_verifications (token, user_id, expires_at) VALUES (?, ?, ?)"
-  ).run(token, userId, expiresAt);
+  await db
+    .prepare("INSERT INTO email_verifications (token, user_id, expires_at) VALUES (?, ?, ?)")
+    .run(token, userId, expiresAt);
   return token;
 }
 
-export function resolveEmailVerificationToken(token: string): { userId: string } | null {
-  const row = db.prepare("SELECT user_id, expires_at FROM email_verifications WHERE token = ?").get(token) as
-    | { user_id: string; expires_at: string }
-    | undefined;
+export async function resolveEmailVerificationToken(token: string): Promise<{ userId: string } | null> {
+  const row = (await db.prepare("SELECT user_id, expires_at FROM email_verifications WHERE token = ?").get(
+    token
+  )) as { user_id: string; expires_at: string } | undefined;
   if (!row) return null;
   if (new Date(row.expires_at).getTime() < Date.now()) {
-    db.prepare("DELETE FROM email_verifications WHERE token = ?").run(token);
+    await db.prepare("DELETE FROM email_verifications WHERE token = ?").run(token);
     return null;
   }
   return { userId: row.user_id };
@@ -223,22 +230,22 @@ export function resolveEmailVerificationToken(token: string): { userId: string }
 // Single-use: the token is deleted the moment it's successfully applied,
 // same as a password reset token — a link that already worked shouldn't
 // keep working if it leaks (email forwarding, browser history, etc).
-export function consumeEmailVerificationToken(token: string): void {
-  db.prepare("DELETE FROM email_verifications WHERE token = ?").run(token);
+export async function consumeEmailVerificationToken(token: string): Promise<void> {
+  await db.prepare("DELETE FROM email_verifications WHERE token = ?").run(token);
 }
 
-export function markEmailVerified(userId: string): User | null {
-  db.prepare(
-    "UPDATE users SET email_verified_at = ? WHERE id = ? AND email_verified_at IS NULL"
-  ).run(new Date().toISOString(), userId);
-  db.prepare("DELETE FROM email_verifications WHERE user_id = ?").run(userId);
+export async function markEmailVerified(userId: string): Promise<User | null> {
+  await db
+    .prepare("UPDATE users SET email_verified_at = ? WHERE id = ? AND email_verified_at IS NULL")
+    .run(new Date().toISOString(), userId);
+  await db.prepare("DELETE FROM email_verifications WHERE user_id = ?").run(userId);
   return getUserById(userId);
 }
 
-export function updateEmail(userId: string, newEmail: string): User | null {
-  const existing = db.prepare("SELECT 1 FROM users WHERE email = ? AND id != ?").get(newEmail, userId);
+export async function updateEmail(userId: string, newEmail: string): Promise<User | null> {
+  const existing = await db.prepare("SELECT 1 FROM users WHERE email = ? AND id != ?").get(newEmail, userId);
   if (existing) throw new EmailAlreadyRegisteredError();
-  db.prepare("UPDATE users SET email = ? WHERE id = ?").run(newEmail, userId);
+  await db.prepare("UPDATE users SET email = ? WHERE id = ?").run(newEmail, userId);
   return getUserById(userId);
 }
 
@@ -257,43 +264,49 @@ export function updateEmail(userId: string, newEmail: string): User | null {
  * no user/project ownership at all — it's a global Stripe event-id dedup
  * table, not account data.)
  */
-export function deleteUser(userId: string): void {
-  db.prepare("DELETE FROM password_resets WHERE user_id = ?").run(userId);
-  db.prepare("DELETE FROM email_verifications WHERE user_id = ?").run(userId);
-  db.prepare("DELETE FROM payment_failures WHERE user_id = ?").run(userId);
-  db.prepare("DELETE FROM sessions WHERE user_id = ?").run(userId);
-  db.prepare("DELETE FROM scan_usage WHERE user_id = ?").run(userId);
+export async function deleteUser(userId: string): Promise<void> {
+  await db.prepare("DELETE FROM password_resets WHERE user_id = ?").run(userId);
+  await db.prepare("DELETE FROM email_verifications WHERE user_id = ?").run(userId);
+  await db.prepare("DELETE FROM payment_failures WHERE user_id = ?").run(userId);
+  await db.prepare("DELETE FROM sessions WHERE user_id = ?").run(userId);
+  await db.prepare("DELETE FROM scan_usage WHERE user_id = ?").run(userId);
 
-  const projectIds = db.prepare("SELECT id FROM projects WHERE user_id = ?").all(userId) as unknown as { id: string }[];
+  const projectIds = (await db.prepare("SELECT id FROM projects WHERE user_id = ?").all(userId)) as unknown as {
+    id: string;
+  }[];
   for (const p of projectIds) {
-    const webhookIds = db.prepare("SELECT id FROM webhooks WHERE project_id = ?").all(p.id) as unknown as { id: string }[];
+    const webhookIds = (await db.prepare("SELECT id FROM webhooks WHERE project_id = ?").all(p.id)) as unknown as {
+      id: string;
+    }[];
     for (const w of webhookIds) {
-      db.prepare("DELETE FROM webhook_events WHERE webhook_id = ?").run(w.id);
+      await db.prepare("DELETE FROM webhook_events WHERE webhook_id = ?").run(w.id);
     }
-    db.prepare("DELETE FROM webhooks WHERE project_id = ?").run(p.id);
-    db.prepare("DELETE FROM notification_channels WHERE project_id = ?").run(p.id);
-    db.prepare("DELETE FROM notification_deliveries WHERE project_id = ?").run(p.id);
+    await db.prepare("DELETE FROM webhooks WHERE project_id = ?").run(p.id);
+    await db.prepare("DELETE FROM notification_channels WHERE project_id = ?").run(p.id);
+    await db.prepare("DELETE FROM notification_deliveries WHERE project_id = ?").run(p.id);
 
-    const ruleIds = db.prepare("SELECT id FROM custom_rules WHERE project_id = ?").all(p.id) as unknown as { id: string }[];
+    const ruleIds = (await db.prepare("SELECT id FROM custom_rules WHERE project_id = ?").all(p.id)) as unknown as {
+      id: string;
+    }[];
     for (const r of ruleIds) {
-      db.prepare("DELETE FROM rule_versions WHERE rule_id = ?").run(r.id);
-      db.prepare("DELETE FROM rule_test_results WHERE rule_id = ?").run(r.id);
+      await db.prepare("DELETE FROM rule_versions WHERE rule_id = ?").run(r.id);
+      await db.prepare("DELETE FROM rule_test_results WHERE rule_id = ?").run(r.id);
     }
-    db.prepare("DELETE FROM custom_rules WHERE project_id = ?").run(p.id);
+    await db.prepare("DELETE FROM custom_rules WHERE project_id = ?").run(p.id);
 
-    db.prepare("DELETE FROM api_keys WHERE project_id = ?").run(p.id);
-    db.prepare("DELETE FROM detection_settings WHERE project_id = ?").run(p.id);
-    db.prepare("DELETE FROM finding_history WHERE project_id = ?").run(p.id);
-    db.prepare("DELETE FROM ml_baselines WHERE project_id = ?").run(p.id);
-    db.prepare("DELETE FROM anomaly_scores WHERE project_id = ?").run(p.id);
-    db.prepare("DELETE FROM ml_model_status WHERE project_id = ?").run(p.id);
+    await db.prepare("DELETE FROM api_keys WHERE project_id = ?").run(p.id);
+    await db.prepare("DELETE FROM detection_settings WHERE project_id = ?").run(p.id);
+    await db.prepare("DELETE FROM finding_history WHERE project_id = ?").run(p.id);
+    await db.prepare("DELETE FROM ml_baselines WHERE project_id = ?").run(p.id);
+    await db.prepare("DELETE FROM anomaly_scores WHERE project_id = ?").run(p.id);
+    await db.prepare("DELETE FROM ml_model_status WHERE project_id = ?").run(p.id);
 
-    db.prepare("DELETE FROM alerts WHERE project_id = ?").run(p.id);
-    db.prepare("DELETE FROM events WHERE project_id = ?").run(p.id);
-    db.prepare("DELETE FROM scans WHERE project_id = ?").run(p.id);
-    db.prepare("DELETE FROM finding_statuses WHERE project_id = ?").run(p.id);
+    await db.prepare("DELETE FROM alerts WHERE project_id = ?").run(p.id);
+    await db.prepare("DELETE FROM events WHERE project_id = ?").run(p.id);
+    await db.prepare("DELETE FROM scans WHERE project_id = ?").run(p.id);
+    await db.prepare("DELETE FROM finding_statuses WHERE project_id = ?").run(p.id);
   }
-  db.prepare("DELETE FROM projects WHERE user_id = ?").run(userId);
-  db.prepare("DELETE FROM notification_preferences WHERE user_id = ?").run(userId);
-  db.prepare("DELETE FROM users WHERE id = ?").run(userId);
+  await db.prepare("DELETE FROM projects WHERE user_id = ?").run(userId);
+  await db.prepare("DELETE FROM notification_preferences WHERE user_id = ?").run(userId);
+  await db.prepare("DELETE FROM users WHERE id = ?").run(userId);
 }

@@ -17,18 +17,26 @@ describe('Phase 13: ML Analytics & Anomaly Detection', () => {
   let projectId: string;
   let userId: string;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     projectId = newId();
     userId = newId();
 
     // Create test data
-    db.exec(`
-      INSERT OR IGNORE INTO users (id, email, password_hash, created_at)
-      VALUES ('${userId}', 'ml-${userId}@example.com', 'hash', '${new Date().toISOString()}');
+    await db
+      .prepare(
+        `INSERT INTO users (id, email, password_hash, created_at)
+         VALUES (?, ?, ?, ?)
+         ON CONFLICT (id) DO NOTHING`
+      )
+      .run(userId, `ml-${userId}@example.com`, "hash", new Date().toISOString());
 
-      INSERT OR IGNORE INTO projects (id, user_id, name, api_key, created_at)
-      VALUES ('${projectId}', '${userId}', 'ML Test', 'ml_key_${projectId}', '${new Date().toISOString()}');
-    `);
+    await db
+      .prepare(
+        `INSERT INTO projects (id, user_id, name, api_key, created_at)
+         VALUES (?, ?, ?, ?, ?)
+         ON CONFLICT (id) DO NOTHING`
+      )
+      .run(projectId, userId, "ML Test", `ml_key_${projectId}`, new Date().toISOString());
   });
 
   describe('Baseline Calculation', () => {
@@ -37,7 +45,7 @@ describe('Phase 13: ML Analytics & Anomaly Detection', () => {
       const now = new Date();
       for (let i = 0; i < 100; i++) {
         const eventTime = new Date(now.getTime() - i * 60000).toISOString();
-        db.prepare(`
+        await db.prepare(`
           INSERT INTO events (id, project_id, occurred_at, ip, method, path, status_code)
           VALUES (?, ?, ?, '192.168.1.1', 'GET', '/api/test', 200)
         `).run(newId(), projectId, eventTime);
@@ -58,7 +66,7 @@ describe('Phase 13: ML Analytics & Anomaly Detection', () => {
       const now = new Date();
       for (let i = 0; i < 10; i++) {
         const eventTime = new Date(now.getTime() - i * 60000).toISOString();
-        db.prepare(`
+        await db.prepare(`
           INSERT INTO events (id, project_id, occurred_at, ip, method, path, status_code)
           VALUES (?, ?, ?, '192.168.1.1', 'GET', '/api/test', 200)
         `).run(newId(), projectId, eventTime);
@@ -66,7 +74,7 @@ describe('Phase 13: ML Analytics & Anomaly Detection', () => {
 
       await calculateBaselines(projectId, 2);
 
-      const baseline = getBaseline(projectId, 'request_rate');
+      const baseline = await getBaseline(projectId, 'request_rate');
       assert.notEqual(baseline, undefined);
       assert.equal(baseline?.metric_name, 'request_rate');
       assert.ok((baseline?.value ?? -1) >= 0);
@@ -76,7 +84,7 @@ describe('Phase 13: ML Analytics & Anomaly Detection', () => {
       const now = new Date();
       for (let i = 0; i < 10; i++) {
         const eventTime = new Date(now.getTime() - i * 60000).toISOString();
-        db.prepare(`
+        await db.prepare(`
           INSERT INTO events (id, project_id, occurred_at, ip, method, path, status_code)
           VALUES (?, ?, ?, '192.168.1.1', 'GET', '/api/test', 200)
         `).run(newId(), projectId, eventTime);
@@ -84,7 +92,7 @@ describe('Phase 13: ML Analytics & Anomaly Detection', () => {
 
       await calculateBaselines(projectId, 2);
 
-      const baseline = getBaseline(projectId, 'request_rate', 12);
+      const baseline = await getBaseline(projectId, 'request_rate', 12);
       // May be null if no events in that hour, which is fine
       assert.equal(baseline === null || (baseline?.value ?? -1) >= 0, true);
     });
@@ -176,7 +184,7 @@ describe('Phase 13: ML Analytics & Anomaly Detection', () => {
     it('should detect traffic anomalies', async () => {
       // Baseline well below the "1 event" scoreEventAnomaly compares
       // against, so this event registers as a clear rate spike.
-      db.prepare(`
+      await db.prepare(`
         INSERT INTO ml_baselines
         (id, project_id, metric_name, aggregation_period, hour_of_day, value, std_dev, updated_at)
         VALUES (?, ?, 'request_rate', 'hourly', ?, 0.05, 0.02, ?)
@@ -212,7 +220,7 @@ describe('Phase 13: ML Analytics & Anomaly Detection', () => {
 
       await scoreEventAnomaly(projectId, event);
 
-      const anomalies = getAnomalies(projectId, 10, 0);
+      const anomalies = await getAnomalies(projectId, 10, 0);
       assert.ok(anomalies.length > 0);
       assert.equal(anomalies[0].event_id, event.id);
     });
@@ -232,8 +240,8 @@ describe('Phase 13: ML Analytics & Anomaly Detection', () => {
         await scoreEventAnomaly(projectId, event);
       }
 
-      const lowThreshold = getAnomalies(projectId, 10, 0);
-      const highThreshold = getAnomalies(projectId, 10, 0.9);
+      const lowThreshold = await getAnomalies(projectId, 10, 0);
+      const highThreshold = await getAnomalies(projectId, 10, 0.9);
 
       assert.ok(lowThreshold.length >= highThreshold.length);
     });
@@ -286,26 +294,26 @@ describe('Phase 13: ML Analytics & Anomaly Detection', () => {
   });
 
   describe('Model Status Management', () => {
-    it('should update model status', () => {
-      updateModelStatus(projectId, 'isolation_forest', true, 0.94, 50000);
+    it('should update model status', async () => {
+      await updateModelStatus(projectId, 'isolation_forest', true, 0.94, 50000);
 
-      const status = getModelStatus(projectId);
+      const status = await getModelStatus(projectId);
       assert.equal(status?.model_type, 'isolation_forest');
       assert.equal(status?.is_active, true);
       assert.equal(status?.accuracy, 0.94);
       assert.equal(status?.training_samples, 50000);
     });
 
-    it('should retrieve model status', () => {
-      updateModelStatus(projectId, 'isolation_forest', false, 0.89, 30000);
+    it('should retrieve model status', async () => {
+      await updateModelStatus(projectId, 'isolation_forest', false, 0.89, 30000);
 
-      const status = getModelStatus(projectId);
+      const status = await getModelStatus(projectId);
       assert.notEqual(status, undefined);
       assert.equal(status?.is_active, false);
     });
 
-    it('should handle missing model status', () => {
-      const status = getModelStatus(newId());
+    it('should handle missing model status', async () => {
+      const status = await getModelStatus(newId());
       assert.equal(status, null);
     });
   });
@@ -315,7 +323,7 @@ describe('Phase 13: ML Analytics & Anomaly Detection', () => {
       // Create events with normal pattern
       const baseTime = new Date();
       for (let i = 0; i < 50; i++) {
-        db.prepare(`
+        await db.prepare(`
           INSERT INTO events (id, project_id, occurred_at, ip, method, path, status_code)
           VALUES (?, ?, ?, '192.168.1.${i % 10}', 'GET', '/api/test', ${200 + (i % 100)})
         `).run(

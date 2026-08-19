@@ -82,7 +82,7 @@ test("every dashboard route is paywalled, not just the entry point", async () =>
   const { server, base } = await listen(buildApp());
   try {
     const user = await createUser("paywall-routes@example.com", PASSWORD);
-    const project = createProject(user.id, "Unreachable");
+    const project = await createProject(user.id, "Unreachable");
     const token = await signUp(base, "paywall-other@example.com", PASSWORD);
 
     const routes: [string, string][] = [
@@ -133,7 +133,7 @@ test("an active subscription opens the dashboard", async () => {
     assert.equal(res.status, 402);
 
     // What the Stripe checkout.session.completed webhook does.
-    setSubscriptionStatus(await findUserId(base, token), "tier1", "active");
+    await setSubscriptionStatus(await findUserId(base, token), "tier1", "active");
 
     res = await fetch(`${base}/api/overview`, { headers: { Authorization: `Bearer ${token}` } });
     assert.equal(res.status, 200);
@@ -150,12 +150,12 @@ test("cancelling a subscription closes the dashboard again", async () => {
     const token = await signUp(base, "paywall-lapse@example.com", PASSWORD);
     const id = await findUserId(base, token);
 
-    setSubscriptionStatus(id, "tier1", "active");
+    await setSubscriptionStatus(id, "tier1", "active");
     let res = await fetch(`${base}/api/projects`, { headers: { Authorization: `Bearer ${token}` } });
     assert.equal(res.status, 200);
 
     // Mirrors the customer.subscription.deleted webhook path.
-    setSubscriptionStatus(id, "tier1", "canceled");
+    await setSubscriptionStatus(id, "tier1", "canceled");
     res = await fetch(`${base}/api/projects`, { headers: { Authorization: `Bearer ${token}` } });
     assert.equal(res.status, 402);
     assert.equal((await res.json()).subscriptionRequired, true);
@@ -187,7 +187,7 @@ test("public trust badges stay readable without auth or a subscription", async (
   const { server, base } = await listen(buildApp());
   try {
     const user = await createUser("paywall-badge@example.com", PASSWORD);
-    const project = createProject(user.id, "Badged");
+    const project = await createProject(user.id, "Badged");
 
     // No Authorization header at all — this is an <img> tag on someone's site.
     const res = await fetch(`${base}/api/projects/${project.id}/badge.svg`);

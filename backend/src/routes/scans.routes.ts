@@ -15,6 +15,7 @@ import { applyScanAccess } from "../billing/scanAccess";
 import { reserveScanUsage, releaseScanUsage } from "../billing/scanQuota";
 import { safeExtractZip } from "../scanner/safeExtraction";
 import { scanRateLimit } from "../middleware/rateLimit";
+import { asyncHandler } from "../middleware/asyncHandler";
 import type { Request as ExpressRequest } from "express";
 
 export const scansRouter = Router();
@@ -29,13 +30,13 @@ export const scansRouter = Router();
  * it if the scan this was reserved for doesn't actually succeed — a failed
  * attempt still shouldn't count against the allowance.
  */
-export function reserveOrRespond(
+export async function reserveOrRespond(
   userId: string | undefined,
   projectId: string | null,
   source: "upload" | "repo" | "url",
   res: Response
-): { proceed: boolean; usageId: string | null } {
-  const { blocked, usageId, quota } = reserveScanUsage(userId, projectId, source);
+): Promise<{ proceed: boolean; usageId: string | null }> {
+  const { blocked, usageId, quota } = await reserveScanUsage(userId, projectId, source);
   if (blocked && quota) {
     res.status(402).json({
       error: `You have used all ${quota.limit} scans in this billing period. Your allowance resets on ${new Date(quota.periodEnd).toLocaleDateString("en-GB")}.`,
@@ -59,7 +60,7 @@ export function reserveOrRespond(
  * cached earlier in the request, so a lapsed subscription is honored
  * immediately rather than on whatever refreshed req.userPlan last.
  */
-export function planForScan(req: ExpressRequest, apiKeyProjectUserId?: string) {
+export async function planForScan(req: ExpressRequest, apiKeyProjectUserId?: string) {
   return resolveEntitlement(req.userId, apiKeyProjectUserId);
 }
 
@@ -68,7 +69,7 @@ export const upload = multer({
   limits: { fileSize: 25 * 1024 * 1024 }, // 25MB — plenty for source code, not for asset-heavy repos
 });
 
-scansRouter.post("/api/scans", optionalAuth, scanRateLimit, upload.single("codebase"), (req: Request, res: Response) => {
+scansRouter.post("/api/scans", optionalAuth, scanRateLimit, upload.single("codebase"), asyncHandler(async (req: Request, res: Response) => {
   if (!req.file) {
     return res.status(400).json({ error: "Upload a zip file under the 'codebase' field" });
   }
@@ -82,9 +83,9 @@ scansRouter.post("/api/scans", optionalAuth, scanRateLimit, upload.single("codeb
   // reserveOrRespond reserves the usage slot atomically right here, before
   // any of the slow extraction/scan work below — see billing/scanQuota.ts.
   const upfrontKey = req.header("x-nettle-api-key");
-  const upfrontProject = upfrontKey ? findProjectByApiKeyForScope(upfrontKey, "scan") : null;
+  const upfrontProject = upfrontKey ? await findProjectByApiKeyForScope(upfrontKey, "scan") : null;
   const billedUserId = req.userId ?? upfrontProject?.userId;
-  const { proceed, usageId } = reserveOrRespond(billedUserId, upfrontProject?.id ?? null, "upload", res);
+  const { proceed, usageId } = await reserveOrRespond(billedUserId, upfrontProject?.id ?? null, "upload", res);
   if (!proceed) {
     fs.unlinkSync(req.file.path);
     return;
@@ -105,15 +106,15 @@ scansRouter.post("/api/scans", optionalAuth, scanRateLimit, upload.single("codeb
     // to the caller's plan, so upgrading later unlocks this scan in place.
     let ownerUserId: string | undefined;
     if (upfrontProject) {
-      recordScan(upfrontProject.id, report);
+      await recordScan(upfrontProject.id, report);
       ownerUserId = upfrontProject.userId;
     }
 
-    res.json(applyScanAccess(report, planForScan(req, ownerUserId)));
+    res.json(applyScanAccess(report, await planForScan(req, ownerUserId)));
   } catch (err) {
     // The reserved usage slot was for a scan that didn't actually succeed
     // — refund it, preserving "only successful scans count against quota".
-    releaseScanUsage(usageId);
+    await releaseScanUsage(usageId);
 
     const msg = (err as Error).message;
     let statusCode = 422;
@@ -135,12 +136,12 @@ scansRouter.post("/api/scans", optionalAuth, scanRateLimit, upload.single("codeb
     fs.unlinkSync(req.file.path);
     fs.rmSync(extractDir, { recursive: true, force: true });
   }
-});
+}));
 
 const ALLOWED_HOSTS = ["github.com", "gitlab.com", "bitbucket.org"];
 export const REPO_URL_PATTERN = /^https:\/\/(github\.com|gitlab\.com|bitbucket\.org)\/[\w.\-]+\/[\w.\-]+(\.git)?$/;
 
-scansRouter.post("/api/scans/repo", requireAuth, requireSubscription, scanRateLimit, (req: Request, res: Response) => {
+scansRouter.post("/api/scans/repo", requireAuth, requireSubscription, scanRateLimit, asyncHandler(async (req: Request, res: Response) => {
   const repoUrl = typeof req.body?.repoUrl === "string" ? req.body.repoUrl.trim() : "";
   const branch = typeof req.body?.branch === "string" ? req.body.branch.trim() : "";
   const apiKey = typeof req.body?.apiKey === "string" ? req.body.apiKey.trim() : "";
@@ -152,16 +153,16 @@ scansRouter.post("/api/scans/repo", requireAuth, requireSubscription, scanRateLi
     return res.status(400).json({ error: "Only GitHub, GitLab, and Bitbucket HTTPS URLs are supported" });
   }
 
-  const repoProject = apiKey ? findProjectByApiKeyForScope(apiKey, "scan") : null;
+  const repoProject = apiKey ? await findProjectByApiKeyForScope(apiKey, "scan") : null;
   const billedUserId = req.userId ?? repoProject?.userId;
-  const { proceed, usageId } = reserveOrRespond(billedUserId, repoProject?.id ?? null, "repo", res);
+  const { proceed, usageId } = await reserveOrRespond(billedUserId, repoProject?.id ?? null, "repo", res);
   if (!proceed) return;
 
   // A project with a stored access token can have its private repo scanned;
   // anonymous or token-less requests still work exactly as before for
   // public repos. The token is decrypted only here, used only in-process by
   // git, and never touches a log line, an error message, or the response.
-  const repoToken = repoProject ? getDecryptedRepoAccessToken(repoProject.id) : null;
+  const repoToken = repoProject ? await getDecryptedRepoAccessToken(repoProject.id) : null;
 
   const cloneDir = fs.mkdtempSync(path.join(os.tmpdir(), "nettle-repo-"));
   try {
@@ -171,13 +172,13 @@ scansRouter.post("/api/scans/repo", requireAuth, requireSubscription, scanRateLi
 
     let ownerUserId: string | undefined;
     if (repoProject) {
-      recordScan(repoProject.id, report);
+      await recordScan(repoProject.id, report);
       ownerUserId = repoProject.userId;
     }
 
-    res.json(applyScanAccess(report, planForScan(req, ownerUserId)));
+    res.json(applyScanAccess(report, await planForScan(req, ownerUserId)));
   } catch (err) {
-    releaseScanUsage(usageId);
+    await releaseScanUsage(usageId);
 
     const msg = (err as Error).message;
     if (msg.includes("not found") || msg.includes("Could not read")) {
@@ -190,7 +191,7 @@ scansRouter.post("/api/scans/repo", requireAuth, requireSubscription, scanRateLi
   } finally {
     fs.rmSync(cloneDir, { recursive: true, force: true });
   }
-});
+}));
 
 /**
  * URL scanning is external, non-destructive, black-box observation only —
@@ -200,7 +201,7 @@ scansRouter.post("/api/scans/repo", requireAuth, requireSubscription, scanRateLi
  * (for abuse accountability and quota metering) and an explicit ownership/
  * authorization confirmation, unlike the anonymous-friendly zip upload.
  */
-scansRouter.post("/api/scans/url", requireAuth, scanRateLimit, async (req: Request, res: Response) => {
+scansRouter.post("/api/scans/url", requireAuth, scanRateLimit, asyncHandler(async (req: Request, res: Response) => {
   const targetUrl = typeof req.body?.url === "string" ? req.body.url.trim() : "";
   const confirmed = req.body?.confirmed === true;
 
@@ -224,9 +225,9 @@ scansRouter.post("/api/scans/url", requireAuth, scanRateLimit, async (req: Reque
   }
 
   const apiKey = typeof req.body?.apiKey === "string" ? req.body.apiKey.trim() : "";
-  const urlProject = apiKey ? findProjectByApiKeyForScope(apiKey, "scan") : null;
+  const urlProject = apiKey ? await findProjectByApiKeyForScope(apiKey, "scan") : null;
   const billedUserId = req.userId ?? urlProject?.userId;
-  const { proceed, usageId } = reserveOrRespond(billedUserId, urlProject?.id ?? null, "url", res);
+  const { proceed, usageId } = await reserveOrRespond(billedUserId, urlProject?.id ?? null, "url", res);
   if (!proceed) return;
 
   try {
@@ -234,13 +235,13 @@ scansRouter.post("/api/scans/url", requireAuth, scanRateLimit, async (req: Reque
 
     let ownerUserId: string | undefined;
     if (urlProject) {
-      recordScan(urlProject.id, report);
+      await recordScan(urlProject.id, report);
       ownerUserId = urlProject.userId;
     }
 
-    res.json(applyScanAccess(report, planForScan(req, ownerUserId)));
+    res.json(applyScanAccess(report, await planForScan(req, ownerUserId)));
   } catch (err) {
-    releaseScanUsage(usageId);
+    await releaseScanUsage(usageId);
 
     if (err instanceof SsrfBlockedError) {
       return res.status(400).json({ error: "That target cannot be scanned: it resolves to a private, reserved, or otherwise disallowed address" });
@@ -250,4 +251,4 @@ scansRouter.post("/api/scans/url", requireAuth, scanRateLimit, async (req: Reque
     }
     res.status(422).json({ error: "Couldn't scan that URL", detail: (err as Error).message });
   }
-});
+}));

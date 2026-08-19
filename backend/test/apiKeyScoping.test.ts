@@ -48,8 +48,8 @@ test("POST /api/events accepts a key scoped to events, and rejects one scoped on
   const { server, base } = await listen(app);
   try {
     const project = await testProject();
-    const eventsKey = createApiKey(project.id, "Events key", ["events"]);
-    const scanOnlyKey = createApiKey(project.id, "Scan-only key", ["scan"]);
+    const eventsKey = await createApiKey(project.id, "Events key", ["events"]);
+    const scanOnlyKey = await createApiKey(project.id, "Scan-only key", ["scan"]);
 
     const body = { ip: "1.2.3.4", method: "GET", path: "/", statusCode: 200 };
 
@@ -79,8 +79,8 @@ test("POST /api/scans with a scan-scoped key attributes the scan to the project;
   const zipPath = makeZip();
   try {
     const project = await testProject();
-    const scanKey = createApiKey(project.id, "Scan key", ["scan"]);
-    const eventsOnlyKey = createApiKey(project.id, "Events-only key", ["events"]);
+    const scanKey = await createApiKey(project.id, "Scan key", ["scan"]);
+    const eventsOnlyKey = await createApiKey(project.id, "Events-only key", ["events"]);
 
     const withScanScope = await fetch(`${base}/api/scans`, {
       method: "POST",
@@ -92,7 +92,7 @@ test("POST /api/scans with a scan-scoped key attributes the scan to the project;
       })(),
     });
     assert.equal(withScanScope.status, 200);
-    assert.equal(listScans(project.id).length, 1, "a scan-scoped key should attribute the scan to the project");
+    assert.equal((await listScans(project.id)).length, 1, "a scan-scoped key should attribute the scan to the project");
 
     const withEventsScope = await fetch(`${base}/api/scans`, {
       method: "POST",
@@ -110,7 +110,7 @@ test("POST /api/scans with a scan-scoped key attributes the scan to the project;
     assert.equal(withEventsScope.status, 200);
     const report = await withEventsScope.json();
     assert.ok(typeof report.score === "number");
-    assert.equal(listScans(project.id).length, 1, "an events-only key must not attribute the scan to the project");
+    assert.equal((await listScans(project.id)).length, 1, "an events-only key must not attribute the scan to the project");
   } finally {
     server.close();
     fs.rmSync(zipPath, { force: true });

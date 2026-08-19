@@ -28,9 +28,9 @@ async function subscriberWithProject() {
   const app = buildApp();
   const { server, base } = await listen(app);
   const user = await createUser(`detection-settings-route-${counter++}@example.com`, "correct horse battery staple");
-  setSubscriptionStatus(user.id, "tier1", "active");
-  const token = createSession(user.id);
-  const project = createProject(user.id, "Detection Settings Route Target");
+  await setSubscriptionStatus(user.id, "tier1", "active");
+  const token = await createSession(user.id);
+  const project = await createProject(user.id, "Detection Settings Route Target");
   return { token, projectId: project.id, base, server };
 }
 

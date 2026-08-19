@@ -43,7 +43,7 @@ test("admin routes require authentication", async () => {
 
 test("admin routes reject a real, authenticated, non-admin user with 403", async () => {
   const user = await createUser("not-an-admin@example.com", "correct horse battery staple");
-  const token = createSession(user.id);
+  const token = await createSession(user.id);
 
   const { server, base } = await listen(buildApp());
   try {
@@ -58,17 +58,17 @@ test("admin routes reject a real, authenticated, non-admin user with 403", async
 
 test("syncAdminEmails grants access declaratively via NETTLE_ADMIN_EMAILS and revokes it when removed", async () => {
   const user = await createUser("grant-test@example.com", "correct horse battery staple");
-  const token = createSession(user.id);
+  const token = await createSession(user.id);
 
   const savedEnv = process.env.NETTLE_ADMIN_EMAILS;
   try {
     process.env.NETTLE_ADMIN_EMAILS = "someone-else@example.com";
-    syncAdminEmails();
-    assert.equal(getUserById(user.id)!.isAdmin, false);
+    await syncAdminEmails();
+    assert.equal((await getUserById(user.id))!.isAdmin, false);
 
     process.env.NETTLE_ADMIN_EMAILS = "Grant-Test@example.com"; // case-insensitive
-    syncAdminEmails();
-    assert.equal(getUserById(user.id)!.isAdmin, true);
+    await syncAdminEmails();
+    assert.equal((await getUserById(user.id))!.isAdmin, true);
 
     const { server, base } = await listen(buildApp());
     try {
@@ -84,8 +84,8 @@ test("syncAdminEmails grants access declaratively via NETTLE_ADMIN_EMAILS and re
     // "stops re-granting" — an admin flag must not silently outlive being
     // taken off the allowlist.
     process.env.NETTLE_ADMIN_EMAILS = "";
-    syncAdminEmails();
-    assert.equal(getUserById(user.id)!.isAdmin, false);
+    await syncAdminEmails();
+    assert.equal((await getUserById(user.id))!.isAdmin, false);
   } finally {
     process.env.NETTLE_ADMIN_EMAILS = savedEnv;
   }
@@ -93,15 +93,15 @@ test("syncAdminEmails grants access declaratively via NETTLE_ADMIN_EMAILS and re
 
 test("admin overview returns real aggregate counts across accounts, not per-caller-scoped data", async () => {
   const admin = await createUser("overview-admin@example.com", "correct horse battery staple");
-  const adminToken = createSession(admin.id);
+  const adminToken = await createSession(admin.id);
   process.env.NETTLE_ADMIN_EMAILS = "overview-admin@example.com";
-  syncAdminEmails();
+  await syncAdminEmails();
 
   const otherUser = await createUser("overview-other@example.com", "correct horse battery staple");
-  const project = createProject(otherUser.id, "Overview Test Project");
+  const project = await createProject(otherUser.id, "Overview Test Project");
   const report = runScan(CLEAN_APP);
-  recordScan(project.id, report, "FAILED");
-  createAlert(project.id, "high", "test-rule", "A real test alert for the overview count");
+  await recordScan(project.id, report, "FAILED");
+  await createAlert(project.id, "high", "test-rule", "A real test alert for the overview count");
 
   const { server, base } = await listen(buildApp());
   try {
@@ -124,15 +124,15 @@ test("admin overview returns real aggregate counts across accounts, not per-call
   } finally {
     server.close();
     process.env.NETTLE_ADMIN_EMAILS = "";
-    syncAdminEmails();
+    await syncAdminEmails();
   }
 });
 
 test("admin metrics endpoint returns the real live metrics snapshot", async () => {
   const admin = await createUser("metrics-admin@example.com", "correct horse battery staple");
-  const adminToken = createSession(admin.id);
+  const adminToken = await createSession(admin.id);
   process.env.NETTLE_ADMIN_EMAILS = "metrics-admin@example.com";
-  syncAdminEmails();
+  await syncAdminEmails();
 
   const { server, base } = await listen(buildApp());
   try {
@@ -147,19 +147,19 @@ test("admin metrics endpoint returns the real live metrics snapshot", async () =
   } finally {
     server.close();
     process.env.NETTLE_ADMIN_EMAILS = "";
-    syncAdminEmails();
+    await syncAdminEmails();
   }
 });
 
 test("admin failed-scans lists a real failed scan with its real project name", async () => {
   const admin = await createUser("failedscans-admin@example.com", "correct horse battery staple");
-  const adminToken = createSession(admin.id);
+  const adminToken = await createSession(admin.id);
   process.env.NETTLE_ADMIN_EMAILS = "failedscans-admin@example.com";
-  syncAdminEmails();
+  await syncAdminEmails();
 
   const otherUser = await createUser("failedscans-owner@example.com", "correct horse battery staple");
-  const project = createProject(otherUser.id, "Failed Scans List Project");
-  recordScan(project.id, runScan(CLEAN_APP), "FAILED");
+  const project = await createProject(otherUser.id, "Failed Scans List Project");
+  await recordScan(project.id, runScan(CLEAN_APP), "FAILED");
 
   const { server, base } = await listen(buildApp());
   try {
@@ -172,21 +172,21 @@ test("admin failed-scans lists a real failed scan with its real project name", a
   } finally {
     server.close();
     process.env.NETTLE_ADMIN_EMAILS = "";
-    syncAdminEmails();
+    await syncAdminEmails();
   }
 });
 
 test("admin notification-failures lists a real failed delivery, and overview counts it", async () => {
   const admin = await createUser("notiffailures-admin@example.com", "correct horse battery staple");
-  const adminToken = createSession(admin.id);
+  const adminToken = await createSession(admin.id);
   process.env.NETTLE_ADMIN_EMAILS = "notiffailures-admin@example.com";
-  syncAdminEmails();
+  await syncAdminEmails();
 
   const otherUser = await createUser("notiffailures-owner@example.com", "correct horse battery staple");
-  const project = createProject(otherUser.id, "Notification Failures Project");
+  const project = await createProject(otherUser.id, "Notification Failures Project");
 
   const { db, newId } = await import("../src/db/index");
-  db.prepare(
+  await db.prepare(
     "INSERT INTO notification_deliveries (id, project_id, channel, destination, event_type, status, attempt_count, last_error, created_at) VALUES (?, ?, ?, ?, ?, 'failed', ?, ?, ?)"
   ).run(newId(), project.id, "sms", "+15550001111", "incident_alert", 3, "SMS is not configured", new Date().toISOString());
 
@@ -209,6 +209,6 @@ test("admin notification-failures lists a real failed delivery, and overview cou
   } finally {
     server.close();
     process.env.NETTLE_ADMIN_EMAILS = "";
-    syncAdminEmails();
+    await syncAdminEmails();
   }
 });

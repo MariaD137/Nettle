@@ -6,6 +6,7 @@ import { claimStripeEvent, recordPaymentFailure, getPaymentFailures } from "../b
 import { sendEmail } from "../integrations/email";
 import { incrementCounter, Metric } from "../observability/metrics";
 import { recordOpsFailure } from "../observability/opsAlert";
+import { asyncHandler } from "../middleware/asyncHandler";
 import type Stripe from "stripe";
 
 // Split in two deliberately: the webhook needs the exact raw request bytes
@@ -17,13 +18,13 @@ import type Stripe from "stripe";
 export const billingRouter = Router();
 export const billingWebhookRouter = Router();
 
-billingRouter.post("/api/billing/checkout-session", requireAuth, async (req, res) => {
+billingRouter.post("/api/billing/checkout-session", requireAuth, asyncHandler(async (req, res) => {
   const plan = req.body?.plan;
   if (plan !== "tier1" && plan !== "tier2") {
     return res.status(400).json({ error: 'plan must be "tier1" or "tier2"' });
   }
 
-  const user = getUserById(req.userId!);
+  const user = await getUserById(req.userId!);
   if (!user) return res.status(401).json({ error: "Invalid session" });
 
   try {
@@ -45,14 +46,14 @@ billingRouter.post("/api/billing/checkout-session", requireAuth, async (req, res
   } catch (err) {
     res.status(503).json({ error: "Billing is not available", detail: (err as Error).message });
   }
-});
+}));
 
 // Lets a subscriber manage their own subscription (cancel, change plan,
 // update payment method) directly through Stripe's own hosted UI, without
 // Nettle needing to reimplement any of that. Only reachable once a
 // customer id exists, which happens on first successful checkout.
-billingRouter.post("/api/billing/portal-session", requireAuth, async (req, res) => {
-  const user = getUserById(req.userId!);
+billingRouter.post("/api/billing/portal-session", requireAuth, asyncHandler(async (req, res) => {
+  const user = await getUserById(req.userId!);
   if (!user) return res.status(401).json({ error: "Invalid session" });
   if (!user.stripeCustomerId) {
     return res.status(400).json({ error: "No billing account yet — subscribe first" });
@@ -68,13 +69,13 @@ billingRouter.post("/api/billing/portal-session", requireAuth, async (req, res) 
   } catch (err) {
     res.status(503).json({ error: "Billing is not available", detail: (err as Error).message });
   }
-});
+}));
 
-billingRouter.get("/api/billing/payment-failures", requireAuth, (req, res) => {
-  res.json({ failures: getPaymentFailures(req.userId!) });
-});
+billingRouter.get("/api/billing/payment-failures", requireAuth, asyncHandler(async (req, res) => {
+  res.json({ failures: await getPaymentFailures(req.userId!) });
+}));
 
-billingWebhookRouter.post("/api/billing/webhook", raw({ type: "application/json" }), async (req, res) => {
+billingWebhookRouter.post("/api/billing/webhook", raw({ type: "application/json" }), asyncHandler(async (req, res) => {
   const signature = req.header("stripe-signature");
   const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
 
@@ -104,10 +105,13 @@ billingWebhookRouter.post("/api/billing/webhook", raw({ type: "application/json"
   // behavior, not an edge case) — without this, a redelivered
   // invoice.payment_failed would send the customer a second "payment
   // failed" email for the exact same invoice. claimStripeEvent() is a
-  // single atomic INSERT (see stripeEvents.ts) — called here, synchronously,
-  // before any side effect or `await` below, so two genuinely concurrent
-  // deliveries of the same event id can't both proceed past this point.
-  if (!claimStripeEvent(event.id, event.type)) {
+  // single atomic INSERT (see stripeEvents.ts) against event_id's real
+  // PostgreSQL PRIMARY KEY constraint — called here, before any other side
+  // effect, so two genuinely concurrent deliveries of the same event id
+  // (from two different processes, e.g. two App Runner instances) can't
+  // both proceed past this point: the database itself serializes the
+  // competing INSERTs and only one succeeds.
+  if (!(await claimStripeEvent(event.id, event.type))) {
     return res.json({ received: true, duplicate: true });
   }
 
@@ -117,8 +121,8 @@ billingWebhookRouter.post("/api/billing/webhook", raw({ type: "application/json"
       const userId = session.metadata?.userId;
       const plan = session.metadata?.plan;
       if (userId && plan && typeof session.customer === "string") {
-        setStripeCustomerId(userId, session.customer);
-        setSubscriptionStatus(userId, plan, "active");
+        await setStripeCustomerId(userId, session.customer);
+        await setSubscriptionStatus(userId, plan, "active");
       }
       break;
     }
@@ -126,7 +130,7 @@ billingWebhookRouter.post("/api/billing/webhook", raw({ type: "application/json"
     case "customer.subscription.deleted": {
       const subscription = event.data.object as Stripe.Subscription;
       if (typeof subscription.customer === "string") {
-        const user = getUserByStripeCustomerId(subscription.customer);
+        const user = await getUserByStripeCustomerId(subscription.customer);
         if (user) {
           const status = event.type === "customer.subscription.deleted" ? "canceled" : subscription.status;
 
@@ -151,7 +155,7 @@ billingWebhookRouter.post("/api/billing/webhook", raw({ type: "application/json"
             if (derivedPlan) plan = derivedPlan;
           }
 
-          setSubscriptionStatus(user.id, plan, status);
+          await setSubscriptionStatus(user.id, plan, status);
         }
       }
       break;
@@ -159,7 +163,7 @@ billingWebhookRouter.post("/api/billing/webhook", raw({ type: "application/json"
     case "invoice.payment_failed": {
       const invoice = event.data.object as Stripe.Invoice;
       if (typeof invoice.customer === "string") {
-        const user = getUserByStripeCustomerId(invoice.customer);
+        const user = await getUserByStripeCustomerId(invoice.customer);
         if (user) {
           // Reflects the failure immediately rather than waiting on a
           // separate customer.subscription.updated event, which Stripe
@@ -167,8 +171,8 @@ billingWebhookRouter.post("/api/billing/webhook", raw({ type: "application/json"
           // at all, e.g. if the subscription hasn't actually transitioned
           // yet on this retry). "past_due" is an existing recognized
           // status — hasActiveSubscription() already excludes it.
-          setSubscriptionStatus(user.id, user.plan, "past_due");
-          recordPaymentFailure({
+          await setSubscriptionStatus(user.id, user.plan, "past_due");
+          await recordPaymentFailure({
             userId: user.id,
             stripeInvoiceId: invoice.id ?? "unknown",
             amountDue: invoice.amount_due,
@@ -189,4 +193,4 @@ billingWebhookRouter.post("/api/billing/webhook", raw({ type: "application/json"
   // The event was already atomically claimed above, before any of the side
   // effects in the switch ran — nothing left to mark here.
   res.json({ received: true });
-});
+}));

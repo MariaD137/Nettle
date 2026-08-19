@@ -16,8 +16,8 @@ import {
 
 const FLAWED_APP = path.join(__dirname, "fixtures", "sample-app");
 
-function insertScanRowDirectly(projectId: string, scannedAt: string, reportJson: string) {
-  db.prepare(
+async function insertScanRowDirectly(projectId: string, scannedAt: string, reportJson: string) {
+  await db.prepare(
     "INSERT INTO scans (id, project_id, scanned_at, score, critical_count, caution_count, clear_count, status, report_json) VALUES (?, ?, ?, 0, 0, 0, 0, 'COMPLETED', ?)"
   ).run(newId(), projectId, scannedAt, reportJson);
 }
@@ -30,95 +30,106 @@ function insertScanRowDirectly(projectId: string, scannedAt: string, reportJson:
 // predate this feature" path instead of the ongoing incremental one.
 test("backfillFindingHistory seeds first/last-seen from pre-existing scans when finding_history starts empty", async () => {
   const user = await createUser("finding-history-backfill@example.com", "correct horse battery staple");
-  const project = createProject(user.id, "Backfill Target").id;
+  const project = (await createProject(user.id, "Backfill Target")).id;
 
   const report = runScan(FLAWED_APP);
   assert.ok(report.findings.length > 0, "fixture should produce real findings to backfill from");
   const finding = report.findings[0];
   const hash = hashFinding(finding.category, finding.title, finding.file);
 
-  insertScanRowDirectly(project, "2020-01-01T00:00:00.000Z", JSON.stringify({ ...report, scannedAt: "2020-01-01T00:00:00.000Z" }));
-  insertScanRowDirectly(project, "2020-06-01T00:00:00.000Z", JSON.stringify({ ...report, scannedAt: "2020-06-01T00:00:00.000Z" }));
+  await insertScanRowDirectly(project, "2020-01-01T00:00:00.000Z", JSON.stringify({ ...report, scannedAt: "2020-01-01T00:00:00.000Z" }));
+  await insertScanRowDirectly(project, "2020-06-01T00:00:00.000Z", JSON.stringify({ ...report, scannedAt: "2020-06-01T00:00:00.000Z" }));
 
-  const before = db.prepare("SELECT COUNT(*) as count FROM finding_history").get() as { count: number };
-  assert.equal(before.count, 0, "finding_history must genuinely be empty for this to test the backfill path");
+  // backfillFindingHistory()'s real gate is genuinely global ("do nothing
+  // if finding_history has any row at all, anywhere" — see
+  // patrol/findingHistory.ts). Under the old per-file :memory: DB that gate
+  // was trivially empty at the start of every file; now the database is
+  // shared across the whole `npm test` run, so this test enforces its own
+  // precondition instead of assuming it — clearing finding_history (only
+  // this table, nothing else) is what actually exercises the from-scratch
+  // backfill path deterministically. Every other test's own history rows
+  // are independent, freshly created per test via recordScan()/
+  // recordFindingSeen(), so this doesn't affect them.
+  await db.prepare("DELETE FROM finding_history").run();
+  const before = (await db.prepare("SELECT COUNT(*) as count FROM finding_history").get()) as { count: number | string };
+  assert.equal(Number(before.count), 0, "finding_history must be empty immediately after the DELETE above");
 
-  backfillFindingHistory();
+  await backfillFindingHistory();
 
-  const entry = getFindingHistoryEntry(project, hash);
+  const entry = await getFindingHistoryEntry(project, hash);
   assert.ok(entry, "backfill should have derived a history entry from the two pre-existing scans");
   assert.equal(entry!.firstSeenAt, "2020-01-01T00:00:00.000Z");
   assert.equal(entry!.lastSeenAt, "2020-06-01T00:00:00.000Z");
 
   // Second call is a no-op once the table has been seeded.
-  backfillFindingHistory();
-  const unchanged = getFindingHistoryEntry(project, hash);
+  await backfillFindingHistory();
+  const unchanged = await getFindingHistoryEntry(project, hash);
   assert.deepEqual(unchanged, entry);
 });
 
 let projectId: string;
 before(async () => {
   const user = await createUser("finding-history-tests@example.com", "correct horse battery staple");
-  projectId = createProject(user.id, "Finding History Target").id;
+  projectId = (await createProject(user.id, "Finding History Target")).id;
 });
 
-test("recordFindingSeen creates a new entry with matching first/last seen on first sighting", () => {
-  recordFindingSeen(projectId, "hash-a", "2026-01-01T00:00:00.000Z");
-  const entry = getFindingHistoryEntry(projectId, "hash-a");
+test("recordFindingSeen creates a new entry with matching first/last seen on first sighting", async () => {
+  await recordFindingSeen(projectId, "hash-a", "2026-01-01T00:00:00.000Z");
+  const entry = await getFindingHistoryEntry(projectId, "hash-a");
   assert.ok(entry);
   assert.equal(entry!.firstSeenAt, "2026-01-01T00:00:00.000Z");
   assert.equal(entry!.lastSeenAt, "2026-01-01T00:00:00.000Z");
 });
 
-test("recordFindingSeen advances lastSeenAt on a later sighting without moving firstSeenAt", () => {
-  recordFindingSeen(projectId, "hash-b", "2026-01-01T00:00:00.000Z");
-  recordFindingSeen(projectId, "hash-b", "2026-02-01T00:00:00.000Z");
-  const entry = getFindingHistoryEntry(projectId, "hash-b");
+test("recordFindingSeen advances lastSeenAt on a later sighting without moving firstSeenAt", async () => {
+  await recordFindingSeen(projectId, "hash-b", "2026-01-01T00:00:00.000Z");
+  await recordFindingSeen(projectId, "hash-b", "2026-02-01T00:00:00.000Z");
+  const entry = await getFindingHistoryEntry(projectId, "hash-b");
   assert.equal(entry!.firstSeenAt, "2026-01-01T00:00:00.000Z");
   assert.equal(entry!.lastSeenAt, "2026-02-01T00:00:00.000Z");
 });
 
-test("recordFindingSeen widens firstSeenAt backward for an out-of-order (earlier) sighting", () => {
-  recordFindingSeen(projectId, "hash-c", "2026-03-01T00:00:00.000Z");
-  recordFindingSeen(projectId, "hash-c", "2026-01-15T00:00:00.000Z");
-  const entry = getFindingHistoryEntry(projectId, "hash-c");
+test("recordFindingSeen widens firstSeenAt backward for an out-of-order (earlier) sighting", async () => {
+  await recordFindingSeen(projectId, "hash-c", "2026-03-01T00:00:00.000Z");
+  await recordFindingSeen(projectId, "hash-c", "2026-01-15T00:00:00.000Z");
+  const entry = await getFindingHistoryEntry(projectId, "hash-c");
   assert.equal(entry!.firstSeenAt, "2026-01-15T00:00:00.000Z");
   assert.equal(entry!.lastSeenAt, "2026-03-01T00:00:00.000Z");
 });
 
-test("getFindingHistoryEntry returns null for a hash never recorded", () => {
-  assert.equal(getFindingHistoryEntry(projectId, "never-seen"), null);
+test("getFindingHistoryEntry returns null for a hash never recorded", async () => {
+  assert.equal(await getFindingHistoryEntry(projectId, "never-seen"), null);
 });
 
 test("listFindingHistory only returns entries for the requested project", async () => {
   const user = await createUser("finding-history-isolation@example.com", "correct horse battery staple");
-  const otherProjectId = createProject(user.id, "Other Project").id;
-  recordFindingSeen(otherProjectId, "other-hash", "2026-01-01T00:00:00.000Z");
+  const otherProjectId = (await createProject(user.id, "Other Project")).id;
+  await recordFindingSeen(otherProjectId, "other-hash", "2026-01-01T00:00:00.000Z");
 
-  const mine = listFindingHistory(projectId);
+  const mine = await listFindingHistory(projectId);
   assert.ok(mine.every((e) => e.findingHash !== "other-hash"));
 });
 
 test("recordScan records first/last-detected for every finding in the report, and repeat scans advance lastSeenAt", async () => {
   const user = await createUser("finding-history-scan@example.com", "correct horse battery staple");
-  const project = createProject(user.id, "Real Scan History Target").id;
+  const project = (await createProject(user.id, "Real Scan History Target")).id;
 
   const firstReport = runScan(FLAWED_APP);
   firstReport.scannedAt = "2026-01-01T00:00:00.000Z";
-  recordScan(project, firstReport);
+  await recordScan(project, firstReport);
   assert.ok(firstReport.findings.length > 0, "fixture should produce real findings to track");
 
   const firstHash = hashFinding(firstReport.findings[0].category, firstReport.findings[0].title, firstReport.findings[0].file);
-  const afterFirst = getFindingHistoryEntry(project, firstHash);
+  const afterFirst = await getFindingHistoryEntry(project, firstHash);
   assert.ok(afterFirst);
   assert.equal(afterFirst!.firstSeenAt, "2026-01-01T00:00:00.000Z");
   assert.equal(afterFirst!.lastSeenAt, "2026-01-01T00:00:00.000Z");
 
   const secondReport = runScan(FLAWED_APP);
   secondReport.scannedAt = "2026-02-01T00:00:00.000Z";
-  recordScan(project, secondReport);
+  await recordScan(project, secondReport);
 
-  const afterSecond = getFindingHistoryEntry(project, firstHash);
+  const afterSecond = await getFindingHistoryEntry(project, firstHash);
   assert.equal(afterSecond!.firstSeenAt, "2026-01-01T00:00:00.000Z", "first-seen should not move");
   assert.equal(afterSecond!.lastSeenAt, "2026-02-01T00:00:00.000Z", "last-seen should advance to the newer scan");
 });

@@ -132,7 +132,7 @@ test("nettle scan --api-key associates the scan with a real project, visible via
     // subscription yet, same as in real life. Granting one here isn't a
     // CLI concern (that's Stripe's job in production); it's just what
     // this test needs to get past the same gate a real paying user would.
-    setSubscriptionStatus(getUserByEmail(email)!.id, "tier1", "active");
+    await setSubscriptionStatus((await getUserByEmail(email))!.id, "tier1", "active");
 
     const created = await runCli(["projects", "create", "Real CLI Project", "--api-url", base], { home });
     assert.equal(created.status, 0);

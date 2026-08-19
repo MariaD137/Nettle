@@ -9,6 +9,7 @@ import { applyScanAccess } from "../billing/scanAccess";
 import { releaseScanUsage } from "../billing/scanQuota";
 import { scanRateLimit } from "../middleware/rateLimit";
 import { reserveOrRespond, planForScan, upload, REPO_URL_PATTERN } from "./scans.routes";
+import { asyncHandler } from "../middleware/asyncHandler";
 
 /**
  * The async, worker_thread-backed counterpart to the synchronous scan
@@ -52,7 +53,7 @@ function ownerCheckFailed(req: Request, res: Response, jobId: string): boolean {
   return false;
 }
 
-scanJobsRouter.post("/api/scans/jobs/upload", requireAuth, scanRateLimit, upload.single("codebase"), (req: Request, res: Response) => {
+scanJobsRouter.post("/api/scans/jobs/upload", requireAuth, scanRateLimit, upload.single("codebase"), asyncHandler(async (req: Request, res: Response) => {
   if (!req.file) {
     return res.status(400).json({ error: "Upload a zip file under the 'codebase' field" });
   }
@@ -62,7 +63,7 @@ scanJobsRouter.post("/api/scans/jobs/upload", requireAuth, scanRateLimit, upload
   }
 
   const apiKey = req.header("x-nettle-api-key");
-  const project = apiKey ? findProjectByApiKeyForScope(apiKey, "scan") : null;
+  const project = apiKey ? await findProjectByApiKeyForScope(apiKey, "scan") : null;
   const billedUserId = req.userId;
   // Reserved synchronously here, before the job (whose worker runs and
   // completes asynchronously, well after this request returns) is even
@@ -70,7 +71,7 @@ scanJobsRouter.post("/api/scans/jobs/upload", requireAuth, scanRateLimit, upload
   // onComplete, as this used to, left a real gap: a second job-creation
   // request could run its own quota check before the first job's worker
   // ever finished and recorded anything.
-  const { proceed, usageId } = reserveOrRespond(billedUserId, project?.id ?? null, "upload", res);
+  const { proceed, usageId } = await reserveOrRespond(billedUserId, project?.id ?? null, "upload", res);
   if (!proceed) {
     fs.unlinkSync(req.file.path);
     return;
@@ -82,16 +83,16 @@ scanJobsRouter.post("/api/scans/jobs/upload", requireAuth, scanRateLimit, upload
       ownerUserId: req.userId ?? null,
       projectId: project?.id ?? null,
       billedUserId: billedUserId ?? null,
-      onComplete: (report) => {
-        if (project) recordScan(project.id, report);
+      onComplete: async (report) => {
+        if (project) await recordScan(project.id, report);
       },
       onFailure: () => releaseScanUsage(usageId),
     }
   );
   res.status(202).json({ jobId: job.id });
-});
+}));
 
-scanJobsRouter.post("/api/scans/jobs/repo", requireAuth, scanRateLimit, (req: Request, res: Response) => {
+scanJobsRouter.post("/api/scans/jobs/repo", requireAuth, scanRateLimit, asyncHandler(async (req: Request, res: Response) => {
   const repoUrl = typeof req.body?.repoUrl === "string" ? req.body.repoUrl.trim() : "";
   const branch = typeof req.body?.branch === "string" ? req.body.branch.trim() : "";
   const apiKey = typeof req.body?.apiKey === "string" ? req.body.apiKey.trim() : "";
@@ -103,12 +104,12 @@ scanJobsRouter.post("/api/scans/jobs/repo", requireAuth, scanRateLimit, (req: Re
     return res.status(400).json({ error: "Only GitHub, GitLab, and Bitbucket HTTPS URLs are supported" });
   }
 
-  const project = apiKey ? findProjectByApiKeyForScope(apiKey, "scan") : null;
+  const project = apiKey ? await findProjectByApiKeyForScope(apiKey, "scan") : null;
   const billedUserId = req.userId;
-  const { proceed, usageId } = reserveOrRespond(billedUserId, project?.id ?? null, "repo", res);
+  const { proceed, usageId } = await reserveOrRespond(billedUserId, project?.id ?? null, "repo", res);
   if (!proceed) return;
 
-  const repoToken = project ? getDecryptedRepoAccessToken(project.id) : null;
+  const repoToken = project ? await getDecryptedRepoAccessToken(project.id) : null;
 
   const job = createScanJob(
     { mode: "repo", repoUrl, branch, token: repoToken },
@@ -116,16 +117,16 @@ scanJobsRouter.post("/api/scans/jobs/repo", requireAuth, scanRateLimit, (req: Re
       ownerUserId: req.userId ?? null,
       projectId: project?.id ?? null,
       billedUserId: billedUserId ?? null,
-      onComplete: (report) => {
-        if (project) recordScan(project.id, report);
+      onComplete: async (report) => {
+        if (project) await recordScan(project.id, report);
       },
       onFailure: () => releaseScanUsage(usageId),
     }
   );
   res.status(202).json({ jobId: job.id });
-});
+}));
 
-scanJobsRouter.get("/api/scans/jobs/:jobId", requireAuth, (req: Request, res: Response) => {
+scanJobsRouter.get("/api/scans/jobs/:jobId", requireAuth, asyncHandler(async (req: Request, res: Response) => {
   const job = getScanJob(req.params.jobId);
   if (!job) return res.status(404).json({ error: "Scan job not found" });
   if (ownerCheckFailed(req, res, job.id)) return;
@@ -136,13 +137,13 @@ scanJobsRouter.get("/api/scans/jobs/:jobId", requireAuth, (req: Request, res: Re
   }
 
   if (job.status === "completed" && job.report) {
-    return res.json({ ...job, report: applyScanAccess(job.report, planForScan(req)) });
+    return res.json({ ...job, report: applyScanAccess(job.report, await planForScan(req)) });
   }
 
   res.json(job);
-});
+}));
 
-scanJobsRouter.post("/api/scans/jobs/:jobId/cancel", requireAuth, (req: Request, res: Response) => {
+scanJobsRouter.post("/api/scans/jobs/:jobId/cancel", requireAuth, asyncHandler(async (req: Request, res: Response) => {
   const job = getScanJob(req.params.jobId);
   if (!job) return res.status(404).json({ error: "Scan job not found" });
   if (ownerCheckFailed(req, res, job.id)) return;
@@ -152,4 +153,4 @@ scanJobsRouter.post("/api/scans/jobs/:jobId/cancel", requireAuth, (req: Request,
     return res.status(409).json({ error: `Job is already ${job.status} and can't be cancelled` });
   }
   res.status(204).end();
-});
+}));

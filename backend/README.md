@@ -211,12 +211,14 @@ not just asserted in a comment — see "the middleware never blocks or breaks
 the customer's response when the ingestion endpoint is unreachable" in
 `test/nettleMonitor.test.ts`.
 
-**Storage**: `node:sqlite` (built into Node 22, experimental) — `users`,
-`sessions`, `projects`, `events`, `alerts`, and now `scans` (Tier 1 results
-persisted when a scan includes a project's API key, so the badge and
-dashboard have real history to show). Real persistence with zero extra
-infrastructure — the right tradeoff until there's actual concurrent
-multi-tenant write volume to justify running RDS.
+**Storage**: PostgreSQL 16 — `users`, `sessions`, `projects`, `events`,
+`alerts`, `scans` (Tier 1 results persisted when a scan includes a
+project's API key, so the badge and dashboard have real history to show),
+and everything else. `DATABASE_URL` is required; there is no SQLite
+fallback. See `src/db/postgres/README.md` for the migration runner and
+connection pooling, and `AWS_GITHUB_DEPLOYMENT.md` for the RDS side —
+provisioning and connecting a real RDS instance is a `REQUIRES AWS
+ACCOUNT` step this repository doesn't perform on its own.
 
 ## Architecture
 
@@ -265,14 +267,9 @@ brute-force target in its own right).
 The architecture diagram shows an event queue between intake and detection;
 today, `POST /api/events` runs detection inline on the request itself. Fine
 at low volume, but a burst of traffic to a monitored app becomes a burst of
-synchronous SQLite writes on the Nettle API itself. Add the queue (Kinesis,
-per the AWS architecture notes) once there's real traffic to justify it —
-not speculatively now.
-
-**`node:sqlite` is single-file, single-instance.** It doesn't work if the
-API ever runs as more than one container (App Runner today runs one). That's
-the actual trigger for migrating to RDS/Aurora — not a fixed timeline, a
-specific condition to watch for.
+PostgreSQL writes on the Nettle API itself. Add the queue (Kinesis, per the
+AWS architecture notes) once there's real traffic to justify it — not
+speculatively now.
 
 **No alert delivery beyond the API.** Alerts are queryable via
 `GET /api/projects/:id/alerts` but nothing pushes them anywhere yet — no

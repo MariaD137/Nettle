@@ -20,6 +20,27 @@ jobs:
     defaults:
       run:
         working-directory: backend
+    # backend/src/db is PostgreSQL-only now (no SQLite fallback) — `npm
+    # test` needs a real, reachable database (see package.json's `pretest`
+    # / test/resetTestDb.ts). GitHub Actions' native `services:` runs this
+    # as a sidecar container for the job, reachable at localhost:5432 from
+    # the job's own steps — matches NETTLE_TEST_DATABASE_URL's default in
+    # test/resetTestDb.ts and test/postgresMigration.test.ts exactly, so no
+    # extra env var is needed here.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: nettle
+          POSTGRES_PASSWORD: nettle_test_password
+          POSTGRES_DB: nettle_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 

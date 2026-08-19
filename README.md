@@ -50,8 +50,7 @@ priority order:
   scan, or e2b/Modal) is the next real hardening step before this touches
   untrusted traffic at scale.
 - **No password reset, no rate limiting on auth endpoints, no queue
-  between Tier 2 intake and detection, `node:sqlite` doesn't work past one
-  container instance.**
+  between Tier 2 intake and detection.**
 
 See `backend/README.md`'s "Known gaps" section and `infra/README.md`'s
 "what's deliberately not here yet" for the full list and reasoning on each.

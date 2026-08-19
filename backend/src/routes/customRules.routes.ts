@@ -1,4 +1,4 @@
-import { Router, Request, Response } from 'express';
+import { Router, Request, Response, NextFunction } from 'express';
 import { getOwnedProject } from '../patrol/projectAccess';
 import {
   createCustomRule,
@@ -13,11 +13,12 @@ import {
   CustomRuleInput,
 } from '../patrol/customRules';
 import { requireAuth } from '../auth/middleware';
+import { asyncHandler } from '../middleware/asyncHandler';
 
 const router = Router();
 
 // Middleware to verify project ownership
-function verifyProjectAccess(req: Request, res: Response, next: Function) {
+const verifyProjectAccess = asyncHandler(async (req: Request, res: Response, next: NextFunction) => {
   const { projectId } = req.params;
   const userId = req.userId;
 
@@ -25,20 +26,20 @@ function verifyProjectAccess(req: Request, res: Response, next: Function) {
     return res.status(401).json({ error: 'Unauthorized' });
   }
 
-  const project = getOwnedProject(projectId, userId);
+  const project = await getOwnedProject(projectId, userId);
   if (!project) {
     return res.status(403).json({ error: 'Forbidden' });
   }
 
   (req as any).project = project;
   next();
-}
+});
 
 // Fetches a rule and verifies it actually belongs to the project in the URL
 // (not just that the caller owns *some* project) — ruleId alone is not
 // sufficient to authorize access to a rule.
-function getOwnedRule(ruleId: string, projectId: string): CustomRule | null {
-  const rule = getCustomRule(ruleId);
+async function getOwnedRule(ruleId: string, projectId: string): Promise<CustomRule | null> {
+  const rule = await getCustomRule(ruleId);
   if (!rule || rule.project_id !== projectId) return null;
   return rule;
 }
@@ -48,7 +49,7 @@ router.post(
   '/:projectId',
   requireAuth,
   verifyProjectAccess,
-  async (req: Request, res: Response) => {
+  asyncHandler(async (req: Request, res: Response) => {
     const { projectId } = req.params;
     const userId = req.userId!;
     const { name, description, pattern_type, pattern_value, weight, severity, enabled } = req.body;
@@ -77,7 +78,7 @@ router.post(
     }
 
     res.status(201).json(rule);
-  }
+  })
 );
 
 // GET /api/custom-rules/:projectId
@@ -85,13 +86,13 @@ router.get(
   '/:projectId',
   requireAuth,
   verifyProjectAccess,
-  (req: Request, res: Response) => {
+  asyncHandler(async (req: Request, res: Response) => {
     const { projectId } = req.params;
     const { enabledOnly } = req.query;
 
-    const rules = listCustomRules(projectId, enabledOnly === 'true');
+    const rules = await listCustomRules(projectId, enabledOnly === 'true');
     res.json({ rules });
-  }
+  })
 );
 
 // GET /api/custom-rules/:projectId/:ruleId
@@ -99,16 +100,16 @@ router.get(
   '/:projectId/:ruleId',
   requireAuth,
   verifyProjectAccess,
-  (req: Request, res: Response) => {
+  asyncHandler(async (req: Request, res: Response) => {
     const { projectId, ruleId } = req.params;
 
-    const rule = getOwnedRule(ruleId, projectId);
+    const rule = await getOwnedRule(ruleId, projectId);
     if (!rule) {
       return res.status(404).json({ error: 'Rule not found' });
     }
 
     res.json(rule);
-  }
+  })
 );
 
 // PATCH /api/custom-rules/:projectId/:ruleId
@@ -116,9 +117,9 @@ router.patch(
   '/:projectId/:ruleId',
   requireAuth,
   verifyProjectAccess,
-  async (req: Request, res: Response) => {
+  asyncHandler(async (req: Request, res: Response) => {
     const { projectId, ruleId } = req.params;
-    const existing = getOwnedRule(ruleId, projectId);
+    const existing = await getOwnedRule(ruleId, projectId);
 
     if (!existing) {
       return res.status(404).json({ error: 'Rule not found' });
@@ -134,13 +135,13 @@ router.patch(
       enabled: req.body.enabled !== undefined ? req.body.enabled : existing.enabled,
     };
 
-    const updated = updateCustomRule(ruleId, updates as any);
+    const updated = await updateCustomRule(ruleId, updates as any);
     if (!updated) {
       return res.status(400).json({ error: 'Failed to update rule' });
     }
 
     res.json(updated);
-  }
+  })
 );
 
 // DELETE /api/custom-rules/:projectId/:ruleId
@@ -148,15 +149,15 @@ router.delete(
   '/:projectId/:ruleId',
   requireAuth,
   verifyProjectAccess,
-  (req: Request, res: Response) => {
+  asyncHandler(async (req: Request, res: Response) => {
     const { projectId, ruleId } = req.params;
 
-    if (!getOwnedRule(ruleId, projectId) || !deleteCustomRule(ruleId)) {
+    if (!(await getOwnedRule(ruleId, projectId)) || !(await deleteCustomRule(ruleId))) {
       return res.status(404).json({ error: 'Rule not found' });
     }
 
     res.json({ deleted: true });
-  }
+  })
 );
 
 // POST /api/custom-rules/:projectId/:ruleId/test
@@ -164,11 +165,11 @@ router.post(
   '/:projectId/:ruleId/test',
   requireAuth,
   verifyProjectAccess,
-  async (req: Request, res: Response) => {
+  asyncHandler(async (req: Request, res: Response) => {
     const { projectId, ruleId } = req.params;
     const { events } = req.body;
 
-    if (!getOwnedRule(ruleId, projectId)) {
+    if (!(await getOwnedRule(ruleId, projectId))) {
       return res.status(404).json({ error: 'Rule not found' });
     }
 
@@ -186,7 +187,7 @@ router.post(
     }
 
     res.json(result);
-  }
+  })
 );
 
 // GET /api/custom-rules/:projectId/:ruleId/versions
@@ -194,16 +195,16 @@ router.get(
   '/:projectId/:ruleId/versions',
   requireAuth,
   verifyProjectAccess,
-  (req: Request, res: Response) => {
+  asyncHandler(async (req: Request, res: Response) => {
     const { projectId, ruleId } = req.params;
 
-    if (!getOwnedRule(ruleId, projectId)) {
+    if (!(await getOwnedRule(ruleId, projectId))) {
       return res.status(404).json({ error: 'Rule not found' });
     }
 
-    const versions = getRuleVersions(ruleId);
+    const versions = await getRuleVersions(ruleId);
     res.json({ versions });
-  }
+  })
 );
 
 // GET /api/custom-rules/:projectId/:ruleId/test-results
@@ -211,17 +212,17 @@ router.get(
   '/:projectId/:ruleId/test-results',
   requireAuth,
   verifyProjectAccess,
-  (req: Request, res: Response) => {
+  asyncHandler(async (req: Request, res: Response) => {
     const { projectId, ruleId } = req.params;
     const { limit } = req.query;
 
-    if (!getOwnedRule(ruleId, projectId)) {
+    if (!(await getOwnedRule(ruleId, projectId))) {
       return res.status(404).json({ error: 'Rule not found' });
     }
 
-    const results = getTestResults(ruleId, parseInt(limit as string) || 10);
+    const results = await getTestResults(ruleId, parseInt(limit as string) || 10);
     res.json({ results });
-  }
+  })
 );
 
 export default router;

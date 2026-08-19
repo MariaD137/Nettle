@@ -84,8 +84,8 @@ test("POST /api/internal/digest/:period with the correct secret sends digests an
   process.env.CRON_SECRET = "s3cr3t";
   try {
     const user = await createUser("internal-digest-route@example.com", "correct horse battery staple");
-    const project = createProject(user.id, "Internal Digest Route Target");
-    createNotificationChannel(project.id, "email", "ops@example.com", ["digest.weekly"]);
+    const project = await createProject(user.id, "Internal Digest Route Target");
+    await createNotificationChannel(project.id, "email", "ops@example.com", ["digest.weekly"]);
 
     const res = await fetch(`${base}/api/internal/digest/weekly`, {
       method: "POST",

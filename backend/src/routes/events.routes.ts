@@ -3,6 +3,7 @@ import { findProjectByApiKeyForScope } from "../patrol/projects";
 import { recordEvent } from "../patrol/events";
 import { runDetection } from "../patrol/detection";
 import { publicRateLimit } from "../middleware/rateLimit";
+import { asyncHandler } from "../middleware/asyncHandler";
 import type { IncomingEvent } from "../patrol/types";
 
 export const eventsRouter = Router();
@@ -18,12 +19,12 @@ function isValidEvent(body: unknown): body is IncomingEvent {
   );
 }
 
-eventsRouter.post("/api/events", publicRateLimit, (req, res) => {
+eventsRouter.post("/api/events", publicRateLimit, asyncHandler(async (req, res) => {
   const apiKey = req.header("x-nettle-api-key");
   if (!apiKey) {
     return res.status(401).json({ error: "Missing X-Nettle-Api-Key header" });
   }
-  const project = findProjectByApiKeyForScope(apiKey, "events");
+  const project = await findProjectByApiKeyForScope(apiKey, "events");
   if (!project) {
     return res.status(401).json({ error: "Invalid API key, or this key isn't scoped to submit events" });
   }
@@ -31,8 +32,8 @@ eventsRouter.post("/api/events", publicRateLimit, (req, res) => {
     return res.status(400).json({ error: "Expected { ip, method, path, statusCode, userAgent? }" });
   }
 
-  const stored = recordEvent(project.id, req.body);
-  const alerts = runDetection(project.id, stored);
+  const stored = await recordEvent(project.id, req.body);
+  const alerts = await runDetection(project.id, stored);
 
   res.status(202).json({ recorded: true, newAlerts: alerts });
-});
+}));

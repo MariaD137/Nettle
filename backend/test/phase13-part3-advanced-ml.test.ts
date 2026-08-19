@@ -8,7 +8,7 @@ test('Phase 13 Part 3: Advanced ML Models (LSTM + Autoencoder)', { concurrency: 
   let userId: string;
 
   await t.test('LSTM Model', async (t) => {
-    beforeEach();
+    await beforeEach();
 
     await t.test('should initialize LSTM with correct dimensions', () => {
       const lstm = new LSTM(1, 10, 12);
@@ -56,7 +56,7 @@ test('Phase 13 Part 3: Advanced ML Models (LSTM + Autoencoder)', { concurrency: 
   });
 
   await t.test('Autoencoder Model', async (t) => {
-    beforeEach();
+    await beforeEach();
 
     await t.test('should initialize autoencoder with correct dimensions', () => {
       const autoencoder = new Autoencoder(7, 3);
@@ -116,7 +116,7 @@ test('Phase 13 Part 3: Advanced ML Models (LSTM + Autoencoder)', { concurrency: 
   });
 
   await t.test('Model Comparison', async (t) => {
-    beforeEach();
+    await beforeEach();
 
     await t.test('LSTM should detect temporal anomalies', () => {
       const lstm = new LSTM(1, 10, 12);
@@ -161,7 +161,7 @@ test('Phase 13 Part 3: Advanced ML Models (LSTM + Autoencoder)', { concurrency: 
   });
 
   await t.test('Performance & Efficiency', async (t) => {
-    beforeEach();
+    await beforeEach();
 
     await t.test('LSTM should handle large datasets', () => {
       const lstm = new LSTM(1, 10, 12);
@@ -205,16 +205,34 @@ test('Phase 13 Part 3: Advanced ML Models (LSTM + Autoencoder)', { concurrency: 
     });
   });
 
-  function beforeEach() {
+  async function beforeEach() {
     projectId = newId();
     userId = newId();
 
-    db.exec(`
-      INSERT OR IGNORE INTO users (id, email, password_hash, created_at)
-      VALUES ('${userId}', 'ml-advanced@example.com', 'hash', '${new Date().toISOString()}');
+    // NOTE: the original SQLite version of this fixture hardcoded a single
+    // literal email/api_key across all 4 sub-describes' beforeEach() calls
+    // (each with a fresh userId/projectId). Under SQLite's INSERT OR IGNORE
+    // a UNIQUE violation silently no-ops the whole statement, and SQLite
+    // wasn't enforcing the projects->users foreign key, so the resulting
+    // dangling project row never surfaced. PostgreSQL enforces both real
+    // UNIQUE and FK constraints, so that would now throw on the 2nd call —
+    // keying email/api_key off the generated ids (matching the convention
+    // already used in the sibling ML test files) keeps every insert
+    // conflict-free instead.
+    await db
+      .prepare(
+        `INSERT INTO users (id, email, password_hash, created_at)
+         VALUES (?, ?, ?, ?)
+         ON CONFLICT (id) DO NOTHING`
+      )
+      .run(userId, `ml-advanced-${userId}@example.com`, "hash", new Date().toISOString());
 
-      INSERT OR IGNORE INTO projects (id, user_id, name, api_key, created_at)
-      VALUES ('${projectId}', '${userId}', 'Advanced ML Test', 'ml_key', '${new Date().toISOString()}');
-    `);
+    await db
+      .prepare(
+        `INSERT INTO projects (id, user_id, name, api_key, created_at)
+         VALUES (?, ?, ?, ?, ?)
+         ON CONFLICT (id) DO NOTHING`
+      )
+      .run(projectId, userId, "Advanced ML Test", `ml_key_${projectId}`, new Date().toISOString());
   }
 });

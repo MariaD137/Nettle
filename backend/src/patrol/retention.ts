@@ -45,11 +45,17 @@ export interface RetentionCleanupResult {
   config: RetentionConfig;
 }
 
-function deleteOlderThan(table: string, timestampColumn: string, days: number): number {
+// The cutoff is computed here in JS (new Date, not SQL's datetime('now', ..))
+// and passed as a plain parameter, compared with a plain `<` — every
+// timestamp column in this schema is ISO 8601 text (same as every other
+// timestamp in the codebase, always written via `new Date().toISOString()`),
+// which sorts identically whether compared lexically or chronologically.
+// This sidesteps SQLite's datetime()/PostgreSQL's very different date-math
+// syntax entirely rather than translating between them.
+async function deleteOlderThan(table: string, timestampColumn: string, days: number): Promise<number> {
   if (days <= 0) return 0; // 0 = retention disabled for this category
-  const result = db
-    .prepare(`DELETE FROM ${table} WHERE ${timestampColumn} < datetime('now', ?)`)
-    .run(`-${days} days`);
+  const cutoff = new Date(Date.now() - days * 86_400_000).toISOString();
+  const result = await db.prepare(`DELETE FROM ${table} WHERE ${timestampColumn} < ?`).run(cutoff);
   return Number(result.changes ?? 0);
 }
 
@@ -61,13 +67,13 @@ function deleteOlderThan(table: string, timestampColumn: string, days: number): 
  * already works). Returns real counts of what was actually deleted, never
  * an estimate.
  */
-export function runRetentionCleanup(): RetentionCleanupResult {
+export async function runRetentionCleanup(): Promise<RetentionCleanupResult> {
   const config = getRetentionConfig();
   return {
-    eventsDeleted: deleteOlderThan("events", "occurred_at", config.eventsDays),
-    alertsDeleted: deleteOlderThan("alerts", "occurred_at", config.alertsDays),
-    scansDeleted: deleteOlderThan("scans", "scanned_at", config.scansDays),
-    webhookEventsDeleted: deleteOlderThan("webhook_events", "created_at", config.webhookEventsDays),
+    eventsDeleted: await deleteOlderThan("events", "occurred_at", config.eventsDays),
+    alertsDeleted: await deleteOlderThan("alerts", "occurred_at", config.alertsDays),
+    scansDeleted: await deleteOlderThan("scans", "scanned_at", config.scansDays),
+    webhookEventsDeleted: await deleteOlderThan("webhook_events", "created_at", config.webhookEventsDays),
     config,
   };
 }

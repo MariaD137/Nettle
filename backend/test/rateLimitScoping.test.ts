@@ -49,7 +49,7 @@ test("scanRateLimit's budget is not consumed by unrelated requests", async () =>
   const { server, base } = await listen(app);
   try {
     const user = await createUser("ratelimit-scoping@example.com", "correct horse battery staple");
-    const token = createSession(user.id);
+    const token = await createSession(user.id);
 
     // Comfortably more than scanRateLimit's 30/60s budget, all against a
     // route scanRateLimit must never touch.
@@ -69,8 +69,8 @@ test("scanRateLimit still applies to the scan routes it's meant for", async () =
   const { server, base } = await listen(app);
   try {
     const user = await createUser("ratelimit-scan-real@example.com", "correct horse battery staple");
-    setSubscriptionStatus(user.id, "tier1", "active");
-    const token = createSession(user.id);
+    await setSubscriptionStatus(user.id, "tier1", "active");
+    const token = await createSession(user.id);
 
     // An invalid repoUrl fails validation fast (400) without doing any
     // real cloning/scanning work, but scanRateLimit runs before that
@@ -109,12 +109,12 @@ test("two different authenticated users sharing the same client IP get independe
   const { server, base } = await listen(app);
   try {
     const userA = await createUser("ratelimit-peruser-a@example.com", "correct horse battery staple");
-    setSubscriptionStatus(userA.id, "tier1", "active");
-    const tokenA = createSession(userA.id);
+    await setSubscriptionStatus(userA.id, "tier1", "active");
+    const tokenA = await createSession(userA.id);
 
     const userB = await createUser("ratelimit-peruser-b@example.com", "correct horse battery staple");
-    setSubscriptionStatus(userB.id, "tier1", "active");
-    const tokenB = createSession(userB.id);
+    await setSubscriptionStatus(userB.id, "tier1", "active");
+    const tokenB = await createSession(userB.id);
 
     // Every request in this test goes to the same loopback test server, so
     // both users share the same req.ip — the only thing that can still

@@ -28,8 +28,8 @@ async function subscriberWithProject(): Promise<{ token: string; projectId: stri
   const app = buildApp();
   const { server, base } = await listen(app);
   const user = await createUser(`notification-channels-route-${counter++}@example.com`, "correct horse battery staple");
-  const token = createSession(user.id);
-  const project = createProject(user.id, "Notification Channels Route Target");
+  const token = await createSession(user.id);
+  const project = await createProject(user.id, "Notification Channels Route Target");
   return { token, projectId: project.id, base, server };
 }
 

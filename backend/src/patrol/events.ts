@@ -25,24 +25,26 @@ function toEvent(row: EventRow): StoredEvent {
   };
 }
 
-export function recordEvent(projectId: string, event: IncomingEvent): StoredEvent {
+export async function recordEvent(projectId: string, event: IncomingEvent): Promise<StoredEvent> {
   const stored: StoredEvent = {
     id: newId(),
     projectId,
     occurredAt: new Date().toISOString(),
     ...event,
   };
-  db.prepare(
-    "INSERT INTO events (id, project_id, occurred_at, ip, method, path, status_code, user_agent) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
-  ).run(stored.id, stored.projectId, stored.occurredAt, stored.ip, stored.method, stored.path, stored.statusCode, stored.userAgent ?? null);
+  await db
+    .prepare(
+      "INSERT INTO events (id, project_id, occurred_at, ip, method, path, status_code, user_agent) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+    )
+    .run(stored.id, stored.projectId, stored.occurredAt, stored.ip, stored.method, stored.path, stored.statusCode, stored.userAgent ?? null);
   return stored;
 }
 
 /** Events for this project in the last `windowSeconds`, newest last. */
-export function recentEvents(projectId: string, windowSeconds: number): StoredEvent[] {
+export async function recentEvents(projectId: string, windowSeconds: number): Promise<StoredEvent[]> {
   const since = new Date(Date.now() - windowSeconds * 1000).toISOString();
-  const rows = db
+  const rows = (await db
     .prepare("SELECT * FROM events WHERE project_id = ? AND occurred_at >= ? ORDER BY occurred_at ASC")
-    .all(projectId, since) as unknown as EventRow[];
+    .all(projectId, since)) as unknown as EventRow[];
   return rows.map(toEvent);
 }

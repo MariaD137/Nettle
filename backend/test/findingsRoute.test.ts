@@ -34,13 +34,13 @@ test("GET /api/projects/:id/findings returns findingHistory alongside findingSta
   const { server, base } = await listen(app);
   try {
     const user = await createUser("findings-route-history@example.com", "correct horse battery staple");
-    setSubscriptionStatus(user.id, "tier1", "active");
-    const token = createSession(user.id);
-    const project = createProject(user.id, "Findings Route Target");
+    await setSubscriptionStatus(user.id, "tier1", "active");
+    const token = await createSession(user.id);
+    const project = await createProject(user.id, "Findings Route Target");
 
     const report = runScan(FLAWED_APP);
     report.scannedAt = "2026-01-01T00:00:00.000Z";
-    recordScan(project.id, report);
+    await recordScan(project.id, report);
     const hash = hashFinding(report.findings[0].category, report.findings[0].title, report.findings[0].file);
 
     const res = await fetch(`${base}/api/projects/${project.id}/findings`, {

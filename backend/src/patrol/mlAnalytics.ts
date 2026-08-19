@@ -67,13 +67,18 @@ function percentile(values: number[], p: number): number {
 // Calculate baselines for a project from recent events
 export async function calculateBaselines(projectId: string, hoursBack: number = 24) {
   try {
-    // Get recent events
-    const events = db.prepare(`
+    // Get recent events. Cutoff computed in JS rather than SQL's
+    // datetime('now', ..) — see retention.ts for why: every timestamp
+    // column here is ISO 8601 text, so a plain `>` comparison against a
+    // JS-computed cutoff string works identically and needs no
+    // SQLite/PostgreSQL date-math translation.
+    const since = new Date(Date.now() - hoursBack * 3_600_000).toISOString();
+    const events = (await db.prepare(`
       SELECT *
       FROM events
-      WHERE project_id = ? AND occurred_at > datetime('now', ? || ' hours')
+      WHERE project_id = ? AND occurred_at > ?
       ORDER BY occurred_at DESC
-    `).all(projectId, -hoursBack) as unknown as EventTableRow[];
+    `).all(projectId, since)) as unknown as EventTableRow[];
 
     if (events.length === 0) return { error: 'No events found' };
 
@@ -113,8 +118,13 @@ export async function calculateBaselines(projectId: string, hoursBack: number = 
         updated_at: now,
       };
 
-      db.prepare(`
-        INSERT OR REPLACE INTO ml_baselines
+      // Written as "INSERT OR REPLACE" in the original SQLite version, but
+      // `id` is always a freshly generated UUID here (see newId() above),
+      // so it can never actually collide with an existing row — REPLACE
+      // never triggers, this is functionally a plain INSERT. Same for the
+      // error_rate insert below.
+      await db.prepare(`
+        INSERT INTO ml_baselines
         (id, project_id, metric_name, aggregation_period, hour_of_day, value, updated_at)
         VALUES (?, ?, ?, ?, ?, ?, ?)
       `).run(
@@ -133,8 +143,8 @@ export async function calculateBaselines(projectId: string, hoursBack: number = 
       const errors = hourEvents.filter((e: any) => e.status_code >= 400).length;
       const errorRate = errors / hourEvents.length;
 
-      db.prepare(`
-        INSERT OR REPLACE INTO ml_baselines
+      await db.prepare(`
+        INSERT INTO ml_baselines
         (id, project_id, metric_name, aggregation_period, hour_of_day, value, updated_at)
         VALUES (?, ?, ?, ?, ?, ?, ?)
       `).run(
@@ -155,7 +165,7 @@ export async function calculateBaselines(projectId: string, hoursBack: number = 
 }
 
 // Get baseline for a metric
-export function getBaseline(projectId: string, metricName: string, hour?: number): Baseline | null {
+export async function getBaseline(projectId: string, metricName: string, hour?: number): Promise<Baseline | null> {
   let query = 'SELECT * FROM ml_baselines WHERE project_id = ? AND metric_name = ?';
   const params: any[] = [projectId, metricName];
 
@@ -165,7 +175,7 @@ export function getBaseline(projectId: string, metricName: string, hour?: number
   }
 
   query += ' ORDER BY updated_at DESC LIMIT 1';
-  const row = db.prepare(query).get(...params) as any;
+  const row = (await db.prepare(query).get(...params)) as any;
 
   return row
     ? {
@@ -311,19 +321,20 @@ const MIN_TRAINING_SAMPLES = 20;
 // synthetic data. Returns null when there isn't yet enough history to train
 // on, which callers must treat as "no isolation-forest signal available"
 // rather than substituting a placeholder.
-function getOrTrainForest(projectId: string): IsolationForest | null {
+async function getOrTrainForest(projectId: string): Promise<IsolationForest | null> {
   const cached = forestCache.get(projectId);
   if (cached && Date.now() - cached.trainedAt < FOREST_RETRAIN_INTERVAL_MS) {
     return cached.forest;
   }
 
-  const rows = db.prepare(`
+  const since = new Date(Date.now() - 24 * 3_600_000).toISOString();
+  const rows = (await db.prepare(`
     SELECT occurred_at, method, path, status_code, user_agent
     FROM events
-    WHERE project_id = ? AND occurred_at > datetime('now', '-24 hours')
+    WHERE project_id = ? AND occurred_at > ?
     ORDER BY occurred_at DESC
     LIMIT 2000
-  `).all(projectId) as unknown as {
+  `).all(projectId, since)) as unknown as {
     occurred_at: string;
     method: string;
     path: string;
@@ -385,7 +396,7 @@ export async function scoreEventAnomaly(
   let anomalyType = '';
 
   // Z-score detection on request rate
-  const rateBaseline = getBaseline(projectId, 'request_rate', hour);
+  const rateBaseline = await getBaseline(projectId, 'request_rate', hour);
   if (rateBaseline && rateBaseline.std_dev > 0) {
     zScore = calculateZScore(1, rateBaseline.value, rateBaseline.std_dev); // 1 event = rate increase
     if (isZScoreAnomaly(zScore)) {
@@ -396,9 +407,9 @@ export async function scoreEventAnomaly(
 
   // Isolation Forest on features
   const features = extractFeatures(event);
-  const model = getModelStatus(projectId);
+  const model = await getModelStatus(projectId);
   if (model?.is_active) {
-    const forest = getOrTrainForest(projectId);
+    const forest = await getOrTrainForest(projectId);
     // No forest means too little history to train on yet (see
     // MIN_TRAINING_SAMPLES below) — leave isolationScore at 0 rather than
     // inventing a number; the composite score below already falls back to
@@ -417,7 +428,7 @@ export async function scoreEventAnomaly(
   }
 
   // Store score
-  db.prepare(`
+  await db.prepare(`
     INSERT INTO anomaly_scores
     (id, project_id, event_id, z_score, isolation_score, composite_score, anomaly_type, is_anomaly, created_at)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -445,10 +456,10 @@ export async function scoreEventAnomaly(
 }
 
 // Get model status
-export function getModelStatus(projectId: string): ModelStatus | null {
-  const row = db.prepare(
+export async function getModelStatus(projectId: string): Promise<ModelStatus | null> {
+  const row = (await db.prepare(
     'SELECT * FROM ml_model_status WHERE project_id = ?'
-  ).get(projectId) as any;
+  ).get(projectId)) as any;
 
   return row
     ? {
@@ -463,17 +474,27 @@ export function getModelStatus(projectId: string): ModelStatus | null {
 }
 
 // Update model status
-export function updateModelStatus(
+export async function updateModelStatus(
   projectId: string,
   modelType: string,
   isActive: boolean,
   accuracy?: number,
   trainingSamples?: number
-): void {
-  db.prepare(`
-    INSERT OR REPLACE INTO ml_model_status
+): Promise<void> {
+  // project_id is genuinely the identifying key here (one status row per
+  // project, reused across calls) — a real upsert, unlike ml_baselines
+  // above, so this needs an actual ON CONFLICT translation.
+  await db.prepare(`
+    INSERT INTO ml_model_status
     (project_id, model_type, is_active, accuracy, training_samples, trained_at, last_update_at)
     VALUES (?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT (project_id) DO UPDATE SET
+      model_type = EXCLUDED.model_type,
+      is_active = EXCLUDED.is_active,
+      accuracy = EXCLUDED.accuracy,
+      training_samples = EXCLUDED.training_samples,
+      trained_at = EXCLUDED.trained_at,
+      last_update_at = EXCLUDED.last_update_at
   `).run(
     projectId,
     modelType,
@@ -486,13 +507,13 @@ export function updateModelStatus(
 }
 
 // Get anomalies
-export function getAnomalies(projectId: string, limit: number = 50, scoreMin: number = 0.7): AnomalyScore[] {
-  const rows = db.prepare(`
+export async function getAnomalies(projectId: string, limit: number = 50, scoreMin: number = 0.7): Promise<AnomalyScore[]> {
+  const rows = (await db.prepare(`
     SELECT * FROM anomaly_scores
     WHERE project_id = ? AND composite_score >= ?
     ORDER BY created_at DESC
     LIMIT ?
-  `).all(projectId, scoreMin, limit) as any[];
+  `).all(projectId, scoreMin, limit)) as any[];
 
   return rows.map(row => ({
     id: row.id,

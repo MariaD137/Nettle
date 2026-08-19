@@ -40,8 +40,8 @@ test("GET /api/analytics/:projectId/dashboard sends a real fallback model_status
   const { server, base } = await listen(app);
   try {
     const user = await createUser("analytics-dashboard-untrained@example.com", "correct horse battery staple");
-    const token = createSession(user.id);
-    const project = createProject(user.id, "Untrained Model Target");
+    const token = await createSession(user.id);
+    const project = await createProject(user.id, "Untrained Model Target");
 
     const res = await fetch(`${base}/api/analytics/${project.id}/dashboard`, {
       headers: { Authorization: `Bearer ${token}` },
@@ -63,10 +63,10 @@ test("GET /api/analytics/:projectId/dashboard reflects a real trained model's st
   const { server, base } = await listen(app);
   try {
     const user = await createUser("analytics-dashboard-trained@example.com", "correct horse battery staple");
-    const token = createSession(user.id);
-    const project = createProject(user.id, "Trained Model Target");
+    const token = await createSession(user.id);
+    const project = await createProject(user.id, "Trained Model Target");
 
-    updateModelStatus(project.id, "isolation_forest", true, 0.87, 500);
+    await updateModelStatus(project.id, "isolation_forest", true, 0.87, 500);
 
     const res = await fetch(`${base}/api/analytics/${project.id}/dashboard`, {
       headers: { Authorization: `Bearer ${token}` },

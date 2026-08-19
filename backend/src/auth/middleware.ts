@@ -1,6 +1,7 @@
 import type { NextFunction, Request, Response } from "express";
 import { resolveSession } from "./sessions";
 import { getUserById } from "./users";
+import { asyncHandler } from "../middleware/asyncHandler";
 
 declare global {
   // eslint-disable-next-line @typescript-eslint/no-namespace
@@ -12,21 +13,21 @@ declare global {
   }
 }
 
-export function requireAuth(req: Request, res: Response, next: NextFunction) {
+export const requireAuth = asyncHandler(async (req: Request, res: Response, next: NextFunction) => {
   const header = req.header("authorization") || "";
   const token = header.startsWith("Bearer ") ? header.slice("Bearer ".length) : null;
   if (!token) {
     return res.status(401).json({ error: "Missing Authorization: Bearer <token> header" });
   }
-  const session = resolveSession(token);
+  const session = await resolveSession(token);
   if (!session) {
     return res.status(401).json({ error: "Invalid or expired session" });
   }
   req.userId = session.userId;
-  const user = getUserById(session.userId);
+  const user = await getUserById(session.userId);
   if (user) req.userPlan = user.plan;
   next();
-}
+});
 
 /**
  * Must run after requireAuth. Grants are entirely out-of-band (see
@@ -34,13 +35,13 @@ export function requireAuth(req: Request, res: Response, next: NextFunction) {
  * anywhere else, that can make an account an admin, so this check is the
  * only gate and it fails closed: no session, no admin row, no access.
  */
-export function requireAdmin(req: Request, res: Response, next: NextFunction) {
-  const user = req.userId ? getUserById(req.userId) : null;
+export const requireAdmin = asyncHandler(async (req: Request, res: Response, next: NextFunction) => {
+  const user = req.userId ? await getUserById(req.userId) : null;
   if (!user?.isAdmin) {
     return res.status(403).json({ error: "Admin access required" });
   }
   next();
-}
+});
 
 /**
  * Populates req.userId/req.userPlan when a valid token is present, but lets
@@ -48,16 +49,16 @@ export function requireAdmin(req: Request, res: Response, next: NextFunction) {
  * need to know the caller's plan — a one-off scan is free to run, but how
  * much of the report comes back depends on who's asking.
  */
-export function optionalAuth(req: Request, _res: Response, next: NextFunction) {
+export const optionalAuth = asyncHandler(async (req: Request, _res: Response, next: NextFunction) => {
   const header = req.header("authorization") || "";
   const token = header.startsWith("Bearer ") ? header.slice("Bearer ".length) : null;
   if (token) {
-    const session = resolveSession(token);
+    const session = await resolveSession(token);
     if (session) {
       req.userId = session.userId;
-      const user = getUserById(session.userId);
+      const user = await getUserById(session.userId);
       if (user) req.userPlan = user.plan;
     }
   }
   next();
-}
+});

@@ -91,11 +91,11 @@ function emptySeverityCounts(): Record<AlertSeverity, number> {
   return { critical: 0, high: 0, medium: 0, low: 0 };
 }
 
-export function getAlertAnalytics(projectId: string, hours = 24, limit = 10): AlertAnalytics {
+export async function getAlertAnalytics(projectId: string, hours = 24, limit = 10): Promise<AlertAnalytics> {
   const since = new Date(Date.now() - hours * 3_600_000).toISOString();
-  const rows = db
+  const rows = (await db
     .prepare("SELECT occurred_at, severity, rule, message FROM alerts WHERE project_id = ? AND occurred_at >= ? ORDER BY occurred_at ASC")
-    .all(projectId, since) as unknown as AlertRow[];
+    .all(projectId, since)) as unknown as AlertRow[];
 
   // Zero-filled hourly buckets so the chart shows a continuous timeline
   // rather than only the hours an alert happened to fire in.

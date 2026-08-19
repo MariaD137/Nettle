@@ -2,6 +2,7 @@ import { Router } from "express";
 import { getProject } from "../patrol/projects";
 import { computeBadgeState, renderBadgeSVG } from "../patrol/badge";
 import { publicRateLimit } from "../middleware/rateLimit";
+import { asyncHandler } from "../middleware/asyncHandler";
 
 export const badgeRouter = Router();
 
@@ -10,20 +11,20 @@ export const badgeRouter = Router();
 // header. The project ID in the URL is not a secret (unlike the API key
 // used for event ingestion); it only reveals a pass/fail badge state.
 
-badgeRouter.get("/api/projects/:id/badge.svg", publicRateLimit, (req, res) => {
-  const project = getProject(req.params.id);
+badgeRouter.get("/api/projects/:id/badge.svg", publicRateLimit, asyncHandler(async (req, res) => {
+  const project = await getProject(req.params.id);
   if (!project) return res.status(404).end();
 
-  const state = computeBadgeState(project.id);
+  const state = await computeBadgeState(project.id);
   res.setHeader("Content-Type", "image/svg+xml");
   res.setHeader("Cache-Control", "no-cache, max-age=0"); // status can change any time an alert fires
   res.send(renderBadgeSVG(state));
-});
+}));
 
-badgeRouter.get("/api/projects/:id/badge.json", publicRateLimit, (req, res) => {
-  const project = getProject(req.params.id);
+badgeRouter.get("/api/projects/:id/badge.json", publicRateLimit, asyncHandler(async (req, res) => {
+  const project = await getProject(req.params.id);
   if (!project) return res.status(404).json({ error: "Project not found" });
 
   res.setHeader("Cache-Control", "no-cache, max-age=0");
-  res.json(computeBadgeState(project.id));
-});
+  res.json(await computeBadgeState(project.id));
+}));

@@ -35,7 +35,7 @@ export interface StoredApiKey {
   createdAt: string;
 }
 
-interface ApiKeyRow {
+export interface ApiKeyRow {
   id: string;
   project_id: string;
   name: string;
@@ -89,7 +89,7 @@ function sanitizeScopes(scopes: unknown): ApiKeyScope[] {
  * genuinely new keys — the project's original/default key is seeded by
  * createProject()/backfillApiKeys() instead, never through here.
  */
-export function createApiKey(projectId: string, name: string, scopes: unknown): StoredApiKey {
+export async function createApiKey(projectId: string, name: string, scopes: unknown): Promise<StoredApiKey> {
   const rawKey = newApiKey();
   const row: ApiKeyRow = {
     id: newId(),
@@ -103,34 +103,50 @@ export function createApiKey(projectId: string, name: string, scopes: unknown): 
     revoked_at: null,
     created_at: new Date().toISOString(),
   };
-  db.prepare(
-    "INSERT INTO api_keys (id, project_id, name, key, key_masked, scopes, is_default, last_used_at, revoked_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
-  ).run(row.id, row.project_id, row.name, row.key, row.key_masked, row.scopes, row.is_default, row.last_used_at, row.revoked_at, row.created_at);
+  await db
+    .prepare(
+      "INSERT INTO api_keys (id, project_id, name, key, key_masked, scopes, is_default, last_used_at, revoked_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+    )
+    .run(
+      row.id,
+      row.project_id,
+      row.name,
+      row.key,
+      row.key_masked,
+      row.scopes,
+      row.is_default,
+      row.last_used_at,
+      row.revoked_at,
+      row.created_at
+    );
   // Full key revealed exactly once, right here — every other read of this
   // key (list, get) comes back masked. Only this function's local rawKey
   // variable ever holds it; the row itself never does.
   return toStoredApiKey(row, rawKey);
 }
 
-export function listApiKeys(projectId: string): StoredApiKey[] {
-  const rows = db
+export async function listApiKeys(projectId: string): Promise<StoredApiKey[]> {
+  const rows = (await db
     .prepare("SELECT * FROM api_keys WHERE project_id = ? ORDER BY created_at ASC")
-    .all(projectId) as unknown as ApiKeyRow[];
+    .all(projectId)) as unknown as ApiKeyRow[];
   return rows.map((r) => toStoredApiKey(r));
 }
 
 /** For ownership checks — masked, since it's never meant to reveal the secret. */
-export function getApiKeyRecord(id: string): StoredApiKey | null {
-  const row = db.prepare("SELECT * FROM api_keys WHERE id = ?").get(id) as ApiKeyRow | undefined;
+export async function getApiKeyRecord(id: string): Promise<StoredApiKey | null> {
+  const row = (await db.prepare("SELECT * FROM api_keys WHERE id = ?").get(id)) as ApiKeyRow | undefined;
   return row ? toStoredApiKey(row) : null;
 }
 
-export function updateApiKey(id: string, updates: { name?: string; scopes?: unknown }): StoredApiKey | null {
-  const row = db.prepare("SELECT * FROM api_keys WHERE id = ?").get(id) as ApiKeyRow | undefined;
+export async function updateApiKey(
+  id: string,
+  updates: { name?: string; scopes?: unknown }
+): Promise<StoredApiKey | null> {
+  const row = (await db.prepare("SELECT * FROM api_keys WHERE id = ?").get(id)) as ApiKeyRow | undefined;
   if (!row) return null;
   const name = updates.name !== undefined ? updates.name.trim() || row.name : row.name;
   const scopes = updates.scopes !== undefined ? JSON.stringify(sanitizeScopes(updates.scopes)) : row.scopes;
-  db.prepare("UPDATE api_keys SET name = ?, scopes = ? WHERE id = ?").run(name, scopes, id);
+  await db.prepare("UPDATE api_keys SET name = ?, scopes = ? WHERE id = ?").run(name, scopes, id);
   return getApiKeyRecord(id);
 }
 
@@ -139,11 +155,11 @@ export function updateApiKey(id: string, updates: { name?: string; scopes?: unkn
  * project-level rotate already behaves. Doesn't delete the row: name,
  * scopes, and lastUsedAt stay visible as history. Idempotent.
  */
-export function revokeApiKey(id: string): StoredApiKey | null {
-  const row = db.prepare("SELECT * FROM api_keys WHERE id = ?").get(id) as ApiKeyRow | undefined;
+export async function revokeApiKey(id: string): Promise<StoredApiKey | null> {
+  const row = (await db.prepare("SELECT * FROM api_keys WHERE id = ?").get(id)) as ApiKeyRow | undefined;
   if (!row) return null;
   if (!row.revoked_at) {
-    db.prepare("UPDATE api_keys SET revoked_at = ? WHERE id = ?").run(new Date().toISOString(), id);
+    await db.prepare("UPDATE api_keys SET revoked_at = ? WHERE id = ?").run(new Date().toISOString(), id);
   }
   return getApiKeyRecord(id);
 }
@@ -156,18 +172,22 @@ export function revokeApiKey(id: string): StoredApiKey | null {
  * and that row keeps storing its key in plain (see the module comment
  * above); every other row is hashed like createApiKey() does.
  */
-export function rotateApiKeyById(id: string): StoredApiKey | null {
-  const row = db.prepare("SELECT * FROM api_keys WHERE id = ?").get(id) as ApiKeyRow | undefined;
+export async function rotateApiKeyById(id: string): Promise<StoredApiKey | null> {
+  const row = (await db.prepare("SELECT * FROM api_keys WHERE id = ?").get(id)) as ApiKeyRow | undefined;
   if (!row) return null;
   const newKey = newApiKey();
   const stored = row.is_default === 1 ? newKey : hashKey(newKey);
-  db.prepare("UPDATE api_keys SET key = ?, key_masked = ?, last_used_at = NULL WHERE id = ?").run(stored, maskKey(newKey), id);
-  const updated = db.prepare("SELECT * FROM api_keys WHERE id = ?").get(id) as unknown as ApiKeyRow;
+  await db
+    .prepare("UPDATE api_keys SET key = ?, key_masked = ?, last_used_at = NULL WHERE id = ?")
+    .run(stored, maskKey(newKey), id);
+  const updated = (await db.prepare("SELECT * FROM api_keys WHERE id = ?").get(id)) as unknown as ApiKeyRow;
   return toStoredApiKey(updated, newKey);
 }
 
-export function getDefaultApiKeyRow(projectId: string): ApiKeyRow | null {
-  const row = db.prepare("SELECT * FROM api_keys WHERE project_id = ? AND is_default = 1").get(projectId) as ApiKeyRow | undefined;
+export async function getDefaultApiKeyRow(projectId: string): Promise<ApiKeyRow | null> {
+  const row = (await db.prepare("SELECT * FROM api_keys WHERE project_id = ? AND is_default = 1").get(
+    projectId
+  )) as ApiKeyRow | undefined;
   return row ?? null;
 }
 
@@ -179,10 +199,12 @@ export function getDefaultApiKeyRow(projectId: string): ApiKeyRow | null {
  * always redisplayable as projects.api_key, so hashing it here wouldn't
  * protect anything.
  */
-export function seedDefaultApiKey(projectId: string, key: string, createdAt: string): void {
-  db.prepare(
-    "INSERT INTO api_keys (id, project_id, name, key, key_masked, scopes, is_default, last_used_at, revoked_at, created_at) VALUES (?, ?, ?, ?, ?, ?, 1, NULL, NULL, ?)"
-  ).run(newId(), projectId, "Default key", key, maskKey(key), JSON.stringify(VALID_API_KEY_SCOPES), createdAt);
+export async function seedDefaultApiKey(projectId: string, key: string, createdAt: string): Promise<void> {
+  await db
+    .prepare(
+      "INSERT INTO api_keys (id, project_id, name, key, key_masked, scopes, is_default, last_used_at, revoked_at, created_at) VALUES (?, ?, ?, ?, ?, ?, 1, NULL, NULL, ?)"
+    )
+    .run(newId(), projectId, "Default key", key, maskKey(key), JSON.stringify(VALID_API_KEY_SCOPES), createdAt);
 }
 
 /**
@@ -197,17 +219,20 @@ export function seedDefaultApiKey(projectId: string, key: string, createdAt: str
  * (every hashed non-default row) — `key` is UNIQUE, so at most one of the
  * two ever finds anything.
  */
-export function resolveApiKey(rawKey: string, requiredScope?: ApiKeyScope): { projectId: string } | null {
+export async function resolveApiKey(
+  rawKey: string,
+  requiredScope?: ApiKeyScope
+): Promise<{ projectId: string } | null> {
   const row =
-    (db.prepare("SELECT * FROM api_keys WHERE key = ?").get(rawKey) as ApiKeyRow | undefined) ??
-    (db.prepare("SELECT * FROM api_keys WHERE key = ?").get(hashKey(rawKey)) as ApiKeyRow | undefined);
+    ((await db.prepare("SELECT * FROM api_keys WHERE key = ?").get(rawKey)) as ApiKeyRow | undefined) ??
+    ((await db.prepare("SELECT * FROM api_keys WHERE key = ?").get(hashKey(rawKey))) as ApiKeyRow | undefined);
   if (!row) return null;
   if (row.revoked_at) return null;
   if (requiredScope) {
     const scopes = JSON.parse(row.scopes) as ApiKeyScope[];
     if (!scopes.includes(requiredScope)) return null;
   }
-  db.prepare("UPDATE api_keys SET last_used_at = ? WHERE id = ?").run(new Date().toISOString(), row.id);
+  await db.prepare("UPDATE api_keys SET last_used_at = ? WHERE id = ?").run(new Date().toISOString(), row.id);
   return { projectId: row.project_id };
 }
 
@@ -218,17 +243,17 @@ export function resolveApiKey(rawKey: string, requiredScope?: ApiKeyScope): { pr
  * api_keys rows at all, so it only ever does real work once — same
  * pattern as findingHistory.ts#backfillFindingHistory.
  */
-export function backfillApiKeys(): void {
-  const { count } = db.prepare("SELECT COUNT(*) as count FROM api_keys").get() as { count: number };
-  if (count > 0) return;
+export async function backfillApiKeys(): Promise<void> {
+  const { count } = (await db.prepare("SELECT COUNT(*) as count FROM api_keys").get()) as { count: number | string };
+  if (Number(count) > 0) return;
 
-  const projects = db.prepare("SELECT id, api_key, created_at FROM projects").all() as unknown as {
+  const projects = (await db.prepare("SELECT id, api_key, created_at FROM projects").all()) as unknown as {
     id: string;
     api_key: string;
     created_at: string;
   }[];
   for (const p of projects) {
-    seedDefaultApiKey(p.id, p.api_key, p.created_at);
+    await seedDefaultApiKey(p.id, p.api_key, p.created_at);
   }
 }
 
@@ -242,11 +267,11 @@ export function backfillApiKeys(): void {
  * isn't gated on the table being empty — it runs every startup and is a
  * no-op once every row has key_masked set.
  */
-export function backfillHashedApiKeys(): void {
-  const rows = db.prepare("SELECT * FROM api_keys WHERE key_masked IS NULL").all() as unknown as ApiKeyRow[];
+export async function backfillHashedApiKeys(): Promise<void> {
+  const rows = (await db.prepare("SELECT * FROM api_keys WHERE key_masked IS NULL").all()) as unknown as ApiKeyRow[];
   for (const row of rows) {
     const masked = maskKey(row.key);
     const stored = row.is_default === 1 ? row.key : hashKey(row.key);
-    db.prepare("UPDATE api_keys SET key = ?, key_masked = ? WHERE id = ?").run(stored, masked, row.id);
+    await db.prepare("UPDATE api_keys SET key = ?, key_masked = ? WHERE id = ?").run(stored, masked, row.id);
   }
 }

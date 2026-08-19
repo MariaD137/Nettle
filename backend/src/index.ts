@@ -23,6 +23,7 @@ import { logger } from "./observability/logger";
 import { incrementCounter, Metric } from "./observability/metrics";
 import { getAllowedOrigins } from "./corsConfig";
 import { sendOpsAlert } from "./observability/opsAlert";
+import { initDb } from "./db";
 
 const app = express();
 const PORT = process.env.PORT || 8080;
@@ -163,6 +164,14 @@ process.on("unhandledRejection", (reason) => {
 });
 
 async function start(): Promise<void> {
+  // PostgreSQL is the single production database — applies every pending
+  // migration (see db/postgres/migrate.ts) before anything else touches the
+  // database, and before the server accepts a single request. Rejects (and,
+  // via the .catch() below, exits the process) if DATABASE_URL is unset or
+  // the database is unreachable — there is no SQLite fallback and no path
+  // that starts the server against an unmigrated schema.
+  await initDb();
+
   // Initialize scanner at startup
   initializeScanner();
 
@@ -170,24 +179,24 @@ async function start(): Promise<void> {
   // source of truth, re-read on every startup — removing an email from the
   // list actually revokes access on next restart rather than leaving a
   // stale is_admin flag in the database forever. See auth/users.ts.
-  syncAdminEmails();
+  await syncAdminEmails();
 
   // One-time seed of first/last-detected history for scans recorded before
   // this table existed — a no-op after the first successful run. Runs
   // before the server starts accepting requests so there's no window where
   // a fresh scan could race the backfill.
-  backfillFindingHistory();
+  await backfillFindingHistory();
 
   // Same one-time-seed pattern: every project that predates the multi-key
   // api_keys table gets its existing projects.api_key mirrored in as its
   // default key, so revoke/scope/last-used tracking cover it too.
-  backfillApiKeys();
+  await backfillApiKeys();
 
   // Migrates any api_keys row created before key hashing existed — replaces
   // a non-default row's plaintext key with its hash and fills in every row's
   // precomputed masked display form. Runs after backfillApiKeys() so rows it
   // just seeded for pre-existing projects get covered in the same pass.
-  backfillHashedApiKeys();
+  await backfillHashedApiKeys();
 
   app.listen(PORT, () => {
     logger.info("server_started", { port: PORT });

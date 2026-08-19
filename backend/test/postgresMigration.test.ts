@@ -8,11 +8,12 @@ import { runMigrations } from "../src/db/postgres/migrate";
 // This suite needs a real, reachable PostgreSQL server — there is no mock
 // here, on the theory that a mocked pg client would only prove the mock
 // behaves as configured, not that the DDL is valid or that constraints
-// actually hold. CI does not currently provision Postgres (see
-// .github/workflows/ci.yml), so this probes for one and skips with a clear
-// reason instead of failing the whole suite when none is reachable —
-// exactly what actually ran should always be knowable from the output,
-// never silently assumed.
+// actually hold. CI provisions one as a service container (see
+// .github/workflows/ci.yml and backend-ci.yml), and package.json's
+// `pretest` script requires one for every other test in the suite too —
+// but this file still probes independently and skips with a clear reason
+// rather than assuming, in case it's ever run standalone without that
+// setup (e.g. `node --test test/postgresMigration.test.ts` directly).
 const TEST_DATABASE_URL =
   process.env.NETTLE_TEST_DATABASE_URL || "postgres://nettle:nettle_test_password@localhost:5432/nettle_test";
 
@@ -41,10 +42,15 @@ test("PostgreSQL migration suite", async (t) => {
   process.env.DATABASE_SSL = "disable";
   await _resetPostgresPoolForTests();
 
-  // Clean slate: this suite owns nettle_test entirely and resets it every
-  // run, so tests are never order-dependent on some prior run's leftovers.
-  const setupPool = getPostgresPool();
-  await setupPool.query("DROP SCHEMA public CASCADE; CREATE SCHEMA public;");
+  // The schema reset (DROP SCHEMA CASCADE + full migration) now happens
+  // once, before the *entire* test suite runs — see package.json's
+  // `pretest` script (test/resetTestDb.ts) — not here. Real PostgreSQL is
+  // one shared database across every test file in this run (unlike the old
+  // node:sqlite `:memory:` setup, where each file got its own private,
+  // automatically-fresh database), so a per-file schema wipe here would
+  // destroy whatever other test files already wrote and break their
+  // assertions depending on run order. This suite now only verifies the
+  // already-migrated schema is correct, rather than owning the reset.
 
   await t.test("getPostgresPool throws MissingDatabaseUrlError with no DATABASE_URL configured", async () => {
     const saved = process.env.DATABASE_URL;
@@ -58,31 +64,29 @@ test("PostgreSQL migration suite", async (t) => {
     }
   });
 
-  await t.test("runMigrations creates every table from the live SQLite schema", async () => {
-    const { applied } = await runMigrations();
-    assert.deepEqual(applied, ["0001_initial_schema.sql"]);
-
+  await t.test("every table from the schema exists after the pretest migration run", async () => {
     const pool = getPostgresPool();
     const { rows } = await pool.query(
       "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' ORDER BY table_name"
     );
     const tableNames = rows.map((r) => r.table_name);
 
-    // Every table src/db/index.ts creates, per the current SQLite schema.
+    // Every table db/postgres/migrations/*.sql creates, matching the live
+    // (formerly SQLite, now PostgreSQL-only) application schema.
     const expectedTables = [
       "alerts", "anomaly_scores", "api_keys", "custom_rules", "detection_settings",
       "email_verifications", "events", "finding_history", "finding_statuses",
-      "ml_baselines", "ml_model_status", "notification_channels", "notification_preferences",
-      "password_resets", "payment_failures", "projects", "rule_test_results", "rule_versions",
-      "scan_usage", "scans", "schema_migrations", "sessions", "stripe_events", "users",
-      "webhook_events", "webhooks",
+      "ml_baselines", "ml_model_status", "notification_channels", "notification_deliveries",
+      "notification_preferences", "password_resets", "payment_failures", "projects",
+      "rule_test_results", "rule_versions", "scan_usage", "scans", "schema_migrations",
+      "sessions", "stripe_events", "users", "webhook_events", "webhooks",
     ];
     for (const table of expectedTables) {
       assert.ok(tableNames.includes(table), `expected table "${table}" to exist`);
     }
   });
 
-  await t.test("runMigrations is idempotent — a second run applies nothing", async () => {
+  await t.test("runMigrations is idempotent — re-running after pretest's already-applied migrations applies nothing", async () => {
     const { applied } = await runMigrations();
     assert.deepEqual(applied, []);
   });

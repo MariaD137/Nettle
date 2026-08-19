@@ -29,7 +29,7 @@ router.post('/:projectId/webhooks', async (req: Request, res: Response) => {
     const userId = req.userId as string;
 
     // Verify project ownership
-    const project = getOwnedProject(projectId, userId);
+    const project = await getOwnedProject(projectId, userId);
     if (!project) {
       return res.status(404).json({ error: 'Project not found' });
     }
@@ -45,7 +45,7 @@ router.post('/:projectId/webhooks', async (req: Request, res: Response) => {
     }
 
     // Create webhook config
-    const webhook = createWebhookConfig(projectId, service, webhook_url, event_types);
+    const webhook = await createWebhookConfig(projectId, service, webhook_url, event_types);
     res.status(201).json(webhook);
   } catch (error) {
     console.error('Error creating webhook:', error);
@@ -60,12 +60,12 @@ router.get('/:projectId/webhooks', async (req: Request, res: Response) => {
     const userId = req.userId as string;
 
     // Verify project ownership
-    const project = getOwnedProject(projectId, userId);
+    const project = await getOwnedProject(projectId, userId);
     if (!project) {
       return res.status(404).json({ error: 'Project not found' });
     }
 
-    const webhooks = getWebhookConfigs(projectId);
+    const webhooks = await getWebhookConfigs(projectId);
     res.json(webhooks);
   } catch (error) {
     console.error('Error listing webhooks:', error);
@@ -80,12 +80,12 @@ router.get('/:projectId/webhooks/:webhookId', async (req: Request, res: Response
     const userId = req.userId as string;
 
     // Verify project ownership
-    const project = getOwnedProject(projectId, userId);
+    const project = await getOwnedProject(projectId, userId);
     if (!project) {
       return res.status(404).json({ error: 'Project not found' });
     }
 
-    const webhook = db.prepare('SELECT * FROM webhooks WHERE id = ? AND project_id = ?').get(webhookId, projectId) as any;
+    const webhook = (await db.prepare('SELECT * FROM webhooks WHERE id = ? AND project_id = ?').get(webhookId, projectId)) as any;
     if (!webhook) {
       return res.status(404).json({ error: 'Webhook not found' });
     }
@@ -116,12 +116,12 @@ router.patch('/:projectId/webhooks/:webhookId', async (req: Request, res: Respon
     const userId = req.userId as string;
 
     // Verify project ownership
-    const project = getOwnedProject(projectId, userId);
+    const project = await getOwnedProject(projectId, userId);
     if (!project) {
       return res.status(404).json({ error: 'Project not found' });
     }
 
-    const webhook = db.prepare('SELECT * FROM webhooks WHERE id = ? AND project_id = ?').get(webhookId, projectId) as any;
+    const webhook = (await db.prepare('SELECT * FROM webhooks WHERE id = ? AND project_id = ?').get(webhookId, projectId)) as any;
     if (!webhook) {
       return res.status(404).json({ error: 'Webhook not found' });
     }
@@ -130,17 +130,17 @@ router.patch('/:projectId/webhooks/:webhookId', async (req: Request, res: Respon
 
     // Fixed column list — never built from request-controlled keys, so
     // there's no way for a caller to inject arbitrary column names here.
-    db.prepare(
-      'UPDATE webhooks SET webhook_url = ?, event_types = ?, is_active = ?, updated_at = ? WHERE id = ?'
-    ).run(
-      webhook_url !== undefined ? webhook_url : webhook.webhook_url,
-      event_types !== undefined ? JSON.stringify(event_types) : webhook.event_types,
-      is_active !== undefined ? (is_active ? 1 : 0) : webhook.is_active,
-      now,
-      webhookId
-    );
+    await db
+      .prepare('UPDATE webhooks SET webhook_url = ?, event_types = ?, is_active = ?, updated_at = ? WHERE id = ?')
+      .run(
+        webhook_url !== undefined ? webhook_url : webhook.webhook_url,
+        event_types !== undefined ? JSON.stringify(event_types) : webhook.event_types,
+        is_active !== undefined ? (is_active ? 1 : 0) : webhook.is_active,
+        now,
+        webhookId
+      );
 
-    const updatedWebhook = db.prepare('SELECT * FROM webhooks WHERE id = ?').get(webhookId) as any;
+    const updatedWebhook = (await db.prepare('SELECT * FROM webhooks WHERE id = ?').get(webhookId)) as any;
     const result: WebhookConfig = {
       id: updatedWebhook.id,
       project_id: updatedWebhook.project_id,
@@ -166,18 +166,18 @@ router.delete('/:projectId/webhooks/:webhookId', async (req: Request, res: Respo
     const userId = req.userId as string;
 
     // Verify project ownership
-    const project = getOwnedProject(projectId, userId);
+    const project = await getOwnedProject(projectId, userId);
     if (!project) {
       return res.status(404).json({ error: 'Project not found' });
     }
 
-    const webhook = db.prepare('SELECT * FROM webhooks WHERE id = ? AND project_id = ?').get(webhookId, projectId) as any;
+    const webhook = (await db.prepare('SELECT * FROM webhooks WHERE id = ? AND project_id = ?').get(webhookId, projectId)) as any;
     if (!webhook) {
       return res.status(404).json({ error: 'Webhook not found' });
     }
 
-    db.prepare('DELETE FROM webhook_events WHERE webhook_id = ?').run(webhookId);
-    db.prepare('DELETE FROM webhooks WHERE id = ?').run(webhookId);
+    await db.prepare('DELETE FROM webhook_events WHERE webhook_id = ?').run(webhookId);
+    await db.prepare('DELETE FROM webhooks WHERE id = ?').run(webhookId);
 
     res.status(204).send();
   } catch (error) {
@@ -197,12 +197,12 @@ router.post('/:projectId/webhooks/:webhookId/test', webhookRateLimit, async (req
     const userId = req.userId as string;
 
     // Verify project ownership
-    const project = getOwnedProject(projectId, userId);
+    const project = await getOwnedProject(projectId, userId);
     if (!project) {
       return res.status(404).json({ error: 'Project not found' });
     }
 
-    const webhook = db.prepare('SELECT * FROM webhooks WHERE id = ? AND project_id = ?').get(webhookId, projectId) as any;
+    const webhook = (await db.prepare('SELECT * FROM webhooks WHERE id = ? AND project_id = ?').get(webhookId, projectId)) as any;
     if (!webhook) {
       return res.status(404).json({ error: 'Webhook not found' });
     }
@@ -233,19 +233,19 @@ router.get('/:projectId/webhooks/:webhookId/events', async (req: Request, res: R
     const limit = parseInt(req.query.limit as string) || 50;
 
     // Verify project ownership
-    const project = getOwnedProject(projectId, userId);
+    const project = await getOwnedProject(projectId, userId);
     if (!project) {
       return res.status(404).json({ error: 'Project not found' });
     }
 
-    const webhook = db.prepare('SELECT * FROM webhooks WHERE id = ? AND project_id = ?').get(webhookId, projectId) as any;
+    const webhook = (await db.prepare('SELECT * FROM webhooks WHERE id = ? AND project_id = ?').get(webhookId, projectId)) as any;
     if (!webhook) {
       return res.status(404).json({ error: 'Webhook not found' });
     }
 
-    const events = db
+    const events = (await db
       .prepare('SELECT * FROM webhook_events WHERE webhook_id = ? ORDER BY created_at DESC LIMIT ?')
-      .all(webhookId, limit) as unknown as WebhookEvent[];
+      .all(webhookId, limit)) as unknown as WebhookEvent[];
 
     const result = events.map(e => ({
       ...e,
@@ -272,7 +272,7 @@ function isValidDestination(channel: NotificationChannelType, destination: strin
 // updateNotificationChannel return the camelCase NotificationChannel type
 // used internally (scans.ts, alerts.ts, digest.ts), but the wire format
 // here matches its sibling endpoints.
-function serializeChannel(channel: ReturnType<typeof createNotificationChannel>) {
+function serializeChannel(channel: Awaited<ReturnType<typeof createNotificationChannel>>) {
   return {
     id: channel.id,
     project_id: channel.projectId,
@@ -292,7 +292,7 @@ router.post('/:projectId/notification-channels', async (req: Request, res: Respo
     const { channel, destination, event_types } = req.body;
     const userId = req.userId as string;
 
-    const project = getOwnedProject(projectId, userId);
+    const project = await getOwnedProject(projectId, userId);
     if (!project) {
       return res.status(404).json({ error: 'Project not found' });
     }
@@ -309,7 +309,7 @@ router.post('/:projectId/notification-channels', async (req: Request, res: Respo
       });
     }
 
-    const created = createNotificationChannel(projectId, channel, destination, event_types);
+    const created = await createNotificationChannel(projectId, channel, destination, event_types);
     res.status(201).json(serializeChannel(created));
   } catch (error) {
     console.error('Error creating notification channel:', error);
@@ -323,12 +323,12 @@ router.get('/:projectId/notification-channels', async (req: Request, res: Respon
     const { projectId } = req.params;
     const userId = req.userId as string;
 
-    const project = getOwnedProject(projectId, userId);
+    const project = await getOwnedProject(projectId, userId);
     if (!project) {
       return res.status(404).json({ error: 'Project not found' });
     }
 
-    res.json(getNotificationChannels(projectId).map(serializeChannel));
+    res.json((await getNotificationChannels(projectId)).map(serializeChannel));
   } catch (error) {
     console.error('Error listing notification channels:', error);
     res.status(500).json({ error: 'Failed to list notification channels' });
@@ -342,12 +342,12 @@ router.patch('/:projectId/notification-channels/:channelId', async (req: Request
     const { destination, event_types, is_active } = req.body;
     const userId = req.userId as string;
 
-    const project = getOwnedProject(projectId, userId);
+    const project = await getOwnedProject(projectId, userId);
     if (!project) {
       return res.status(404).json({ error: 'Project not found' });
     }
 
-    const existing = db.prepare('SELECT * FROM notification_channels WHERE id = ? AND project_id = ?').get(channelId, projectId) as any;
+    const existing = (await db.prepare('SELECT * FROM notification_channels WHERE id = ? AND project_id = ?').get(channelId, projectId)) as any;
     if (!existing) {
       return res.status(404).json({ error: 'Notification channel not found' });
     }
@@ -358,7 +358,7 @@ router.patch('/:projectId/notification-channels/:channelId', async (req: Request
       });
     }
 
-    const updated = updateNotificationChannel(channelId, {
+    const updated = await updateNotificationChannel(channelId, {
       destination,
       eventTypes: event_types,
       isActive: is_active,
@@ -376,17 +376,17 @@ router.delete('/:projectId/notification-channels/:channelId', async (req: Reques
     const { projectId, channelId } = req.params;
     const userId = req.userId as string;
 
-    const project = getOwnedProject(projectId, userId);
+    const project = await getOwnedProject(projectId, userId);
     if (!project) {
       return res.status(404).json({ error: 'Project not found' });
     }
 
-    const existing = db.prepare('SELECT * FROM notification_channels WHERE id = ? AND project_id = ?').get(channelId, projectId) as any;
+    const existing = (await db.prepare('SELECT * FROM notification_channels WHERE id = ? AND project_id = ?').get(channelId, projectId)) as any;
     if (!existing) {
       return res.status(404).json({ error: 'Notification channel not found' });
     }
 
-    deleteNotificationChannel(channelId);
+    await deleteNotificationChannel(channelId);
     res.status(204).send();
   } catch (error) {
     console.error('Error deleting notification channel:', error);

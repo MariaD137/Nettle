@@ -26,12 +26,12 @@ test("completeOnboarding stamps a timestamp and is idempotent", async () => {
   const user = await createUser("onboarding-complete@example.com", PASSWORD);
   assert.equal(user.onboardingCompletedAt, null);
 
-  const first = completeOnboarding(user.id);
+  const first = await completeOnboarding(user.id);
   assert.ok(first?.onboardingCompletedAt);
 
   // Calling it again must not move the timestamp forward — completion is
   // stamped once, the same way the billing anchor is.
-  const second = completeOnboarding(user.id);
+  const second = await completeOnboarding(user.id);
   assert.equal(second?.onboardingCompletedAt, first?.onboardingCompletedAt);
 });
 

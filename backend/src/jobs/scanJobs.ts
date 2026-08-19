@@ -21,6 +21,7 @@ import { sourceScanSteps, URL_SCAN_STEPS, type ScanStepEvent } from "../scanner/
 import type { ScanReport } from "../scanner/types";
 import type { ScanWorkerInput, ScanWorkerMessage } from "../scanner/scanWorker";
 import { incrementCounter, observeDuration, Metric } from "../observability/metrics";
+import { logger } from "../observability/logger";
 
 export type ScanJobStatus = "queued" | "running" | "completed" | "failed" | "cancelled";
 export type ScanJobStepStatus = "pending" | "running" | "done";
@@ -48,14 +49,19 @@ interface ScanJobMeta {
   ownerUserId: string | null;
   projectId: string | null;
   billedUserId: string | null;
-  onComplete?: (report: ScanReport) => void;
+  // May return a Promise (recordScan is async since the PostgreSQL
+  // migration) — finishJob below fires this without awaiting it (matching
+  // its original fire-and-forget contract: job resolution never waits on
+  // it) but catches a rejection so a failure here becomes a logged error
+  // instead of an unhandled rejection.
+  onComplete?: (report: ScanReport) => void | Promise<void>;
   // Fired for a "failed" or "cancelled" terminal state (never "completed").
   // Exists so a caller that reserved something up front (e.g. scan quota
   // usage, see scanJobs.routes.ts) can release it when the job doesn't
   // actually succeed — quota is metered per successful scan, and a job
   // can fail or be cancelled long after it was created, well outside the
   // request that created it.
-  onFailure?: () => void;
+  onFailure?: () => void | Promise<void>;
 }
 
 interface InternalJob {
@@ -245,10 +251,14 @@ function finishJob(job: InternalJob, status: "completed" | "failed" | "cancelled
     job.tmpDir = null;
   }
   if (status === "completed" && outcome.report && job.meta.onComplete) {
-    job.meta.onComplete(outcome.report);
+    Promise.resolve(job.meta.onComplete(outcome.report)).catch((err) => {
+      logger.error("scan_job_on_complete_failed", { jobId: job.id, error: (err as Error).message });
+    });
   }
   if ((status === "failed" || status === "cancelled") && job.meta.onFailure) {
-    job.meta.onFailure();
+    Promise.resolve(job.meta.onFailure()).catch((err) => {
+      logger.error("scan_job_on_failure_failed", { jobId: job.id, error: (err as Error).message });
+    });
   }
   tryDequeue();
 }

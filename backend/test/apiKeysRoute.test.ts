@@ -28,9 +28,9 @@ async function subscriberWithProject(): Promise<{ token: string; projectId: stri
   const app = buildApp();
   const { server, base } = await listen(app);
   const user = await createUser(`api-keys-route-${counter++}@example.com`, "correct horse battery staple");
-  setSubscriptionStatus(user.id, "tier1", "active");
-  const token = createSession(user.id);
-  const project = createProject(user.id, "Route Test Project");
+  await setSubscriptionStatus(user.id, "tier1", "active");
+  const token = await createSession(user.id);
+  const project = await createProject(user.id, "Route Test Project");
   return { token, projectId: project.id, base, server };
 }
 

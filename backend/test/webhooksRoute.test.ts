@@ -29,8 +29,8 @@ async function subscriberWithProject(): Promise<{ token: string; projectId: stri
   const app = buildApp();
   const { server, base } = await listen(app);
   const user = await createUser(`webhooks-route-${counter++}@example.com`, "correct horse battery staple");
-  const token = createSession(user.id);
-  const project = createProject(user.id, "Webhook Route Test Project");
+  const token = await createSession(user.id);
+  const project = await createProject(user.id, "Webhook Route Test Project");
   return { token, projectId: project.id, base, server };
 }
 
@@ -163,8 +163,8 @@ test("the webhook test-delivery endpoint is actually rate-limited", async () => 
   const { server, base } = await listen(app);
   try {
     const user = await createUser(`webhooks-ratelimit-${counter++}@example.com`, "correct horse battery staple");
-    const token = createSession(user.id);
-    const project = createProject(user.id, "Webhook Rate Limit Test Project");
+    const token = await createSession(user.id);
+    const project = await createProject(user.id, "Webhook Rate Limit Test Project");
 
     const created = await (
       await fetch(`${base}/api/projects/${project.id}/webhooks`, {

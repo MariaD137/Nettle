@@ -13,7 +13,7 @@ const PASSWORD = "correct horse battery staple";
 
 async function subscriber(email: string, plan: "tier1" | "tier2" = "tier1") {
   const user = await createUser(email, PASSWORD);
-  setSubscriptionStatus(user.id, plan, "active");
+  await setSubscriptionStatus(user.id, plan, "active");
   return user.id;
 }
 
@@ -48,72 +48,72 @@ test("the boundary belongs to the new period, not the old one", () => {
 
 test("subscribing stamps a billing anchor, and it never moves afterwards", async () => {
   const id = await subscriber("quota-anchor@example.com");
-  const first = getUserById(id)!.billingAnchor;
+  const first = (await getUserById(id))!.billingAnchor;
   assert.ok(first, "an active subscription must have an anchor");
 
   // A later webhook (renewal, plan change) must not reset the anchor —
   // doing so would silently wipe the customer's usage mid-cycle.
-  setSubscriptionStatus(id, "tier2", "active");
-  assert.equal(getUserById(id)!.billingAnchor, first);
+  await setSubscriptionStatus(id, "tier2", "active");
+  assert.equal((await getUserById(id))!.billingAnchor, first);
 });
 
 test("usage counts only the requested period", async () => {
   const id = await subscriber("quota-count@example.com");
-  recordScanUsage(id, null, "upload");
-  recordScanUsage(id, null, "repo");
+  await recordScanUsage(id, null, "upload");
+  await recordScanUsage(id, null, "repo");
 
-  assert.equal(countScanUsage(id, new Date("2000-01-01T00:00:00Z")), 2);
+  assert.equal(await countScanUsage(id, new Date("2000-01-01T00:00:00Z")), 2);
   // A window starting in the future contains nothing.
-  assert.equal(countScanUsage(id, new Date(Date.now() + 60_000)), 0);
+  assert.equal(await countScanUsage(id, new Date(Date.now() + 60_000)), 0);
 });
 
 test("one account's scans never count against another's allowance", async () => {
   const alice = await subscriber("quota-alice@example.com");
   const bob = await subscriber("quota-bob@example.com");
 
-  for (let i = 0; i < 5; i++) recordScanUsage(alice, null, "upload");
+  for (let i = 0; i < 5; i++) await recordScanUsage(alice, null, "upload");
 
-  assert.equal(getQuotaState(alice)!.used, 5);
-  assert.equal(getQuotaState(bob)!.used, 0);
-  assert.equal(getQuotaState(bob)!.remaining, SCAN_QUOTAS.tier1);
+  assert.equal((await getQuotaState(alice))!.used, 5);
+  assert.equal((await getQuotaState(bob))!.used, 0);
+  assert.equal((await getQuotaState(bob))!.remaining, SCAN_QUOTAS.tier1);
 });
 
 test("quota state reports remaining and flips to exhausted at the limit", async () => {
   const id = await subscriber("quota-exhaust@example.com");
   const limit = SCAN_QUOTAS.tier1;
 
-  let state = getQuotaState(id)!;
+  let state = (await getQuotaState(id))!;
   assert.equal(state.limit, limit);
   assert.equal(state.remaining, limit);
   assert.equal(state.exhausted, false);
 
-  for (let i = 0; i < limit - 1; i++) recordScanUsage(id, null, "upload");
-  state = getQuotaState(id)!;
+  for (let i = 0; i < limit - 1; i++) await recordScanUsage(id, null, "upload");
+  state = (await getQuotaState(id))!;
   assert.equal(state.used, limit - 1);
   assert.equal(state.remaining, 1);
   assert.equal(state.exhausted, false, "the last scan in the allowance must still be allowed");
 
-  recordScanUsage(id, null, "upload");
-  state = getQuotaState(id)!;
+  await recordScanUsage(id, null, "upload");
+  state = (await getQuotaState(id))!;
   assert.equal(state.remaining, 0);
   assert.equal(state.exhausted, true);
 
   // Going over never reports a negative allowance.
-  recordScanUsage(id, null, "upload");
-  assert.equal(getQuotaState(id)!.remaining, 0);
+  await recordScanUsage(id, null, "upload");
+  assert.equal((await getQuotaState(id))!.remaining, 0);
 });
 
 test("the two tiers carry different allowances", async () => {
   const one = await subscriber("quota-t1@example.com", "tier1");
   const two = await subscriber("quota-t2@example.com", "tier2");
-  assert.equal(getQuotaState(one)!.limit, SCAN_QUOTAS.tier1);
-  assert.equal(getQuotaState(two)!.limit, SCAN_QUOTAS.tier2);
+  assert.equal((await getQuotaState(one))!.limit, SCAN_QUOTAS.tier1);
+  assert.equal((await getQuotaState(two))!.limit, SCAN_QUOTAS.tier2);
   assert.notEqual(SCAN_QUOTAS.tier1, SCAN_QUOTAS.tier2);
 });
 
 test("an unsubscribed account has no metered quota", async () => {
   const user = await createUser("quota-free@example.com", PASSWORD);
-  assert.equal(getQuotaState(user.id), null);
+  assert.equal(await getQuotaState(user.id), null);
 });
 
 // Regression coverage for the entitlement-drift bug: a canceled or past-due
@@ -122,28 +122,28 @@ test("an unsubscribed account has no metered quota", async () => {
 // (the same as a free account) the moment the subscription itself lapses.
 test("a canceled subscription loses its metered quota even though plan still says tier1/tier2", async () => {
   const id = await subscriber("quota-canceled@example.com", "tier2");
-  assert.equal(getQuotaState(id)!.limit, SCAN_QUOTAS.tier2);
+  assert.equal((await getQuotaState(id))!.limit, SCAN_QUOTAS.tier2);
 
-  setSubscriptionStatus(id, "tier2", "canceled");
-  assert.equal(getQuotaState(id), null);
+  await setSubscriptionStatus(id, "tier2", "canceled");
+  assert.equal(await getQuotaState(id), null);
 });
 
 test("a past_due subscription loses its metered quota", async () => {
   const id = await subscriber("quota-pastdue@example.com", "tier1");
-  assert.equal(getQuotaState(id)!.limit, SCAN_QUOTAS.tier1);
+  assert.equal((await getQuotaState(id))!.limit, SCAN_QUOTAS.tier1);
 
-  setSubscriptionStatus(id, "tier1", "past_due");
-  assert.equal(getQuotaState(id), null);
+  await setSubscriptionStatus(id, "tier1", "past_due");
+  assert.equal(await getQuotaState(id), null);
 });
 
 test("downgrading from tier2 to tier1 immediately shrinks the metered quota", async () => {
   const id = await subscriber("quota-downgrade@example.com", "tier2");
-  assert.equal(getQuotaState(id)!.limit, SCAN_QUOTAS.tier2);
+  assert.equal((await getQuotaState(id))!.limit, SCAN_QUOTAS.tier2);
 
   // What the customer.subscription.updated webhook does once it correctly
   // re-derives plan from Stripe's own price instead of trusting the old one.
-  setSubscriptionStatus(id, "tier1", "active");
-  assert.equal(getQuotaState(id)!.limit, SCAN_QUOTAS.tier1);
+  await setSubscriptionStatus(id, "tier1", "active");
+  assert.equal((await getQuotaState(id))!.limit, SCAN_QUOTAS.tier1);
 });
 
 test("usage is recorded even when no project is attached", async () => {
@@ -151,8 +151,8 @@ test("usage is recorded even when no project is attached", async () => {
   // project API key never lands in the `scans` table, so counting stored
   // reports would let a subscriber take unlimited scans by omitting the key.
   const id = await subscriber("quota-noproject@example.com");
-  recordScanUsage(id, null, "upload");
-  assert.equal(getQuotaState(id)!.used, 1);
+  await recordScanUsage(id, null, "upload");
+  assert.equal((await getQuotaState(id))!.used, 1);
 });
 
 test("the paywall copy quotes the allowance the API actually enforces", () => {

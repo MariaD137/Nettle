@@ -54,13 +54,17 @@ function toScan(row: ScanRow): StoredScan {
   };
 }
 
-export function recordScan(projectId: string, report: ScanReport, status: ScanStatus = "COMPLETED"): StoredScan {
+export async function recordScan(
+  projectId: string,
+  report: ScanReport,
+  status: ScanStatus = "COMPLETED"
+): Promise<StoredScan> {
   // Mutated in place, not spread into a copy: callers that hold their own
   // reference to this same report object (e.g. the response already being
   // built for the request that triggered this scan) pick up the tag too,
   // without every call site having to remember to re-read it back out.
   if (report.environment === undefined) {
-    report.environment = getProject(projectId)?.environment ?? null;
+    report.environment = (await getProject(projectId))?.environment ?? null;
   }
 
   const criticalCount = report.summary.critical + report.summary.high;
@@ -78,28 +82,30 @@ export function recordScan(projectId: string, report: ScanReport, status: ScanSt
     semgrepVersion: report.semgrepVersion ?? null,
     report,
   };
-  db.prepare(
-    "INSERT INTO scans (id, project_id, scanned_at, score, critical_count, caution_count, clear_count, status, scanner_version, semgrep_version, report_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
-  ).run(
-    stored.id,
-    stored.projectId,
-    stored.scannedAt,
-    stored.score,
-    stored.criticalCount,
-    stored.cautionCount,
-    stored.clearCount,
-    stored.status,
-    stored.scannerVersion,
-    stored.semgrepVersion,
-    JSON.stringify(report)
-  );
+  await db
+    .prepare(
+      "INSERT INTO scans (id, project_id, scanned_at, score, critical_count, caution_count, clear_count, status, scanner_version, semgrep_version, report_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+    )
+    .run(
+      stored.id,
+      stored.projectId,
+      stored.scannedAt,
+      stored.score,
+      stored.criticalCount,
+      stored.cautionCount,
+      stored.clearCount,
+      stored.status,
+      stored.scannerVersion,
+      stored.semgrepVersion,
+      JSON.stringify(report)
+    );
 
   for (const finding of report.findings) {
     const hash = hashFinding(finding.category, finding.title, finding.file);
-    recordFindingSeen(projectId, hash, report.scannedAt);
+    await recordFindingSeen(projectId, hash, report.scannedAt);
   }
 
-  notifyScanCompleted(stored);
+  notifyScanCompleted(stored).catch((err) => console.error("notifyScanCompleted failed:", err));
 
   return stored;
 }
@@ -111,7 +117,7 @@ export function recordScan(projectId: string, report: ScanReport, status: ScanSt
  * own event_type strings, which would silently never match a webhook whose
  * configured event_types only lists "scan.completed".
  */
-function notifyScanCompleted(scan: StoredScan): void {
+async function notifyScanCompleted(scan: StoredScan): Promise<void> {
   sendWebhook(scan.projectId, "scan.completed", {
     scan_id: scan.id,
     project_id: scan.projectId,
@@ -123,21 +129,21 @@ function notifyScanCompleted(scan: StoredScan): void {
     scanned_at: scan.scannedAt,
   }).catch((err) => console.error("scan.completed webhook delivery failed:", err));
 
-  const projectName = getProject(scan.projectId)?.name ?? "your project";
+  const projectName = (await getProject(scan.projectId))?.name ?? "your project";
   const summary = `Scan of ${projectName} finished with score ${scan.score} (${scan.criticalCount} critical, ${scan.cautionCount} caution).`;
   notifyChannels(scan.projectId, "scan.completed", `Nettle: scan completed for ${projectName}`, summary);
 }
 
-export function listScans(projectId: string): StoredScan[] {
-  const rows = db
+export async function listScans(projectId: string): Promise<StoredScan[]> {
+  const rows = (await db
     .prepare("SELECT * FROM scans WHERE project_id = ? ORDER BY scanned_at DESC")
-    .all(projectId) as unknown as ScanRow[];
+    .all(projectId)) as unknown as ScanRow[];
   return rows.map(toScan);
 }
 
-export function getLatestScan(projectId: string): StoredScan | null {
-  const row = db
+export async function getLatestScan(projectId: string): Promise<StoredScan | null> {
+  const row = (await db
     .prepare("SELECT * FROM scans WHERE project_id = ? ORDER BY scanned_at DESC LIMIT 1")
-    .get(projectId) as ScanRow | undefined;
+    .get(projectId)) as ScanRow | undefined;
   return row ? toScan(row) : null;
 }

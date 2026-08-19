@@ -54,8 +54,8 @@ const PASSWORD = "correct horse battery staple";
 let counter = 0;
 async function subscriber(): Promise<{ token: string; userId: string }> {
   const user = await createUser(`scanjobroutes-${counter++}@example.com`, PASSWORD);
-  setSubscriptionStatus(user.id, "tier1", "active");
-  const token = createSession(user.id);
+  await setSubscriptionStatus(user.id, "tier1", "active");
+  const token = await createSession(user.id);
   return { token, userId: user.id };
 }
 
@@ -117,9 +117,9 @@ test("a canceled subscriber gets a preview report on the job route, not full acc
   const app = buildApp();
   const { server, base } = await listen(app);
   const user = await createUser(`scanjobroutes-canceled-${counter++}@example.com`, PASSWORD);
-  setSubscriptionStatus(user.id, "tier1", "active");
-  setSubscriptionStatus(user.id, "tier1", "canceled");
-  const token = createSession(user.id);
+  await setSubscriptionStatus(user.id, "tier1", "active");
+  await setSubscriptionStatus(user.id, "tier1", "canceled");
+  const token = await createSession(user.id);
   const zipPath = makeZip();
 
   try {
@@ -167,13 +167,13 @@ test("submitting a second job the instant after the account's last quota slot wa
   const app = buildApp();
   const { server, base } = await listen(app);
   const user = await createUser(`scanjobroutes-quotarace-${counter++}@example.com`, PASSWORD);
-  setSubscriptionStatus(user.id, "tier1", "active");
-  const token = createSession(user.id);
+  await setSubscriptionStatus(user.id, "tier1", "active");
+  const token = await createSession(user.id);
 
   // Use up all but one slot ahead of time so the very next submission is
   // the one that matters.
   for (let i = 0; i < SCAN_QUOTAS.tier1 - 1; i++) {
-    recordScanUsage(user.id, null, "upload");
+    await recordScanUsage(user.id, null, "upload");
   }
 
   const zipPath = makeZip();
@@ -214,11 +214,11 @@ test("a failed job releases its reserved quota slot back to the account", async 
   const app = buildApp();
   const { server, base } = await listen(app);
   const user = await createUser(`scanjobroutes-quotarelease-${counter++}@example.com`, PASSWORD);
-  setSubscriptionStatus(user.id, "tier1", "active");
-  const token = createSession(user.id);
+  await setSubscriptionStatus(user.id, "tier1", "active");
+  const token = await createSession(user.id);
 
   for (let i = 0; i < SCAN_QUOTAS.tier1 - 1; i++) {
-    recordScanUsage(user.id, null, "upload");
+    await recordScanUsage(user.id, null, "upload");
   }
 
   try {

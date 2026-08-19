@@ -42,10 +42,10 @@ test('Phase 15: Performance & Optimization', async (t) => {
   limiter.destroy();
 
   // Test database performance
-  await t.test('Database: Indexes exist for common queries', () => {
-    const indexes = db
+  await t.test('Database: Indexes exist for common queries', async () => {
+    const indexes = await db
       .prepare(
-        `SELECT name FROM sqlite_master WHERE type='index' AND name LIKE 'idx_%'`
+        `SELECT indexname AS name FROM pg_indexes WHERE indexname LIKE 'idx_%'`
       )
       .all();
 
@@ -156,34 +156,34 @@ test('Phase 15: Performance & Optimization', async (t) => {
   });
 
   // Test data structure queries
-  await t.test('Performance: Query webhook events efficiently', () => {
+  await t.test('Performance: Query webhook events efficiently', async () => {
     const userId = newId();
     const projectId = newId();
 
-    db.prepare(
+    await db.prepare(
       'INSERT INTO users (id, email, password_hash, plan, created_at) VALUES (?, ?, ?, ?, ?)'
     ).run(userId, `perf-test-${Date.now()}@example.com`, 'hash', 'free', new Date().toISOString());
 
-    db.prepare(
+    await db.prepare(
       'INSERT INTO projects (id, user_id, name, api_key, created_at) VALUES (?, ?, ?, ?, ?)'
     ).run(projectId, userId, 'Perf Test', newId(), new Date().toISOString());
 
     const webhookId = newId();
-    db.prepare(
+    await db.prepare(
       'INSERT INTO webhooks (id, project_id, service, webhook_url, is_active, event_types, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
     ).run(webhookId, projectId, 'test', 'https://example.com', 1, '[]', new Date().toISOString(), new Date().toISOString());
 
     // Insert 100 webhook events
     const now = new Date().toISOString();
     for (let i = 0; i < 100; i++) {
-      db.prepare(
+      await db.prepare(
         'INSERT INTO webhook_events (id, webhook_id, event_type, payload, status, attempt_count, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)'
       ).run(newId(), webhookId, 'test_event', '{}', 'sent', 1, now);
     }
 
     // Query with index should be fast
     const start = Date.now();
-    const events = db
+    const events = await db
       .prepare('SELECT * FROM webhook_events WHERE webhook_id = ? ORDER BY created_at DESC LIMIT 50')
       .all(webhookId);
     const duration = Date.now() - start;
@@ -192,22 +192,22 @@ test('Phase 15: Performance & Optimization', async (t) => {
     ok(duration < 100, `Query completed in ${duration}ms (should be <100ms)`);
   });
 
-  await t.test('Performance: Query scans by project efficiently', () => {
+  await t.test('Performance: Query scans by project efficiently', async () => {
     const userId = newId();
     const projectId = newId();
 
-    db.prepare(
+    await db.prepare(
       'INSERT INTO users (id, email, password_hash, plan, created_at) VALUES (?, ?, ?, ?, ?)'
     ).run(userId, `scan-perf-${Date.now()}@example.com`, 'hash', 'free', new Date().toISOString());
 
-    db.prepare(
+    await db.prepare(
       'INSERT INTO projects (id, user_id, name, api_key, created_at) VALUES (?, ?, ?, ?, ?)'
     ).run(projectId, userId, 'Scan Test', newId(), new Date().toISOString());
 
     // Insert 50 scans
     for (let i = 0; i < 50; i++) {
       const scanId = newId();
-      db.prepare(
+      await db.prepare(
         `INSERT INTO scans
         (id, project_id, scanned_at, score, critical_count, caution_count, clear_count, report_json)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
@@ -225,7 +225,7 @@ test('Phase 15: Performance & Optimization', async (t) => {
 
     // Query should use index on (project_id, scanned_at)
     const start = Date.now();
-    const scans = db
+    const scans = await db
       .prepare('SELECT * FROM scans WHERE project_id = ? ORDER BY scanned_at DESC LIMIT 20')
       .all(projectId);
     const duration = Date.now() - start;
@@ -234,21 +234,21 @@ test('Phase 15: Performance & Optimization', async (t) => {
     ok(duration < 100, `Query completed in ${duration}ms (should be <100ms)`);
   });
 
-  await t.test('Performance: Query anomalies by project efficiently', () => {
+  await t.test('Performance: Query anomalies by project efficiently', async () => {
     const userId = newId();
     const projectId = newId();
 
-    db.prepare(
+    await db.prepare(
       'INSERT INTO users (id, email, password_hash, plan, created_at) VALUES (?, ?, ?, ?, ?)'
     ).run(userId, `anomaly-perf-${Date.now()}@example.com`, 'hash', 'free', new Date().toISOString());
 
-    db.prepare(
+    await db.prepare(
       'INSERT INTO projects (id, user_id, name, api_key, created_at) VALUES (?, ?, ?, ?, ?)'
     ).run(projectId, userId, 'Anomaly Test', newId(), new Date().toISOString());
 
     // Insert 100 anomaly scores
     for (let i = 0; i < 100; i++) {
-      db.prepare(
+      await db.prepare(
         `INSERT INTO anomaly_scores
         (id, project_id, event_id, z_score, isolation_score, composite_score, anomaly_type, is_anomaly, created_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
@@ -267,7 +267,7 @@ test('Phase 15: Performance & Optimization', async (t) => {
 
     // Query should use index
     const start = Date.now();
-    const anomalies = db
+    const anomalies = await db
       .prepare(
         'SELECT * FROM anomaly_scores WHERE project_id = ? AND composite_score > ? ORDER BY created_at DESC LIMIT 50'
       )
@@ -278,21 +278,21 @@ test('Phase 15: Performance & Optimization', async (t) => {
     ok(duration < 100, `Query completed in ${duration}ms (should be <100ms)`);
   });
 
-  await t.test('Performance: Complex query with multiple filters', () => {
+  await t.test('Performance: Complex query with multiple filters', async () => {
     const userId = newId();
     const projectId = newId();
 
-    db.prepare(
+    await db.prepare(
       'INSERT INTO users (id, email, password_hash, plan, created_at) VALUES (?, ?, ?, ?, ?)'
     ).run(userId, `complex-${Date.now()}@example.com`, 'hash', 'free', new Date().toISOString());
 
-    db.prepare(
+    await db.prepare(
       'INSERT INTO projects (id, user_id, name, api_key, created_at) VALUES (?, ?, ?, ?, ?)'
     ).run(projectId, userId, 'Complex Test', newId(), new Date().toISOString());
 
     // Insert alerts
     for (let i = 0; i < 100; i++) {
-      db.prepare(
+      await db.prepare(
         `INSERT INTO alerts
         (id, project_id, occurred_at, severity, rule, message, status)
         VALUES (?, ?, ?, ?, ?, ?, ?)`
@@ -309,7 +309,7 @@ test('Phase 15: Performance & Optimization', async (t) => {
 
     // Complex query
     const start = Date.now();
-    const alerts = db
+    const alerts = await db
       .prepare(
         `SELECT * FROM alerts
         WHERE project_id = ? AND severity IN ('critical', 'high') AND status = 'new'
@@ -321,15 +321,15 @@ test('Phase 15: Performance & Optimization', async (t) => {
     ok(duration < 150, `Complex query completed in ${duration}ms (should be <150ms)`);
   });
 
-  await t.test('Performance: N+1 prevention for webhook delivery', () => {
+  await t.test('Performance: N+1 prevention for webhook delivery', async () => {
     const projectId = newId();
     const userId = newId();
 
-    db.prepare(
+    await db.prepare(
       'INSERT INTO users (id, email, password_hash, plan, created_at) VALUES (?, ?, ?, ?, ?)'
     ).run(userId, `n+1-test-${Date.now()}@example.com`, 'hash', 'free', new Date().toISOString());
 
-    db.prepare(
+    await db.prepare(
       'INSERT INTO projects (id, user_id, name, api_key, created_at) VALUES (?, ?, ?, ?, ?)'
     ).run(projectId, userId, 'N+1 Test', newId(), new Date().toISOString());
 
@@ -337,7 +337,7 @@ test('Phase 15: Performance & Optimization', async (t) => {
     const webhooks = [];
     for (let i = 0; i < 10; i++) {
       const webhookId = newId();
-      db.prepare(
+      await db.prepare(
         'INSERT INTO webhooks (id, project_id, service, webhook_url, is_active, event_types, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
       ).run(webhookId, projectId, 'test', `https://example.com/${i}`, 1, '[]', new Date().toISOString(), new Date().toISOString());
       webhooks.push(webhookId);
@@ -345,22 +345,22 @@ test('Phase 15: Performance & Optimization', async (t) => {
 
     // Get all webhooks for project (1 query, not N+1)
     const start = Date.now();
-    const results = db.prepare('SELECT * FROM webhooks WHERE project_id = ?').all(projectId);
+    const results = await db.prepare('SELECT * FROM webhooks WHERE project_id = ?').all(projectId);
     const duration = Date.now() - start;
 
     strictEqual(results.length, 10, 'Returns all 10 webhooks');
     ok(duration < 50, `Single query completed in ${duration}ms (should be <50ms)`);
   });
 
-  await t.test('Performance: Scan report JSON parsing performance', () => {
+  await t.test('Performance: Scan report JSON parsing performance', async () => {
     const projectId = newId();
     const userId = newId();
 
-    db.prepare(
+    await db.prepare(
       'INSERT INTO users (id, email, password_hash, plan, created_at) VALUES (?, ?, ?, ?, ?)'
     ).run(userId, `json-perf-${Date.now()}@example.com`, 'hash', 'free', new Date().toISOString());
 
-    db.prepare(
+    await db.prepare(
       'INSERT INTO projects (id, user_id, name, api_key, created_at) VALUES (?, ?, ?, ?, ?)'
     ).run(projectId, userId, 'JSON Test', newId(), new Date().toISOString());
 
@@ -382,7 +382,7 @@ test('Phase 15: Performance & Optimization', async (t) => {
 
     // Insert scan
     const scanId = newId();
-    db.prepare(
+    await db.prepare(
       `INSERT INTO scans
       (id, project_id, scanned_at, score, critical_count, caution_count, clear_count, report_json, status)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
@@ -390,7 +390,7 @@ test('Phase 15: Performance & Optimization', async (t) => {
 
     // Retrieve and parse
     const start = Date.now();
-    const scan = db.prepare('SELECT * FROM scans WHERE id = ?').get(scanId);
+    const scan = await db.prepare('SELECT * FROM scans WHERE id = ?').get(scanId);
     const parsed = JSON.parse((scan as any).report_json);
     const duration = Date.now() - start;
 

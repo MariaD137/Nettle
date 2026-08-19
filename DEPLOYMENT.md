@@ -124,39 +124,43 @@ Environment variables to set:
 - `STRIPE_SECRET_KEY` (from Stripe dashboard)
 - `STRIPE_WEBHOOK_SECRET` (from Stripe webhooks)
 
-## Database Migration (SQLite → RDS)
+## Database (PostgreSQL, required)
 
-### Critical: App Runner Data Loss
+The backend's code side of this is done: `backend/src/db/index.ts` is
+PostgreSQL-only, with no SQLite fallback — it requires a real `DATABASE_URL`
+(or `PGHOST`/`PGPORT`/`PGUSER`/`PGPASSWORD`/`PGDATABASE`) to start at all.
+What's still a real, un-taken step is provisioning RDS in an actual AWS
+account — nothing in this repository does that on its own.
 
-App Runner containers are replaced on every deployment, destroying ephemeral storage. **Migrate to RDS immediately for production.**
+### Provisioning RDS
 
-### Migration Steps
+This repo already has a real CDK stack for this — use it rather than
+hand-running `aws rds create-db-instance`:
 
-1. **Create RDS instance** (PostgreSQL 14+)
-   ```bash
-   aws rds create-db-instance \
-     --db-instance-identifier nettle-db \
-     --db-instance-class db.t3.micro \
-     --engine postgres \
-     --master-username postgres \
-     --allocated-storage 20
-   ```
+```bash
+cd infra
+npx cdk deploy Nettle-Database
+```
 
-2. **Update connection string**
-   ```bash
-   export DATABASE_URL="postgresql://user:pass@nettle-db.xxx.rds.amazonaws.com:5432/nettle"
-   ```
+This prints `DatabaseEndpoint` and `DatabaseSecretArn`. Fill both into
+`infra/lib/api-stack.ts`'s `NettleApiStack` props (`databaseEndpointAddress`,
+`databaseSecretArn` — see `infra/bin/app.ts`'s comment there) and redeploy
+`Nettle-Api`; that's what actually wires `PGHOST`/`PGPORT`/`PGUSER`/
+`PGPASSWORD`/`PGDATABASE` into the running App Runner service. See
+`AWS_GITHUB_DEPLOYMENT.md` §6–7 for the full walkthrough.
 
-3. **Migrate schema** (tools like `migrate` or Prisma)
-   ```bash
-   npm run migrate:up
-   ```
+### Applying the schema
 
-4. **Update backend** (swap node:sqlite for `pg` package)
-   ```bash
-   npm uninstall sqlite
-   npm install pg
-   ```
+```bash
+cd backend
+export DATABASE_URL="postgres://user:pass@<endpoint-from-above>:5432/nettle"
+npm run db:migrate:postgres
+```
+
+Safe to run repeatedly — it only applies migrations under
+`backend/src/db/postgres/migrations/` that haven't already run
+(`schema_migrations` tracks what's applied). The server itself also runs
+this automatically at startup before accepting requests.
 
 ## Monitoring & Observability
 
@@ -263,14 +267,15 @@ export DATABASE_IDLE_TIMEOUT=300
 
 3. **Check CloudWatch metrics** for CPU/memory spikes
 
-### Out of Disk Space (SQLite)
+### Out of Disk Space (RDS)
 
-**Not an issue with RDS.** With SQLite, delete old webhook events:
-
-```bash
-sqlite3 nettle.db "DELETE FROM webhook_events WHERE created_at < datetime('now', '-30 days') AND status IN ('sent', 'failed');"
-VACUUM;
-```
+RDS storage is provisioned separately from the app (`allocatedStorage` in
+`infra/lib/database-stack.ts`) and doesn't grow unbounded from normal use.
+If it does fill up, `backend/src/patrol/retention.ts`'s cleanup (triggered
+via `POST /api/internal/retention/cleanup`, see `RETENTION_*_DAYS` env
+vars) already prunes old events/alerts/scans/webhook_events on whatever
+schedule you point a cron trigger at — that's the mechanism to use, not a
+manual `DELETE`/`VACUUM` against the database directly.
 
 ## Production Checklist
 

@@ -106,16 +106,16 @@ function suspiciousUserAgent(userAgent: string | null | undefined): boolean {
  * real anomaly detection (baselining normal traffic, ML-based scoring) is a
  * later investment once there's enough real traffic to learn from.
  */
-export function runDetection(projectId: string, event: StoredEvent): Alert[] {
+export async function runDetection(projectId: string, event: StoredEvent): Promise<Alert[]> {
   const alerts: Alert[] = [];
-  const settings = getDetectionSettings(projectId);
-  const window = recentEvents(projectId, 60);
+  const settings = await getDetectionSettings(projectId);
+  const window = await recentEvents(projectId, 60);
   const fromSameIp = window.filter((e) => e.ip === event.ip);
 
   const recentFailedAuth = fromSameIp.filter((e) => e.statusCode === 401 || e.statusCode === 403);
-  if (recentFailedAuth.length >= settings.bruteForceThreshold && !hasRecentAlert(projectId, "brute-force", ALERT_COOLDOWN_SECONDS)) {
+  if (recentFailedAuth.length >= settings.bruteForceThreshold && !(await hasRecentAlert(projectId, "brute-force", ALERT_COOLDOWN_SECONDS))) {
     alerts.push(
-      createAlert(
+      await createAlert(
         projectId,
         "critical",
         "brute-force",
@@ -127,9 +127,9 @@ export function runDetection(projectId: string, event: StoredEvent): Alert[] {
   const lastTenSeconds = fromSameIp.filter(
     (e) => Date.now() - new Date(e.occurredAt).getTime() <= 10_000
   );
-  if (lastTenSeconds.length >= settings.highRequestRateThreshold && !hasRecentAlert(projectId, "high-request-rate", ALERT_COOLDOWN_SECONDS)) {
+  if (lastTenSeconds.length >= settings.highRequestRateThreshold && !(await hasRecentAlert(projectId, "high-request-rate", ALERT_COOLDOWN_SECONDS))) {
     alerts.push(
-      createAlert(
+      await createAlert(
         projectId,
         "medium",
         "high-request-rate",
@@ -138,9 +138,9 @@ export function runDetection(projectId: string, event: StoredEvent): Alert[] {
     );
   }
 
-  if (suspiciousPath(event.path) && !hasRecentAlert(projectId, "suspicious-path-" + event.ip, ALERT_COOLDOWN_SECONDS)) {
+  if (suspiciousPath(event.path) && !(await hasRecentAlert(projectId, "suspicious-path-" + event.ip, ALERT_COOLDOWN_SECONDS))) {
     alerts.push(
-      createAlert(
+      await createAlert(
         projectId,
         "critical",
         "suspicious-path-" + event.ip,
@@ -149,9 +149,9 @@ export function runDetection(projectId: string, event: StoredEvent): Alert[] {
     );
   }
 
-  if (sqliShaped(event.path) && !hasRecentAlert(projectId, "sqli-shaped-" + event.ip, ALERT_COOLDOWN_SECONDS)) {
+  if (sqliShaped(event.path) && !(await hasRecentAlert(projectId, "sqli-shaped-" + event.ip, ALERT_COOLDOWN_SECONDS))) {
     alerts.push(
-      createAlert(
+      await createAlert(
         projectId,
         "critical",
         "sqli-shaped-" + event.ip,
@@ -160,9 +160,9 @@ export function runDetection(projectId: string, event: StoredEvent): Alert[] {
     );
   }
 
-  if (xssShaped(event.path) && !hasRecentAlert(projectId, "xss-shaped-" + event.ip, ALERT_COOLDOWN_SECONDS)) {
+  if (xssShaped(event.path) && !(await hasRecentAlert(projectId, "xss-shaped-" + event.ip, ALERT_COOLDOWN_SECONDS))) {
     alerts.push(
-      createAlert(
+      await createAlert(
         projectId,
         "critical",
         "xss-shaped-" + event.ip,
@@ -171,9 +171,9 @@ export function runDetection(projectId: string, event: StoredEvent): Alert[] {
     );
   }
 
-  if (cmdiShaped(event.path) && !hasRecentAlert(projectId, "cmdi-shaped-" + event.ip, ALERT_COOLDOWN_SECONDS)) {
+  if (cmdiShaped(event.path) && !(await hasRecentAlert(projectId, "cmdi-shaped-" + event.ip, ALERT_COOLDOWN_SECONDS))) {
     alerts.push(
-      createAlert(
+      await createAlert(
         projectId,
         "critical",
         "cmdi-shaped-" + event.ip,
@@ -182,9 +182,9 @@ export function runDetection(projectId: string, event: StoredEvent): Alert[] {
     );
   }
 
-  if (suspiciousUserAgent(event.userAgent) && !hasRecentAlert(projectId, "suspicious-user-agent-" + event.ip, ALERT_COOLDOWN_SECONDS)) {
+  if (suspiciousUserAgent(event.userAgent) && !(await hasRecentAlert(projectId, "suspicious-user-agent-" + event.ip, ALERT_COOLDOWN_SECONDS))) {
     alerts.push(
-      createAlert(
+      await createAlert(
         projectId,
         "critical",
         "suspicious-user-agent-" + event.ip,
@@ -209,10 +209,10 @@ export function runDetection(projectId: string, event: StoredEvent): Alert[] {
   const distinctIps = new Set(sameFailedAuthPath.map((e) => e.ip));
   if (
     distinctIps.size >= settings.credentialStuffingMinIps &&
-    !hasRecentAlert(projectId, "credential-stuffing-" + event.path, ALERT_COOLDOWN_SECONDS)
+    !(await hasRecentAlert(projectId, "credential-stuffing-" + event.path, ALERT_COOLDOWN_SECONDS))
   ) {
     alerts.push(
-      createAlert(
+      await createAlert(
         projectId,
         "critical",
         "credential-stuffing-" + event.path,
@@ -225,13 +225,13 @@ export function runDetection(projectId: string, event: StoredEvent): Alert[] {
   // is what a "threshold" rule counts against (see evaluateCustomRule /
   // matchThreshold in customRules.ts) — there's no per-rule window
   // override today, so every threshold rule shares this one.
-  const customRules = listCustomRules(projectId, true); // enabledOnly
+  const customRules = await listCustomRules(projectId, true); // enabledOnly
   for (const rule of customRules) {
     if (evaluateCustomRule(rule, event, window)) {
       const alertId = `custom-rule-${rule.id}`;
-      if (!hasRecentAlert(projectId, alertId, ALERT_COOLDOWN_SECONDS)) {
+      if (!(await hasRecentAlert(projectId, alertId, ALERT_COOLDOWN_SECONDS))) {
         alerts.push(
-          createAlert(
+          await createAlert(
             projectId,
             rule.severity,
             alertId,

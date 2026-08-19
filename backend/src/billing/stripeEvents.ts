@@ -17,25 +17,27 @@ import { db, newId } from "../db/index";
 // claimStripeEvent() closes that window by doing the INSERT *first*, as
 // the sole atomic operation deciding who gets to process this event — not
 // a second confirmation of a decision already made. stripe_events.event_id
-// is a PRIMARY KEY, so SQLite itself enforces that only one INSERT for a
-// given id can ever succeed; the loser gets a real constraint violation,
-// not a race-prone read. Call this once, synchronously, immediately after
-// signature verification and before any side effect or `await` — node:sqlite
-// executes each statement synchronously, so as long as nothing yields the
-// event loop between "verified" and "claimed," two concurrent requests for
-// the same event id cannot both observe "not yet claimed."
-export function claimStripeEvent(eventId: string, eventType: string): boolean {
+// is a PRIMARY KEY, and PostgreSQL genuinely enforces that across
+// concurrent connections: two INSERTs for the same id can be issued at the
+// same instant from two different processes (e.g. two App Runner
+// instances), and PostgreSQL itself serializes them — one succeeds, the
+// other blocks briefly then fails with a real unique_violation (SQLSTATE
+// 23505). Call this once, immediately after signature verification and
+// before any other side effect.
+export async function claimStripeEvent(eventId: string, eventType: string): Promise<boolean> {
   try {
-    db.prepare(
-      "INSERT INTO stripe_events (event_id, event_type, processed_at) VALUES (?, ?, ?)"
-    ).run(eventId, eventType, new Date().toISOString());
+    await db
+      .prepare("INSERT INTO stripe_events (event_id, event_type, processed_at) VALUES (?, ?, ?)")
+      .run(eventId, eventType, new Date().toISOString());
     return true;
   } catch (err) {
-    // SQLITE_CONSTRAINT (unique/primary key violation) means another
-    // request already claimed this exact event id — a real duplicate, not
-    // an error to surface. Anything else is a genuine failure and should
-    // propagate.
-    if (err instanceof Error && /UNIQUE constraint failed|SQLITE_CONSTRAINT/i.test(err.message)) {
+    // 23505 (unique_violation) means another request already claimed this
+    // exact event id — a real duplicate, not an error to surface. Anything
+    // else is a genuine failure and should propagate. The message-regex
+    // fallback covers a driver/mock that doesn't attach a `.code`.
+    const pgErr = err as { code?: string };
+    if (pgErr?.code === "23505") return false;
+    if (err instanceof Error && /unique constraint|duplicate key|SQLITE_CONSTRAINT/i.test(err.message)) {
       return false;
     }
     throw err;
@@ -53,34 +55,36 @@ export interface PaymentFailureRecord {
   resolvedAt: string | null;
 }
 
-export function recordPaymentFailure(input: {
+export async function recordPaymentFailure(input: {
   userId: string;
   stripeInvoiceId: string;
   amountDue?: number | null;
   currency?: string | null;
   failureReason?: string | null;
-}): void {
-  db.prepare(
-    `INSERT INTO payment_failures (id, user_id, stripe_invoice_id, amount_due, currency, failure_reason, occurred_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`
-  ).run(
-    newId(),
-    input.userId,
-    input.stripeInvoiceId,
-    input.amountDue ?? null,
-    input.currency ?? null,
-    input.failureReason ?? null,
-    new Date().toISOString()
-  );
+}): Promise<void> {
+  await db
+    .prepare(
+      `INSERT INTO payment_failures (id, user_id, stripe_invoice_id, amount_due, currency, failure_reason, occurred_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`
+    )
+    .run(
+      newId(),
+      input.userId,
+      input.stripeInvoiceId,
+      input.amountDue ?? null,
+      input.currency ?? null,
+      input.failureReason ?? null,
+      new Date().toISOString()
+    );
 }
 
-export function getPaymentFailures(userId: string, limit: number = 20): PaymentFailureRecord[] {
-  const rows = db
+export async function getPaymentFailures(userId: string, limit: number = 20): Promise<PaymentFailureRecord[]> {
+  const rows = (await db
     .prepare(
       `SELECT id, user_id, stripe_invoice_id, amount_due, currency, failure_reason, occurred_at, resolved_at
        FROM payment_failures WHERE user_id = ? ORDER BY occurred_at DESC LIMIT ?`
     )
-    .all(userId, limit) as unknown as {
+    .all(userId, limit)) as unknown as {
     id: string;
     user_id: string;
     stripe_invoice_id: string;

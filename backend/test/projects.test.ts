@@ -13,7 +13,7 @@ async function testUserId(): Promise<string> {
 
 test("createProject persists repository info alongside the application url", async () => {
   const userId = await testUserId();
-  const project = createProject(userId, "My App", {
+  const project = await createProject(userId, "My App", {
     url: "https://myapp.com",
     repoUrl: "https://github.com/owner/repo",
     repoBranch: "main",
@@ -23,59 +23,59 @@ test("createProject persists repository info alongside the application url", asy
   assert.equal(project.repoUrl, "https://github.com/owner/repo");
   assert.equal(project.repoBranch, "main");
 
-  const fetched = getProject(project.id);
+  const fetched = await getProject(project.id);
   assert.equal(fetched?.repoUrl, "https://github.com/owner/repo");
   assert.equal(fetched?.repoBranch, "main");
 });
 
 test("createProject defaults repository info to null when omitted", async () => {
   const userId = await testUserId();
-  const project = createProject(userId, "No Repo");
+  const project = await createProject(userId, "No Repo");
   assert.equal(project.repoUrl, null);
   assert.equal(project.repoBranch, null);
 });
 
 test("updateProject can set, change, and clear repository info independently of other fields", async () => {
   const userId = await testUserId();
-  const project = createProject(userId, "Evolving App", { description: "original desc" });
+  const project = await createProject(userId, "Evolving App", { description: "original desc" });
 
-  const withRepo = updateProject(project.id, { repoUrl: "https://github.com/owner/repo", repoBranch: "develop" });
+  const withRepo = await updateProject(project.id, { repoUrl: "https://github.com/owner/repo", repoBranch: "develop" });
   assert.equal(withRepo?.repoUrl, "https://github.com/owner/repo");
   assert.equal(withRepo?.repoBranch, "develop");
   // Unrelated fields must survive an update that only touches repo info.
   assert.equal(withRepo?.description, "original desc");
 
-  const rebranched = updateProject(project.id, { repoBranch: "main" });
+  const rebranched = await updateProject(project.id, { repoBranch: "main" });
   assert.equal(rebranched?.repoUrl, "https://github.com/owner/repo");
   assert.equal(rebranched?.repoBranch, "main");
 
-  const cleared = updateProject(project.id, { repoUrl: "" });
+  const cleared = await updateProject(project.id, { repoUrl: "" });
   assert.equal(cleared?.repoUrl, "");
 });
 
 test("rotateApiKey (legacy, project-level) keeps projects.api_key and the default api_keys row in sync", async () => {
   const userId = await testUserId();
-  const project = createProject(userId, "Rotate Sync Target");
+  const project = await createProject(userId, "Rotate Sync Target");
   const oldKey = project.apiKey;
 
-  const rotated = rotateApiKey(project.id);
+  const rotated = await rotateApiKey(project.id);
   assert.notEqual(rotated?.apiKey, oldKey);
 
-  const [defaultKey] = listApiKeys(project.id);
+  const [defaultKey] = await listApiKeys(project.id);
   assert.equal(defaultKey.isDefault, true);
   // listApiKeys returns the masked form — confirm the *value* changed by
   // checking auth behavior instead of comparing strings directly.
-  assert.equal(findProjectByApiKey(oldKey), null, "the old key must stop working immediately");
-  assert.ok(findProjectByApiKey(rotated!.apiKey), "the new key (mirrored into both places) must work");
+  assert.equal(await findProjectByApiKey(oldKey), null, "the old key must stop working immediately");
+  assert.ok(await findProjectByApiKey(rotated!.apiKey), "the new key (mirrored into both places) must work");
 });
 
 test("deleteProject removes its api_keys rows too — no orphaned keys left behind", async () => {
   const userId = await testUserId();
-  const project = createProject(userId, "To Delete");
+  const project = await createProject(userId, "To Delete");
   const key = project.apiKey;
-  assert.ok(findProjectByApiKey(key));
+  assert.ok(await findProjectByApiKey(key));
 
-  deleteProject(project.id);
+  await deleteProject(project.id);
 
-  assert.equal(findProjectByApiKey(key), null);
+  assert.equal(await findProjectByApiKey(key), null);
 });

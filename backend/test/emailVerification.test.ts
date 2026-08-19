@@ -76,7 +76,7 @@ test("signup sends a real verification email; the link in it verifies the accoun
     assert.equal(verifyEmails.length, 1);
     assert.ok(verifyEmails[0].includes("https://app.nettle.example/verify-email?token="));
 
-    const before = getUserByEmail("verify-flow@example.com")!;
+    const before = (await getUserByEmail("verify-flow@example.com"))!;
     assert.equal(before.emailVerifiedAt, null);
 
     const token = extractToken(verifyEmails[0]);
@@ -89,7 +89,7 @@ test("signup sends a real verification email; the link in it verifies the accoun
     const body = await res.json();
     assert.ok(body.user.emailVerifiedAt);
 
-    const after = getUserByEmail("verify-flow@example.com")!;
+    const after = (await getUserByEmail("verify-flow@example.com"))!;
     assert.ok(after.emailVerifiedAt);
 
     // Single-use: the same link doesn't work a second time.
@@ -143,12 +143,12 @@ test("an expired verification token is rejected and cleaned up", async () => {
     // Force-expire by manipulating the stored token directly, mirroring the
     // real 24h expiry rather than waiting for it in a test.
     const { db } = await import("../src/db/index");
-    db.prepare("UPDATE email_verifications SET expires_at = '2000-01-01T00:00:00.000Z' WHERE user_id = (SELECT id FROM users WHERE email = ?)").run(
+    await db.prepare("UPDATE email_verifications SET expires_at = '2000-01-01T00:00:00.000Z' WHERE user_id = (SELECT id FROM users WHERE email = ?)").run(
       "verify-expired@example.com"
     );
-    const row = db
+    const row = (await db
       .prepare("SELECT token FROM email_verifications WHERE user_id = (SELECT id FROM users WHERE email = ?)")
-      .get("verify-expired@example.com") as { token: string } | undefined;
+      .get("verify-expired@example.com")) as { token: string } | undefined;
     assert.ok(row);
 
     const res = await fetch(`${base}/api/auth/verify-email`, {
@@ -157,7 +157,7 @@ test("an expired verification token is rejected and cleaned up", async () => {
       body: JSON.stringify({ token: row!.token }),
     });
     assert.equal(res.status, 400);
-    assert.equal(resolveEmailVerificationToken(row!.token), null);
+    assert.equal(await resolveEmailVerificationToken(row!.token), null);
   } finally {
     server.close();
   }

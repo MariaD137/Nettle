@@ -19,18 +19,26 @@ describe('Phase 12: Custom Detection Rules', () => {
   let projectId: string;
   let userId: string;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     projectId = newId();
     userId = newId();
 
     // Create test project and user
-    db.exec(`
-      INSERT OR IGNORE INTO users (id, email, password_hash, created_at)
-      VALUES ('${userId}', 'test-${userId}@example.com', 'hash', '${new Date().toISOString()}');
+    await db
+      .prepare(
+        `INSERT INTO users (id, email, password_hash, created_at)
+         VALUES (?, ?, ?, ?)
+         ON CONFLICT (id) DO NOTHING`
+      )
+      .run(userId, `test-${userId}@example.com`, "hash", new Date().toISOString());
 
-      INSERT OR IGNORE INTO projects (id, user_id, name, api_key, created_at)
-      VALUES ('${projectId}', '${userId}', 'Test Project', 'key_${projectId}', '${new Date().toISOString()}');
-    `);
+    await db
+      .prepare(
+        `INSERT INTO projects (id, user_id, name, api_key, created_at)
+         VALUES (?, ?, ?, ?, ?)
+         ON CONFLICT (id) DO NOTHING`
+      )
+      .run(projectId, userId, "Test Project", `key_${projectId}`, new Date().toISOString());
   });
 
   describe('CRUD Operations', () => {
@@ -109,7 +117,7 @@ describe('Phase 12: Custom Detection Rules', () => {
         severity: 'medium',
       } as any);
 
-      const retrieved = getCustomRule(created!.id);
+      const retrieved = await getCustomRule(created!.id);
       assert.equal(retrieved?.name, 'Test Rule');
     });
 
@@ -130,7 +138,7 @@ describe('Phase 12: Custom Detection Rules', () => {
         severity: 'high',
       } as any);
 
-      const rules = listCustomRules(projectId);
+      const rules = await listCustomRules(projectId);
       assert.equal(rules.length, 2);
       assert.equal(rules[0].name, 'Rule 2'); // Most recent first
     });
@@ -144,7 +152,7 @@ describe('Phase 12: Custom Detection Rules', () => {
         severity: 'medium',
       } as any);
 
-      const updated = updateCustomRule(created!.id, {
+      const updated = await updateCustomRule(created!.id, {
         name: 'Updated Name',
         weight: 75,
         enabled: false,
@@ -165,10 +173,10 @@ describe('Phase 12: Custom Detection Rules', () => {
         severity: 'medium',
       } as any);
 
-      const deleted = deleteCustomRule(created!.id);
+      const deleted = await deleteCustomRule(created!.id);
       assert.equal(deleted, true);
 
-      const retrieved = getCustomRule(created!.id);
+      const retrieved = await getCustomRule(created!.id);
       assert.equal(retrieved, null);
     });
   });
@@ -331,17 +339,17 @@ describe('Phase 12: Custom Detection Rules', () => {
       } as any);
 
       // Update rule
-      updateCustomRule(rule!.id, {
+      await updateCustomRule(rule!.id, {
         name: 'Updated',
         pattern_value: '/path2',
       } as any);
 
       // Update again
-      updateCustomRule(rule!.id, {
+      await updateCustomRule(rule!.id, {
         weight: 75,
       } as any);
 
-      const versions = getRuleVersions(rule!.id);
+      const versions = await getRuleVersions(rule!.id);
       assert.equal(versions.length, 2);
       // The rule is created at version 1 (not itself recorded as a version
       // row); each update then records the version it just moved to.
@@ -358,9 +366,9 @@ describe('Phase 12: Custom Detection Rules', () => {
         severity: 'medium',
       } as any);
 
-      updateCustomRule(rule!.id, { weight: 75 } as any);
+      await updateCustomRule(rule!.id, { weight: 75 } as any);
 
-      const versions = getRuleVersions(rule!.id);
+      const versions = await getRuleVersions(rule!.id);
       const changes = JSON.parse(versions[0].changes || '{}');
       assert.equal(changes.weight, 75);
     });
@@ -386,8 +394,8 @@ describe('Phase 12: Custom Detection Rules', () => {
         enabled: false,
       } as any);
 
-      const allRules = listCustomRules(projectId, false);
-      const enabledRules = listCustomRules(projectId, true);
+      const allRules = await listCustomRules(projectId, false);
+      const enabledRules = await listCustomRules(projectId, true);
 
       assert.equal(allRules.length, 2);
       assert.equal(enabledRules.length, 1);
@@ -406,13 +414,13 @@ describe('Phase 12: Custom Detection Rules', () => {
       } as any);
       assert.notEqual(rule, undefined);
 
-      const event = recordEvent(projectId, { ip: '203.0.113.70', method: 'GET', path: '/api/admin', statusCode: 200 });
-      const alerts = runDetection(projectId, event);
+      const event = await recordEvent(projectId, { ip: '203.0.113.70', method: 'GET', path: '/api/admin', statusCode: 200 });
+      const alerts = await runDetection(projectId, event);
 
       const hit = alerts.find((a) => a.rule === `custom-rule-${rule!.id}`);
       assert.ok(hit, 'expected the custom rule to produce a real alert through the actual detection pipeline');
       assert.equal(hit?.severity, 'critical');
-      assert.ok(listAlerts(projectId).some((a) => a.id === hit!.id), 'the alert should be persisted, not just returned in-memory');
+      assert.ok((await listAlerts(projectId)).some((a) => a.id === hit!.id), 'the alert should be persisted, not just returned in-memory');
     });
 
     it('a "threshold" custom rule — previously dead code that always returned false — now genuinely fires via runDetection', async () => {
@@ -425,10 +433,10 @@ describe('Phase 12: Custom Detection Rules', () => {
       } as any);
       assert.notEqual(rule, undefined);
 
-      let alerts: ReturnType<typeof runDetection> = [];
+      let alerts: Awaited<ReturnType<typeof runDetection>> = [];
       for (let i = 0; i < 4; i++) {
-        const event = recordEvent(projectId, { ip: '203.0.113.80', method: 'GET', path: '/anything', statusCode: 200 });
-        alerts = runDetection(projectId, event);
+        const event = await recordEvent(projectId, { ip: '203.0.113.80', method: 'GET', path: '/anything', statusCode: 200 });
+        alerts = await runDetection(projectId, event);
       }
 
       assert.ok(

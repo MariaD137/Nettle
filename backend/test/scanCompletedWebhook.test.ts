@@ -41,13 +41,15 @@ function startReceiver(): Promise<{ url: string; received: () => any[]; close: (
   });
 }
 
-function waitFor(check: () => boolean, timeoutMs = 5000): Promise<void> {
+function waitFor(check: () => Promise<boolean>, timeoutMs = 5000): Promise<void> {
   return new Promise((resolve, reject) => {
     const start = Date.now();
     const tick = () => {
-      if (check()) return resolve();
-      if (Date.now() - start > timeoutMs) return reject(new Error("timed out waiting for webhook delivery"));
-      setTimeout(tick, 25);
+      check().then((ok) => {
+        if (ok) return resolve();
+        if (Date.now() - start > timeoutMs) return reject(new Error("timed out waiting for webhook delivery"));
+        setTimeout(tick, 25);
+      });
     };
     tick();
   });
@@ -67,18 +69,18 @@ function waitFor(check: () => boolean, timeoutMs = 5000): Promise<void> {
 // on the delivery attempt's (now correctly-blocked) outcome.
 test("recordScan fires a scan.completed webhook to every active webhook subscribed to it", async () => {
   const user = await createUser("scan-completed-webhook@example.com", "correct horse battery staple");
-  const project = createProject(user.id, "Scan Webhook Target");
-  const webhook = createWebhookConfig(project.id, "generic", "https://example.invalid/hook", ["scan.completed"]);
+  const project = await createProject(user.id, "Scan Webhook Target");
+  const webhook = await createWebhookConfig(project.id, "generic", "https://example.invalid/hook", ["scan.completed"]);
 
   const report = runScan(CLEAN_APP);
-  const stored = recordScan(project.id, report);
+  const stored = await recordScan(project.id, report);
 
-  await waitFor(() => {
-    const row = db.prepare("SELECT payload FROM webhook_events WHERE webhook_id = ?").get(webhook.id) as { payload: string } | undefined;
+  await waitFor(async () => {
+    const row = (await db.prepare("SELECT payload FROM webhook_events WHERE webhook_id = ?").get(webhook.id)) as { payload: string } | undefined;
     return !!row;
   });
 
-  const row = db.prepare("SELECT payload FROM webhook_events WHERE webhook_id = ?").get(webhook.id) as { payload: string };
+  const row = (await db.prepare("SELECT payload FROM webhook_events WHERE webhook_id = ?").get(webhook.id)) as { payload: string };
   const payload = JSON.parse(row.payload);
   assert.equal(payload.scan_id, stored.id);
   assert.equal(payload.project_id, project.id);
@@ -88,12 +90,12 @@ test("recordScan fires a scan.completed webhook to every active webhook subscrib
 
 test("recordScan does not deliver to a webhook that isn't subscribed to scan.completed", async () => {
   const user = await createUser("scan-completed-webhook-filtered@example.com", "correct horse battery staple");
-  const project = createProject(user.id, "Scan Webhook Filtered Target");
+  const project = await createProject(user.id, "Scan Webhook Filtered Target");
   const receiver = await startReceiver();
   try {
-    createWebhookConfig(project.id, "generic", receiver.url, ["incident_alert"]);
+    await createWebhookConfig(project.id, "generic", receiver.url, ["incident_alert"]);
 
-    recordScan(project.id, runScan(CLEAN_APP));
+    await recordScan(project.id, runScan(CLEAN_APP));
 
     // Give any (incorrect) delivery a chance to arrive before asserting none did.
     await new Promise((r) => setTimeout(r, 300));
@@ -105,13 +107,13 @@ test("recordScan does not deliver to a webhook that isn't subscribed to scan.com
 
 test("recordScan does not deliver to a webhook belonging to a different project", async () => {
   const user = await createUser("scan-completed-webhook-isolation@example.com", "correct horse battery staple");
-  const project = createProject(user.id, "Scan Webhook Isolation Target A");
-  const otherProject = createProject(user.id, "Scan Webhook Isolation Target B");
+  const project = await createProject(user.id, "Scan Webhook Isolation Target A");
+  const otherProject = await createProject(user.id, "Scan Webhook Isolation Target B");
   const receiver = await startReceiver();
   try {
-    createWebhookConfig(otherProject.id, "generic", receiver.url, ["scan.completed"]);
+    await createWebhookConfig(otherProject.id, "generic", receiver.url, ["scan.completed"]);
 
-    recordScan(project.id, runScan(CLEAN_APP));
+    await recordScan(project.id, runScan(CLEAN_APP));
 
     await new Promise((r) => setTimeout(r, 300));
     assert.equal(receiver.received().length, 0);

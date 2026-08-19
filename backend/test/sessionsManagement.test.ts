@@ -18,28 +18,28 @@ function listen(app: express.Express): Promise<{ server: Server; base: string }>
 
 test("a session token is never stored in the sessions table at rest", async () => {
   const user = await createUser("session-at-rest@example.com", "correct horse battery staple");
-  const token = createSession(user.id);
+  const token = await createSession(user.id);
 
-  const row = db.prepare("SELECT token FROM sessions WHERE user_id = ?").get(user.id) as { token: string };
+  const row = (await db.prepare("SELECT token FROM sessions WHERE user_id = ?").get(user.id)) as { token: string };
   assert.notEqual(row.token, token, "the raw token must never appear in the stored row");
   assert.equal(row.token.length, 64, "expected a 64-hex-char SHA-256 digest in its place");
 
   // The stored value must still round-trip correctly through the real API.
-  assert.deepEqual(resolveSession(token), { userId: user.id });
+  assert.deepEqual(await resolveSession(token), { userId: user.id });
 });
 
 test("listSessions marks the caller's own session current and shows a stable prefix per session", async () => {
   const user = await createUser("session-list@example.com", "correct horse battery staple");
-  const tokenA = createSession(user.id);
-  const tokenB = createSession(user.id);
+  const tokenA = await createSession(user.id);
+  const tokenB = await createSession(user.id);
 
-  const asA = listSessions(user.id, tokenA);
+  const asA = await listSessions(user.id, tokenA);
   assert.equal(asA.length, 2);
   assert.equal(asA.filter((s) => s.current).length, 1);
   const aEntryFromA = asA.find((s) => s.current)!;
   const bEntryFromA = asA.find((s) => !s.current)!;
 
-  const asB = listSessions(user.id, tokenB);
+  const asB = await listSessions(user.id, tokenB);
   const bEntryFromB = asB.find((s) => s.current)!;
   const aEntryFromB = asB.find((s) => !s.current)!;
 
@@ -52,37 +52,37 @@ test("listSessions marks the caller's own session current and shows a stable pre
 
 test("destroySessionByPrefix revokes the exact session the prefix identifies, not others", async () => {
   const user = await createUser("session-revoke-prefix@example.com", "correct horse battery staple");
-  const tokenA = createSession(user.id);
-  const tokenB = createSession(user.id);
+  const tokenA = await createSession(user.id);
+  const tokenB = await createSession(user.id);
 
-  const listing = listSessions(user.id, tokenA);
+  const listing = await listSessions(user.id, tokenA);
   const targetPrefix = listing.find((s) => s.current)!.tokenPrefix;
 
-  const destroyed = destroySessionByPrefix(user.id, targetPrefix);
+  const destroyed = await destroySessionByPrefix(user.id, targetPrefix);
   assert.equal(destroyed, true);
 
-  assert.equal(resolveSession(tokenA), null);
-  assert.deepEqual(resolveSession(tokenB), { userId: user.id });
+  assert.equal(await resolveSession(tokenA), null);
+  assert.deepEqual(await resolveSession(tokenB), { userId: user.id });
 });
 
 test("destroySessionByPrefix returns false for a prefix that doesn't match any session", async () => {
   const user = await createUser("session-revoke-miss@example.com", "correct horse battery staple");
-  createSession(user.id);
-  assert.equal(destroySessionByPrefix(user.id, "ffffffff"), false);
+  await createSession(user.id);
+  assert.equal(await destroySessionByPrefix(user.id, "ffffffff"), false);
 });
 
 test("destroyAllSessions revokes every session for the account and no one else's", async () => {
   const user = await createUser("session-revoke-all@example.com", "correct horse battery staple");
   const other = await createUser("session-revoke-all-other@example.com", "correct horse battery staple");
-  const tokenA = createSession(user.id);
-  const tokenB = createSession(user.id);
-  const otherToken = createSession(other.id);
+  const tokenA = await createSession(user.id);
+  const tokenB = await createSession(user.id);
+  const otherToken = await createSession(other.id);
 
-  destroyAllSessions(user.id);
+  await destroyAllSessions(user.id);
 
-  assert.equal(resolveSession(tokenA), null);
-  assert.equal(resolveSession(tokenB), null);
-  assert.deepEqual(resolveSession(otherToken), { userId: other.id });
+  assert.equal(await resolveSession(tokenA), null);
+  assert.equal(await resolveSession(tokenB), null);
+  assert.deepEqual(await resolveSession(otherToken), { userId: other.id });
 });
 
 test("HTTP: GET /api/auth/sessions, DELETE by prefix, and POST revoke-all all work end-to-end", async () => {

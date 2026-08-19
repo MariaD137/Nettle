@@ -39,8 +39,8 @@ async function ownerWithProjectAndRule() {
   const app = buildApp();
   const { server, base } = await listen(app);
   const user = await createUser(`customrules-owner-${counter++}@example.com`, PASSWORD);
-  const token = createSession(user.id);
-  const project = createProject(user.id, "Owner Project");
+  const token = await createSession(user.id);
+  const project = await createProject(user.id, "Owner Project");
 
   const createRes = await fetch(`${base}/api/custom-rules/${project.id}`, {
     method: "POST",
@@ -111,7 +111,7 @@ test("an authenticated non-owner is refused access to another account's project 
   const { server, base, projectId } = await ownerWithProjectAndRule();
   try {
     const intruder = await createUser(`customrules-intruder-${counter++}@example.com`, PASSWORD);
-    const intruderToken = createSession(intruder.id);
+    const intruderToken = await createSession(intruder.id);
 
     const res = await fetch(`${base}/api/custom-rules/${projectId}`, {
       headers: { Authorization: `Bearer ${intruderToken}` },
@@ -127,7 +127,7 @@ test("a request against a project id that doesn't exist gets the same 403 as one
   const { server, base } = await listen(app);
   try {
     const user = await createUser(`customrules-missingproj-${counter++}@example.com`, PASSWORD);
-    const token = createSession(user.id);
+    const token = await createSession(user.id);
 
     const res = await fetch(`${base}/api/custom-rules/00000000-0000-0000-0000-000000000000`, {
       headers: { Authorization: `Bearer ${token}` },
@@ -142,7 +142,7 @@ test("a non-owner cannot create a rule under someone else's project", async () =
   const { server, base, projectId } = await ownerWithProjectAndRule();
   try {
     const intruder = await createUser(`customrules-intruder-create-${counter++}@example.com`, PASSWORD);
-    const intruderToken = createSession(intruder.id);
+    const intruderToken = await createSession(intruder.id);
 
     const res = await fetch(`${base}/api/custom-rules/${projectId}`, {
       method: "POST",
@@ -161,8 +161,8 @@ test("a rule id valid for one of the caller's own projects does not resolve unde
     // A second project owned by the SAME user — proves getOwnedRule checks
     // the rule's actual project_id, not merely "does this caller own *a*
     // project," which the outer verifyProjectAccess alone wouldn't catch.
-    const session = resolveSession(token)!;
-    const secondProject = createProject(session.userId, "Second Project");
+    const session = (await resolveSession(token))!;
+    const secondProject = await createProject(session.userId, "Second Project");
 
     const res = await fetch(`${base}/api/custom-rules/${secondProject.id}/${ruleId}`, {
       headers: { Authorization: `Bearer ${token}` },
@@ -180,8 +180,8 @@ test("accessing an unauthorized rule id under the caller's own (different) proje
     // to a *different* user should not expose that rule via a mismatched
     // (projectId, ruleId) pair even if somehow guessed.
     const other = await createUser(`customrules-otherproj-${counter++}@example.com`, PASSWORD);
-    const otherToken = createSession(other.id);
-    const otherProject = createProject(other.id, "Other User Project");
+    const otherToken = await createSession(other.id);
+    const otherProject = await createProject(other.id, "Other User Project");
 
     const res = await fetch(`${owner.base}/api/custom-rules/${otherProject.id}/${owner.ruleId}`, {
       headers: { Authorization: `Bearer ${otherToken}` },
@@ -200,8 +200,8 @@ test("a malformed create request (missing required fields) is rejected with 400,
   const { server, base } = await listen(app);
   try {
     const user = await createUser(`customrules-malformed-${counter++}@example.com`, PASSWORD);
-    const token = createSession(user.id);
-    const project = createProject(user.id, "Malformed Test Project");
+    const token = await createSession(user.id);
+    const project = await createProject(user.id, "Malformed Test Project");
 
     const missingFields = await fetch(`${base}/api/custom-rules/${project.id}`, {
       method: "POST",
@@ -254,7 +254,7 @@ test("a non-owner cannot update or delete the owner's rule", async () => {
   const { server, base, projectId, ruleId } = await ownerWithProjectAndRule();
   try {
     const intruder = await createUser(`customrules-intruder-mutate-${counter++}@example.com`, PASSWORD);
-    const intruderToken = createSession(intruder.id);
+    const intruderToken = await createSession(intruder.id);
 
     const patchRes = await fetch(`${base}/api/custom-rules/${projectId}/${ruleId}`, {
       method: "PATCH",
@@ -277,7 +277,7 @@ test("the /test endpoint enforces the same ownership boundary as everything else
   const { server, base, projectId, ruleId } = await ownerWithProjectAndRule();
   try {
     const intruder = await createUser(`customrules-intruder-test-${counter++}@example.com`, PASSWORD);
-    const intruderToken = createSession(intruder.id);
+    const intruderToken = await createSession(intruder.id);
 
     const res = await fetch(`${base}/api/custom-rules/${projectId}/${ruleId}/test`, {
       method: "POST",

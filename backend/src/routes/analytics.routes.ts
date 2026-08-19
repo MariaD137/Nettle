@@ -1,4 +1,4 @@
-import { Router, Request, Response } from 'express';
+import { Router, Request, Response, NextFunction } from 'express';
 import { db } from '../db/index';
 import {
   calculateBaselines,
@@ -9,11 +9,12 @@ import {
 } from '../patrol/mlAnalytics';
 import { requireAuth } from '../auth/middleware';
 import { getOwnedProject } from '../patrol/projectAccess';
+import { asyncHandler } from '../middleware/asyncHandler';
 
 const router = Router();
 
 // Verify project ownership
-function verifyProjectAccess(req: Request, res: Response, next: Function) {
+const verifyProjectAccess = asyncHandler(async (req: Request, res: Response, next: NextFunction) => {
   const { projectId } = req.params;
   const userId = req.userId;
 
@@ -21,20 +22,20 @@ function verifyProjectAccess(req: Request, res: Response, next: Function) {
     return res.status(401).json({ error: 'Unauthorized' });
   }
 
-  const project = getOwnedProject(projectId, userId);
+  const project = await getOwnedProject(projectId, userId);
   if (!project) {
     return res.status(403).json({ error: 'Forbidden' });
   }
 
   next();
-}
+});
 
 // POST /api/analytics/:projectId/calculate-baselines
 router.post(
   '/:projectId/calculate-baselines',
   requireAuth,
   verifyProjectAccess,
-  async (req: Request, res: Response) => {
+  asyncHandler(async (req: Request, res: Response) => {
     const { projectId } = req.params;
     const { hoursBack } = req.body;
 
@@ -45,7 +46,7 @@ router.post(
     }
 
     res.json(result);
-  }
+  })
 );
 
 // GET /api/analytics/:projectId/baselines
@@ -53,7 +54,7 @@ router.get(
   '/:projectId/baselines',
   requireAuth,
   verifyProjectAccess,
-  (req: Request, res: Response) => {
+  asyncHandler(async (req: Request, res: Response) => {
     const { projectId } = req.params;
     const { metric, period, hour } = req.query;
 
@@ -77,7 +78,7 @@ router.get(
 
     query += ' ORDER BY hour_of_day ASC';
 
-    const rows = db.prepare(query).all(...params) as any[];
+    const rows = (await db.prepare(query).all(...params)) as any[];
     const baselines = rows.map(row => ({
       id: row.id,
       metric_name: row.metric_name,
@@ -91,7 +92,7 @@ router.get(
     }));
 
     res.json({ baselines });
-  }
+  })
 );
 
 // GET /api/analytics/:projectId/anomalies
@@ -99,14 +100,14 @@ router.get(
   '/:projectId/anomalies',
   requireAuth,
   verifyProjectAccess,
-  (req: Request, res: Response) => {
+  asyncHandler(async (req: Request, res: Response) => {
     const { projectId } = req.params;
     const { limit = '50', score_min = '0.7' } = req.query;
 
-    const anomalies = getAnomalies(projectId, parseInt(limit as string), parseFloat(score_min as string));
+    const anomalies = await getAnomalies(projectId, parseInt(limit as string), parseFloat(score_min as string));
 
     res.json({ anomalies });
-  }
+  })
 );
 
 // GET /api/analytics/:projectId/model-status
@@ -114,10 +115,10 @@ router.get(
   '/:projectId/model-status',
   requireAuth,
   verifyProjectAccess,
-  (req: Request, res: Response) => {
+  asyncHandler(async (req: Request, res: Response) => {
     const { projectId } = req.params;
 
-    const status = getModelStatus(projectId);
+    const status = await getModelStatus(projectId);
 
     if (!status) {
       return res.json({
@@ -133,7 +134,7 @@ router.get(
       training_samples: status.training_samples,
       accuracy: status.accuracy,
     });
-  }
+  })
 );
 
 // GET /api/analytics/:projectId/dashboard
@@ -141,29 +142,31 @@ router.get(
   '/:projectId/dashboard',
   requireAuth,
   verifyProjectAccess,
-  async (req: Request, res: Response) => {
+  asyncHandler(async (req: Request, res: Response) => {
     const { projectId } = req.params;
     const { timeframe = '24h' } = req.query;
 
-    // Get recent events
-    const events = db.prepare(`
+    // Get recent events. Cutoff computed in JS, not SQL's datetime('now', ..)
+    // — see patrol/retention.ts for why.
+    const since = new Date(Date.now() - 24 * 3_600_000).toISOString();
+    const events = (await db.prepare(`
       SELECT COUNT(*) as count,
              SUM(CASE WHEN status_code >= 400 THEN 1 ELSE 0 END) as errors
       FROM events
-      WHERE project_id = ? AND occurred_at > datetime('now', '-24 hours')
-    `).get(projectId) as any;
+      WHERE project_id = ? AND occurred_at > ?
+    `).get(projectId, since)) as any;
 
-    const requestCount = events?.count || 0;
-    const errorCount = events?.errors || 0;
+    const requestCount = Number(events?.count) || 0;
+    const errorCount = Number(events?.errors) || 0;
     const errorRate = requestCount > 0 ? (errorCount / requestCount) * 100 : 0;
 
     // Get current baseline
     const hour = new Date().getHours();
-    const rateBaseline = getBaseline(projectId, 'request_rate', hour);
-    const errorBaseline = getBaseline(projectId, 'error_rate', hour);
+    const rateBaseline = await getBaseline(projectId, 'request_rate', hour);
+    const errorBaseline = await getBaseline(projectId, 'error_rate', hour);
 
     // Get recent anomalies
-    const anomalies = getAnomalies(projectId, 5, 0.7);
+    const anomalies = await getAnomalies(projectId, 5, 0.7);
 
     // Get model status. getModelStatus() returns null until a model has
     // actually been trained for this project — true for every project by
@@ -171,7 +174,7 @@ router.get(
     // same "not trained yet" fallback the dedicated /model-status endpoint
     // above already has, just in the flat shape this response (and the
     // frontend's ModelStatus component) actually uses.
-    const modelStatus = getModelStatus(projectId) ?? {
+    const modelStatus = (await getModelStatus(projectId)) ?? {
       model_type: null,
       is_active: false,
       trained_at: null,
@@ -189,7 +192,7 @@ router.get(
       anomalies,
       model_status: modelStatus,
     });
-  }
+  })
 );
 
 export default router;

@@ -152,23 +152,29 @@ deploy time.
 storage, private subnets only, security group allowing inbound 5432 from
 the API's connector security group only.
 
-**It is not part of the default `cdk deploy --all` flow** (see
-`infra/bin/app.ts`) and, more importantly, **the backend does not use it
-yet** — `src/db/index.ts` still reads/writes SQLite exclusively; converting
-to Postgres is a deliberately separate, deferred piece of work (see
-`backend/src/db/postgres/README.md` for exactly why and what's already
-built toward it: schema, connection pool, migration runner, all verified
-against a real local Postgres instance). Deploy this stack only when you're
-ready to actually do that conversion — deploying it earlier just means
-paying for an idle RDS instance.
+**The backend's code side of this is done**: `backend/src/db/index.ts` is
+PostgreSQL-only now, with no SQLite fallback — it requires a real
+`DATABASE_URL` (or `PGHOST`/`PGPORT`/`PGUSER`/`PGPASSWORD`/`PGDATABASE`) to
+start at all, and the full application (auth, projects, scans, billing,
+alerts, everything) has been verified end-to-end against a real local
+PostgreSQL 16 server. **What's still pending is purely the AWS side**: this
+stack is not part of the default `cdk deploy --all` flow (see
+`infra/bin/app.ts`) and has never been applied to a real AWS account — no
+RDS instance exists yet, and nothing in this repository creates one on its
+own. Deploy it when you're ready to actually run the API against it —
+deploying it earlier just means paying for an idle RDS instance.
 
 To deploy it on its own once you're ready:
 ```bash
 cd infra && npx cdk deploy Nettle-Database
 ```
-Then run `npm run db:migrate:postgres` from `backend/` against the real
-connection string (see that package's README for how to assemble one from
-the generated secret's fields).
+This prints two outputs, `DatabaseEndpoint` and `DatabaseSecretArn`. Fill
+both into `Nettle-Api`'s `databaseEndpointAddress`/`databaseSecretArn`
+props (see `infra/bin/app.ts`'s REQUIRES AWS CONFIGURATION comment there)
+and redeploy `Nettle-Api` (§7) — that's what actually connects the running
+API container to this database; deploying `Nettle-Database` alone doesn't.
+Then run `npm run db:migrate:postgres` from `backend/` against the same
+connection details to create the schema before the API's first request.
 
 ## 7. App Runner configuration — **[CLAUDE CAN COMPLETE NOW]** (code), **[REQUIRES AWS ACCOUNT]** (deploy it)
 
@@ -177,7 +183,10 @@ service (0.25 vCPU / 0.5 GB, `minSize: 1, maxSize: 1` — see `infra/README.md`
 for why the cap stays at 1), VPC connector for egress, health check against
 `GET /health` (upgraded this pass to report real DB connectivity and scan
 queue depth, not a static `{status:"ok"}`), and `runtimeEnvironmentSecrets`
-pulling every value in §5's table from Secrets Manager at container start.
+pulling every value in §5's table from Secrets Manager at container start —
+plus, once `databaseSecretArn`/`databaseEndpointAddress` are filled in per
+§6, the `PGHOST`/`PGPORT`/`PGUSER`/`PGPASSWORD`/`PGDATABASE` variables the
+backend needs to reach RDS.
 
 ## 8. ECR configuration — **[CLAUDE CAN COMPLETE NOW]**
 
@@ -272,7 +281,7 @@ npx cdk deploy Nettle-Network
 npx cdk deploy Nettle-CI                # needs Nettle-Api's ECR repo ARN + Nettle-Frontend's bucket/distribution — deploy Api and Frontend first, or use `cdk deploy --all` and let CDK order it
 npx cdk deploy Nettle-Api
 npx cdk deploy Nettle-Frontend
-# npx cdk deploy Nettle-Database        # optional — only once you're doing the SQLite -> Postgres conversion (§6)
+# npx cdk deploy Nettle-Database        # required before Nettle-Api can actually start — see §6; deploy it, fill its outputs into Nettle-Api's props, then deploy/redeploy Nettle-Api
 ```
 (`npx cdk deploy --all` handles dependency ordering automatically; the
 explicit order above is for deploying stacks individually.)

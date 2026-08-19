@@ -30,7 +30,7 @@ function toAlert(row: AlertRow): Alert {
   };
 }
 
-export function createAlert(projectId: string, severity: AlertSeverity, rule: string, message: string): Alert {
+export async function createAlert(projectId: string, severity: AlertSeverity, rule: string, message: string): Promise<Alert> {
   const alert: Alert = {
     id: newId(),
     projectId,
@@ -40,11 +40,11 @@ export function createAlert(projectId: string, severity: AlertSeverity, rule: st
     message,
     status: "new",
   };
-  db.prepare(
-    "INSERT INTO alerts (id, project_id, occurred_at, severity, rule, message, status) VALUES (?, ?, ?, ?, ?, ?, ?)"
-  ).run(alert.id, alert.projectId, alert.occurredAt, alert.severity, alert.rule, alert.message, alert.status);
+  await db
+    .prepare("INSERT INTO alerts (id, project_id, occurred_at, severity, rule, message, status) VALUES (?, ?, ?, ?, ?, ?, ?)")
+    .run(alert.id, alert.projectId, alert.occurredAt, alert.severity, alert.rule, alert.message, alert.status);
   incrementCounter(Metric.AlertsGenerated);
-  notifyAlertWebhooks(alert);
+  notifyAlertWebhooks(alert).catch((err) => console.error("notifyAlertWebhooks failed:", err));
   notifyChannels(alert.projectId, "incident_alert", `Nettle alert (${alert.severity}): ${alert.rule}`, alert.message);
   return alert;
 }
@@ -57,8 +57,8 @@ export function createAlert(projectId: string, severity: AlertSeverity, rule: st
  * the same "monitoring can't break the thing it's monitoring" principle as
  * nettleMonitor.ts. Errors are swallowed after being logged.
  */
-function notifyAlertWebhooks(alert: Alert): void {
-  const webhooks = getWebhookConfigs(alert.projectId);
+async function notifyAlertWebhooks(alert: Alert): Promise<void> {
+  const webhooks = await getWebhookConfigs(alert.projectId);
   const services = new Set(webhooks.filter((w) => w.is_active).map((w) => w.service));
   const details = { rule: alert.rule, message: alert.message, alert_id: alert.id };
 
@@ -78,41 +78,41 @@ function notifyAlertWebhooks(alert: Alert): void {
   });
 }
 
-export function listAlerts(projectId: string): Alert[] {
-  const rows = db
+export async function listAlerts(projectId: string): Promise<Alert[]> {
+  const rows = (await db
     .prepare("SELECT * FROM alerts WHERE project_id = ? ORDER BY occurred_at DESC")
-    .all(projectId) as unknown as AlertRow[];
+    .all(projectId)) as unknown as AlertRow[];
   return rows.map(toAlert);
 }
 
-export function getAlert(alertId: string): Alert | null {
-  const row = db.prepare("SELECT * FROM alerts WHERE id = ?").get(alertId) as AlertRow | undefined;
+export async function getAlert(alertId: string): Promise<Alert | null> {
+  const row = (await db.prepare("SELECT * FROM alerts WHERE id = ?").get(alertId)) as AlertRow | undefined;
   return row ? toAlert(row) : null;
 }
 
 const VALID_STATUSES: AlertStatus[] = ["new", "acknowledged", "resolved", "false_positive"];
 
-export function updateAlertStatus(alertId: string, status: AlertStatus): Alert | null {
+export async function updateAlertStatus(alertId: string, status: AlertStatus): Promise<Alert | null> {
   if (!VALID_STATUSES.includes(status)) return null;
-  db.prepare("UPDATE alerts SET status = ? WHERE id = ?").run(status, alertId);
+  await db.prepare("UPDATE alerts SET status = ? WHERE id = ?").run(status, alertId);
   return getAlert(alertId);
 }
 
-export function hasRecentAlert(projectId: string, rule: string, withinSeconds: number): boolean {
+export async function hasRecentAlert(projectId: string, rule: string, withinSeconds: number): Promise<boolean> {
   const since = new Date(Date.now() - withinSeconds * 1000).toISOString();
-  const row = db
+  const row = await db
     .prepare("SELECT 1 FROM alerts WHERE project_id = ? AND rule = ? AND occurred_at >= ? LIMIT 1")
     .get(projectId, rule, since);
   return row !== undefined;
 }
 
-export function countAlertsByStatus(projectId: string): Record<AlertStatus, number> {
+export async function countAlertsByStatus(projectId: string): Promise<Record<AlertStatus, number>> {
   const counts: Record<AlertStatus, number> = { new: 0, acknowledged: 0, resolved: 0, false_positive: 0 };
-  const rows = db
+  const rows = (await db
     .prepare("SELECT status, COUNT(*) as count FROM alerts WHERE project_id = ? GROUP BY status")
-    .all(projectId) as unknown as { status: string; count: number }[];
+    .all(projectId)) as unknown as { status: string; count: number | string }[];
   for (const row of rows) {
-    if (row.status in counts) counts[row.status as AlertStatus] = row.count;
+    if (row.status in counts) counts[row.status as AlertStatus] = Number(row.count);
   }
   return counts;
 }

@@ -34,9 +34,9 @@ test("GET /api/projects/:id/scans/compare returns remainingFindings alongside fi
   const { server, base } = await listen(app);
   try {
     const user = await createUser("compare-remaining@example.com", "correct horse battery staple");
-    setSubscriptionStatus(user.id, "tier1", "active");
-    const token = createSession(user.id);
-    const project = createProject(user.id, "Compare Target");
+    await setSubscriptionStatus(user.id, "tier1", "active");
+    const token = await createSession(user.id);
+    const project = await createProject(user.id, "Compare Target");
 
     // Two scans of the SAME (flawed) fixture back to back: nothing is fixed
     // or new between them, so every finding from the first scan should show
@@ -44,12 +44,12 @@ test("GET /api/projects/:id/scans/compare returns remainingFindings alongside fi
     // sent — not just its count.
     const older = runScan(FLAWED_APP);
     older.scannedAt = "2026-01-01T00:00:00.000Z";
-    recordScan(project.id, older);
+    await recordScan(project.id, older);
     assert.ok(older.findings.length > 0, "fixture should produce real findings");
 
     const newer = runScan(FLAWED_APP);
     newer.scannedAt = "2026-01-02T00:00:00.000Z";
-    recordScan(project.id, newer);
+    await recordScan(project.id, newer);
 
     const res = await fetch(`${base}/api/projects/${project.id}/scans/compare`, {
       headers: { Authorization: `Bearer ${token}` },
@@ -73,21 +73,21 @@ test("GET /api/projects/:id/scans/compare with explicit from/to picks arbitrary 
   const { server, base } = await listen(app);
   try {
     const user = await createUser("compare-explicit-picks@example.com", "correct horse battery staple");
-    setSubscriptionStatus(user.id, "tier1", "active");
-    const token = createSession(user.id);
-    const project = createProject(user.id, "Explicit Picks Target");
+    await setSubscriptionStatus(user.id, "tier1", "active");
+    const token = await createSession(user.id);
+    const project = await createProject(user.id, "Explicit Picks Target");
 
     const clean = runScan(CLEAN_APP);
     clean.scannedAt = "2026-01-01T00:00:00.000Z";
-    const cleanStored = recordScan(project.id, clean);
+    const cleanStored = await recordScan(project.id, clean);
 
     const middle = runScan(CLEAN_APP);
     middle.scannedAt = "2026-01-02T00:00:00.000Z";
-    recordScan(project.id, middle);
+    await recordScan(project.id, middle);
 
     const flawed = runScan(FLAWED_APP);
     flawed.scannedAt = "2026-01-03T00:00:00.000Z";
-    const flawedStored = recordScan(project.id, flawed);
+    const flawedStored = await recordScan(project.id, flawed);
 
     // Compare the OLDEST (clean) against the NEWEST (flawed) directly,
     // skipping the middle scan entirely — proves the picker isn't

@@ -30,10 +30,10 @@ function createSampleReport(status?: ScanStatus): ScanReport {
 
 test("H-7: Recorded scan includes status field", async () => {
   const user = await createUser("h7-status@example.com", PASSWORD);
-  const project = createProject(user.id, "Test Project");
+  const project = await createProject(user.id, "Test Project");
 
   const report = createSampleReport("COMPLETED");
-  const stored = recordScan(project.id, report);
+  const stored = await recordScan(project.id, report);
 
   assert.equal(stored.status, "COMPLETED");
   assert.ok(stored.id);
@@ -42,20 +42,20 @@ test("H-7: Recorded scan includes status field", async () => {
 
 test("H-7: Status defaults to COMPLETED if not specified", async () => {
   const user = await createUser("h7-default@example.com", PASSWORD);
-  const project = createProject(user.id, "Test Project");
+  const project = await createProject(user.id, "Test Project");
 
   const report = createSampleReport(); // No status specified
-  const stored = recordScan(project.id, report);
+  const stored = await recordScan(project.id, report);
 
   assert.equal(stored.status, "COMPLETED");
 });
 
 test("H-7: Status from report takes precedence", async () => {
   const user = await createUser("h7-report-status@example.com", PASSWORD);
-  const project = createProject(user.id, "Test Project");
+  const project = await createProject(user.id, "Test Project");
 
   const report = createSampleReport("PARTIALLY_COMPLETED");
-  const stored = recordScan(project.id, report, "COMPLETED");
+  const stored = await recordScan(project.id, report, "COMPLETED");
 
   // Report status should take precedence over parameter
   assert.equal(stored.status, "PARTIALLY_COMPLETED");
@@ -63,29 +63,29 @@ test("H-7: Status from report takes precedence", async () => {
 
 test("H-7: Latest scan retrieval includes status", async () => {
   const user = await createUser("h7-latest@example.com", PASSWORD);
-  const project = createProject(user.id, "Test Project");
+  const project = await createProject(user.id, "Test Project");
 
   const report1 = createSampleReport("COMPLETED");
-  recordScan(project.id, report1);
+  await recordScan(project.id, report1);
 
   // Wait a tiny bit to ensure different timestamp
   await new Promise((r) => setTimeout(r, 10));
 
   const report2 = createSampleReport("FAILED");
-  recordScan(project.id, report2);
+  await recordScan(project.id, report2);
 
-  const latest = getLatestScan(project.id);
+  const latest = await getLatestScan(project.id);
   assert.ok(latest);
   assert.equal(latest.status, "FAILED");
 });
 
 test("H-7: Partial scan shows reduced confidence", async () => {
   const user = await createUser("h7-partial@example.com", PASSWORD);
-  const project = createProject(user.id, "Test Project");
+  const project = await createProject(user.id, "Test Project");
 
   const report = createSampleReport("PARTIALLY_COMPLETED");
   report.scoreConfidence = 67; // Some analyzers didn't run
-  const stored = recordScan(project.id, report);
+  const stored = await recordScan(project.id, report);
 
   assert.equal(stored.status, "PARTIALLY_COMPLETED");
   assert.ok(stored.report.scoreConfidence && stored.report.scoreConfidence < 100);
@@ -93,11 +93,11 @@ test("H-7: Partial scan shows reduced confidence", async () => {
 
 test("H-7: Failed scan status preserved", async () => {
   const user = await createUser("h7-failed@example.com", PASSWORD);
-  const project = createProject(user.id, "Test Project");
+  const project = await createProject(user.id, "Test Project");
 
   const report = createSampleReport("FAILED");
   report.score = 0; // Failed scans have no score
-  const stored = recordScan(project.id, report, "FAILED");
+  const stored = await recordScan(project.id, report, "FAILED");
 
   assert.equal(stored.status, "FAILED");
   assert.equal(stored.score, 0);

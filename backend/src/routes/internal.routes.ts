@@ -2,6 +2,7 @@ import { Router, Request, Response } from "express";
 import crypto from "crypto";
 import { sendDigests, type DigestPeriod } from "../patrol/digest";
 import { runRetentionCleanup } from "../patrol/retention";
+import { asyncHandler } from "../middleware/asyncHandler";
 
 // Plain !== leaks how many leading bytes matched via response timing —
 // low-value against a long random secret, but free to close, so it's
@@ -42,7 +43,7 @@ function requireCronSecret(req: Request, res: Response): boolean {
   return true;
 }
 
-internalRouter.post("/api/internal/digest/:period", (req: Request, res: Response) => {
+internalRouter.post("/api/internal/digest/:period", asyncHandler(async (req: Request, res: Response) => {
   if (!requireCronSecret(req, res)) return;
 
   const period = req.params.period;
@@ -50,9 +51,9 @@ internalRouter.post("/api/internal/digest/:period", (req: Request, res: Response
     return res.status(400).json({ error: 'period must be "daily" or "weekly"' });
   }
 
-  const results = sendDigests(period as DigestPeriod);
+  const results = await sendDigests(period as DigestPeriod);
   res.json({ period, projectsNotified: results.length });
-});
+}));
 
 // Intended to be triggered on a schedule (daily is reasonable) once actual
 // AWS scheduled execution exists — see AWS_GITHUB_DEPLOYMENT.md. Retention
@@ -60,9 +61,9 @@ internalRouter.post("/api/internal/digest/:period", (req: Request, res: Response
 // RETENTION_ALERTS_DAYS, RETENTION_SCANS_DAYS,
 // RETENTION_WEBHOOK_EVENTS_DAYS — see patrol/retention.ts for defaults);
 // never deletes account/subscription/billing records.
-internalRouter.post("/api/internal/retention/cleanup", (req: Request, res: Response) => {
+internalRouter.post("/api/internal/retention/cleanup", asyncHandler(async (req: Request, res: Response) => {
   if (!requireCronSecret(req, res)) return;
 
-  const result = runRetentionCleanup();
+  const result = await runRetentionCleanup();
   res.json(result);
-});
+}));

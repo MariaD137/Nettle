@@ -11,12 +11,35 @@ export interface NettleApiStackProps extends StackProps {
   connectorSecurityGroup: SecurityGroup;
   /**
    * ARN of the RDS-generated credentials secret (database-stack.ts's
-   * `secretArn` output), if that stack has actually been deployed. Optional
-   * because deploying the API stack must not require RDS to exist first —
-   * the backend still runs on SQLite either way (see
-   * backend/src/db/postgres/README.md).
+   * `secretArn` output) and the instance's endpoint hostname
+   * (database-stack.ts's `instanceEndpoint` output), if that stack has
+   * actually been deployed. Both optional at the type level because
+   * deploying the API stack must not *require* editing this file first —
+   * but the backend has no SQLite fallback any more (see
+   * backend/src/db/postgres/README.md): it needs a real PostgreSQL
+   * connection to start at all. Passing both is what wires the database
+   * into the service's PGHOST/PGPORT/PGUSER/PGPASSWORD/PGDATABASE
+   * environment variables below — omit them and the deployed service will
+   * fail to boot with a clear "no PostgreSQL connection configured" error
+   * rather than silently starting broken.
+   *
+   * Deliberately NOT reading host/port back out of the secret itself: an
+   * RDS `SecretTargetAttachment` (which this repo's database-stack.ts does
+   * not configure) is what AWS documents as populating those fields into
+   * the secret's own JSON at runtime, and confirming that actually
+   * happened requires a live AWS account to observe — not something this
+   * repository can verify for itself. The endpoint address CDK already
+   * knows deterministically at synth time (`instance.dbInstanceEndpointAddress`)
+   * is used instead, and the port is PostgreSQL's fixed default (RDS
+   * doesn't override it here) rather than pulled from anywhere secret.
+   *
+   * REQUIRES AWS CONFIGURATION: these values only exist once a human has
+   * actually deployed Nettle-Database (`cdk deploy Nettle-Database`) in a
+   * real AWS account and copied its outputs here (or into bin/app.ts) —
+   * nothing in this repository does that on its own.
    */
   databaseSecretArn?: string;
+  databaseEndpointAddress?: string;
 }
 
 /**
@@ -85,16 +108,17 @@ export class NettleApiStack extends Stack {
       vpcConnectorName: "nettle-api-connector",
     });
 
-    // maxSize is deliberately pinned at 1, not App Runner's own default
-    // ceiling of 25 — every account, session, project, scan, and alert is
-    // persisted to a local node:sqlite file on whichever single container
-    // is running (see NETTLE_DB_PATH in backend/src/db/index.ts), with no
-    // shared database or volume behind it. A second concurrent instance
-    // would boot its own empty database, and requests would silently see
-    // different data depending on which instance happened to serve them.
-    // This resource exists so scaling is ready to enable the moment that's
-    // no longer true (RDS, or any other shared store, replaces the
-    // per-instance SQLite file) — raise maxSize then, not before.
+    // maxSize is still pinned at 1, not App Runner's own default ceiling of
+    // 25. The backend's data layer is PostgreSQL now (a real shared store,
+    // not a per-instance file — see backend/src/db/postgres/README.md), so
+    // the original reason for this ceiling (every instance would otherwise
+    // have booted its own empty SQLite database) no longer applies. It's
+    // left at 1 anyway because multi-instance scaling has never actually
+    // been exercised against this app — session/rate-limit state that
+    // still lives in each process's memory (see backend/README.md's known
+    // gaps) hasn't been verified safe across concurrent instances. Raise
+    // this deliberately, once, after that's been checked — not as a side
+    // effect of the database migration.
     const autoScaling = new CfnAutoScalingConfiguration(this, "ApiAutoScaling", {
       autoScalingConfigurationName: "nettle-api-autoscaling",
       minSize: 1,
@@ -106,6 +130,40 @@ export class NettleApiStack extends Stack {
     // App Runner/ECS pattern for "one field of a multi-field secret," not
     // a made-up format. jsonKey values match APP_SECRETS_NAME's doc comment.
     const secretRef = (jsonKey: string) => `${appSecrets.secretArn}:${jsonKey}::`;
+
+    // Same one-field-per-env-var pattern, against the RDS-generated
+    // credentials secret instead of appSecrets — but only for the two
+    // fields actually inside it. database-stack.ts creates the secret via
+    // `Credentials.fromGeneratedSecret("nettle_admin")` with no `dbname`
+    // option, so its JSON template is just `{"username": "nettle_admin"}`
+    // plus the generated `password` key — verified directly from
+    // aws-cdk-lib's source (Credentials.fromGeneratedSecret /
+    // DatabaseSecret), not assumed. It does NOT contain host/port/dbname:
+    // those would only be added by an RDS `SecretTargetAttachment`
+    // rotation, which this stack doesn't configure, and confirming one
+    // happened would need a live AWS account to observe. So host/port/
+    // dbname are sourced from values CDK already knows for certain instead:
+    // the endpoint address is a real CloudFormation attribute reference
+    // (props.databaseEndpointAddress, from database-stack.ts's
+    // `instanceEndpoint` output), the port is PostgreSQL's fixed default
+    // (database-stack.ts never overrides it), and the database name is the
+    // literal "nettle" database-stack.ts passes as `databaseName` — none of
+    // these three are secret values.
+    const dbSecretRef = (jsonKey: string) => `${props.databaseSecretArn}:${jsonKey}::`;
+    const databaseConfigured = Boolean(props.databaseSecretArn && props.databaseEndpointAddress);
+    const databaseEnvVars = databaseConfigured
+      ? [
+          { name: "PGHOST", value: props.databaseEndpointAddress! },
+          { name: "PGPORT", value: "5432" },
+          { name: "PGDATABASE", value: "nettle" },
+        ]
+      : [];
+    const databaseEnvSecrets = databaseConfigured
+      ? [
+          { name: "PGUSER", value: dbSecretRef("username") },
+          { name: "PGPASSWORD", value: dbSecretRef("password") },
+        ]
+      : [];
 
     const service = new CfnService(this, "ApiService", {
       serviceName: "nettle-api",
@@ -123,6 +181,7 @@ export class NettleApiStack extends Stack {
             runtimeEnvironmentVariables: [
               { name: "NODE_ENV", value: "production" },
               { name: "PORT", value: "8080" },
+              ...databaseEnvVars,
             ],
             // Every value here comes from Secrets Manager, never from CDK
             // source or this repository — see APP_SECRETS_NAME's doc
@@ -140,6 +199,7 @@ export class NettleApiStack extends Stack {
               { name: "SMTP_PASS", value: secretRef("smtpPass") },
               { name: "TWILIO_ACCOUNT_SID", value: secretRef("twilioAccountSid") },
               { name: "TWILIO_AUTH_TOKEN", value: secretRef("twilioAuthToken") },
+              ...databaseEnvSecrets,
             ],
           },
         },

@@ -26,16 +26,16 @@ export interface WebhookEvent {
 }
 
 // Store webhook configuration
-export function createWebhookConfig(
+export async function createWebhookConfig(
   projectId: string,
   service: string,
   webhookUrl: string,
   eventTypes: string[]
-): WebhookConfig {
+): Promise<WebhookConfig> {
   const id = newId();
   const now = new Date().toISOString();
 
-  db.prepare(`
+  await db.prepare(`
     INSERT INTO webhooks
     (id, project_id, service, webhook_url, is_active, event_types, created_at, updated_at)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
@@ -63,7 +63,7 @@ export function createWebhookConfig(
 }
 
 // Get webhook configurations for project
-export function getWebhookConfigs(projectId: string, service?: string): WebhookConfig[] {
+export async function getWebhookConfigs(projectId: string, service?: string): Promise<WebhookConfig[]> {
   let query = 'SELECT * FROM webhooks WHERE project_id = ?';
   const params: any[] = [projectId];
 
@@ -72,7 +72,7 @@ export function getWebhookConfigs(projectId: string, service?: string): WebhookC
     params.push(service);
   }
 
-  const rows = db.prepare(query).all(...params) as any[];
+  const rows = (await db.prepare(query).all(...params)) as any[];
   return rows.map(row => ({
     id: row.id,
     project_id: row.project_id,
@@ -86,15 +86,15 @@ export function getWebhookConfigs(projectId: string, service?: string): WebhookC
 }
 
 // Queue event for webhook delivery
-export function queueWebhookEvent(
+export async function queueWebhookEvent(
   webhookId: string,
   eventType: string,
   payload: Record<string, any>
-): WebhookEvent {
+): Promise<WebhookEvent> {
   const id = newId();
   const now = new Date().toISOString();
 
-  db.prepare(`
+  await db.prepare(`
     INSERT INTO webhook_events
     (id, webhook_id, event_type, payload, status, attempt_count, created_at)
     VALUES (?, ?, ?, ?, 'pending', 0, ?)
@@ -121,12 +121,12 @@ export async function sendWebhook(
   payload: Record<string, any>,
   service?: string
 ): Promise<void> {
-  const webhooks = getWebhookConfigs(projectId, service);
+  const webhooks = await getWebhookConfigs(projectId, service);
 
   for (const webhook of webhooks) {
     if (!webhook.is_active || !webhook.event_types.includes(eventType)) continue;
 
-    const event = queueWebhookEvent(webhook.id, eventType, payload);
+    const event = await queueWebhookEvent(webhook.id, eventType, payload);
     await deliverWebhook(webhook, event);
   }
 }
@@ -168,7 +168,7 @@ async function deliverWebhook(webhook: WebhookConfig, event: WebhookEvent): Prom
       });
 
       if (result.statusCode >= 200 && result.statusCode < 300) {
-        updateWebhookEventStatus(event.id, 'sent');
+        await updateWebhookEventStatus(event.id, 'sent');
         return;
       }
 
@@ -180,13 +180,13 @@ async function deliverWebhook(webhook: WebhookConfig, event: WebhookEvent): Prom
 
       if (!isPermanentFailure && attempt < maxRetries - 1) {
         await new Promise(resolve => setTimeout(resolve, backoffMs[attempt]));
-        db.prepare(`
+        await db.prepare(`
           UPDATE webhook_events
           SET status = 'retrying', attempt_count = attempt_count + 1
           WHERE id = ?
         `).run(event.id);
       } else {
-        updateWebhookEventStatus(event.id, 'failed', `HTTP ${result.statusCode}`);
+        await updateWebhookEventStatus(event.id, 'failed', `HTTP ${result.statusCode}`);
         return;
       }
     } catch (error) {
@@ -195,7 +195,7 @@ async function deliverWebhook(webhook: WebhookConfig, event: WebhookEvent): Prom
       // retry — treat it as permanent so a malicious or misconfigured
       // destination doesn't get retried for a full minute.
       if (error instanceof SsrfBlockedError) {
-        updateWebhookEventStatus(event.id, 'failed', error.message);
+        await updateWebhookEventStatus(event.id, 'failed', error.message);
         return;
       }
 
@@ -203,26 +203,26 @@ async function deliverWebhook(webhook: WebhookConfig, event: WebhookEvent): Prom
 
       if (attempt < maxRetries - 1) {
         await new Promise(resolve => setTimeout(resolve, backoffMs[attempt]));
-        db.prepare(`
+        await db.prepare(`
           UPDATE webhook_events
           SET status = 'retrying', attempt_count = attempt_count + 1
           WHERE id = ?
         `).run(event.id);
       } else {
-        updateWebhookEventStatus(event.id, 'failed', errMsg);
+        await updateWebhookEventStatus(event.id, 'failed', errMsg);
       }
     }
   }
 }
 
-function updateWebhookEventStatus(
+async function updateWebhookEventStatus(
   eventId: string,
   status: string,
   error?: string
-): void {
+): Promise<void> {
   const now = new Date().toISOString();
 
-  db.prepare(`
+  await db.prepare(`
     UPDATE webhook_events
     SET status = ?, sent_at = ?, last_error = ?
     WHERE id = ?

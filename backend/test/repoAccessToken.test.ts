@@ -16,7 +16,7 @@ const PASSWORD = "correct horse battery staple";
 let counter = 0;
 async function testUser() {
   const user = await createUser(`repo-token-test-${counter++}@example.com`, PASSWORD);
-  setSubscriptionStatus(user.id, "tier1", "active");
+  await setSubscriptionStatus(user.id, "tier1", "active");
   return user;
 }
 
@@ -33,46 +33,46 @@ function listen(app: express.Express): Promise<{ server: Server; base: string }>
 
 test("setRepoAccessToken stores an encrypted token and flips hasRepoAccessToken", async () => {
   const user = await testUser();
-  const project = createProject(user.id, "Token Project");
+  const project = await createProject(user.id, "Token Project");
   assert.equal(project.hasRepoAccessToken, false);
 
-  const updated = setRepoAccessToken(project.id, "ghp_secretvalue");
+  const updated = await setRepoAccessToken(project.id, "ghp_secretvalue");
   assert.equal(updated?.hasRepoAccessToken, true);
 
-  const fetched = getProject(project.id);
+  const fetched = await getProject(project.id);
   assert.equal(fetched?.hasRepoAccessToken, true);
 });
 
 test("setRepoAccessToken(null) clears a stored token", async () => {
   const user = await testUser();
-  const project = createProject(user.id, "Clearable Project");
-  setRepoAccessToken(project.id, "ghp_secretvalue");
-  assert.equal(getProject(project.id)?.hasRepoAccessToken, true);
+  const project = await createProject(user.id, "Clearable Project");
+  await setRepoAccessToken(project.id, "ghp_secretvalue");
+  assert.equal((await getProject(project.id))?.hasRepoAccessToken, true);
 
-  setRepoAccessToken(project.id, null);
-  assert.equal(getProject(project.id)?.hasRepoAccessToken, false);
-  assert.equal(getDecryptedRepoAccessToken(project.id), null);
+  await setRepoAccessToken(project.id, null);
+  assert.equal((await getProject(project.id))?.hasRepoAccessToken, false);
+  assert.equal(await getDecryptedRepoAccessToken(project.id), null);
 });
 
 test("getDecryptedRepoAccessToken returns the original plaintext", async () => {
   const user = await testUser();
-  const project = createProject(user.id, "Round Trip Project");
-  setRepoAccessToken(project.id, "ghp_originalvalue123");
-  assert.equal(getDecryptedRepoAccessToken(project.id), "ghp_originalvalue123");
+  const project = await createProject(user.id, "Round Trip Project");
+  await setRepoAccessToken(project.id, "ghp_originalvalue123");
+  assert.equal(await getDecryptedRepoAccessToken(project.id), "ghp_originalvalue123");
 });
 
 test("getDecryptedRepoAccessToken returns null when nothing is stored", async () => {
   const user = await testUser();
-  const project = createProject(user.id, "No Token Project");
-  assert.equal(getDecryptedRepoAccessToken(project.id), null);
+  const project = await createProject(user.id, "No Token Project");
+  assert.equal(await getDecryptedRepoAccessToken(project.id), null);
 });
 
 // --- route contract: the token value is never returned by the API ---
 
 test("PATCH /api/projects/:id accepts a repoAccessToken but never echoes it back", async () => {
   const user = await testUser();
-  const token = createSession(user.id);
-  const project = createProject(user.id, "API Contract Project");
+  const token = await createSession(user.id);
+  const project = await createProject(user.id, "API Contract Project");
 
   const app = express();
   app.use(express.json());
@@ -109,9 +109,9 @@ test("PATCH /api/projects/:id accepts a repoAccessToken but never echoes it back
 
 test("PATCH without repoAccessToken in the body leaves an existing token untouched", async () => {
   const user = await testUser();
-  const token = createSession(user.id);
-  const project = createProject(user.id, "Untouched Token Project");
-  setRepoAccessToken(project.id, "ghp_originalvalue");
+  const token = await createSession(user.id);
+  const project = await createProject(user.id, "Untouched Token Project");
+  await setRepoAccessToken(project.id, "ghp_originalvalue");
 
   const app = express();
   app.use(express.json());
@@ -127,7 +127,7 @@ test("PATCH without repoAccessToken in the body leaves an existing token untouch
     const body = await res.json();
     assert.equal(body.name, "Renamed, token untouched");
     assert.equal(body.hasRepoAccessToken, true);
-    assert.equal(getDecryptedRepoAccessToken(project.id), "ghp_originalvalue");
+    assert.equal(await getDecryptedRepoAccessToken(project.id), "ghp_originalvalue");
   } finally {
     server.close();
   }

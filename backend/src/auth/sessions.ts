@@ -1,5 +1,6 @@
 import crypto from "crypto";
 import { db, newSessionToken } from "../db";
+import { logger } from "../observability/logger";
 
 const SESSION_LIFETIME_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
 
@@ -18,10 +19,10 @@ function hashToken(token: string): string {
   return crypto.createHash("sha256").update(token).digest("hex");
 }
 
-export function createSession(userId: string): string {
+export async function createSession(userId: string): Promise<string> {
   const token = newSessionToken();
   const now = new Date();
-  db.prepare("INSERT INTO sessions (token, user_id, created_at, expires_at) VALUES (?, ?, ?, ?)").run(
+  await db.prepare("INSERT INTO sessions (token, user_id, created_at, expires_at) VALUES (?, ?, ?, ?)").run(
     hashToken(token),
     userId,
     now.toISOString(),
@@ -30,21 +31,21 @@ export function createSession(userId: string): string {
   return token;
 }
 
-export function resolveSession(token: string): { userId: string } | null {
+export async function resolveSession(token: string): Promise<{ userId: string } | null> {
   const hashed = hashToken(token);
-  const row = db.prepare("SELECT user_id, expires_at FROM sessions WHERE token = ?").get(hashed) as
+  const row = (await db.prepare("SELECT user_id, expires_at FROM sessions WHERE token = ?").get(hashed)) as
     | { user_id: string; expires_at: string }
     | undefined;
   if (!row) return null;
   if (new Date(row.expires_at).getTime() < Date.now()) {
-    db.prepare("DELETE FROM sessions WHERE token = ?").run(hashed);
+    await db.prepare("DELETE FROM sessions WHERE token = ?").run(hashed);
     return null;
   }
   return { userId: row.user_id };
 }
 
-export function destroySession(token: string): void {
-  db.prepare("DELETE FROM sessions WHERE token = ?").run(hashToken(token));
+export async function destroySession(token: string): Promise<void> {
+  await db.prepare("DELETE FROM sessions WHERE token = ?").run(hashToken(token));
 }
 
 export interface SessionInfo {
@@ -54,8 +55,10 @@ export interface SessionInfo {
   current: boolean;
 }
 
-export function listSessions(userId: string, currentToken?: string): SessionInfo[] {
-  const rows = db.prepare("SELECT token, created_at, expires_at FROM sessions WHERE user_id = ? ORDER BY created_at DESC").all(userId) as unknown as { token: string; created_at: string; expires_at: string }[];
+export async function listSessions(userId: string, currentToken?: string): Promise<SessionInfo[]> {
+  const rows = (await db
+    .prepare("SELECT token, created_at, expires_at FROM sessions WHERE user_id = ? ORDER BY created_at DESC")
+    .all(userId)) as unknown as { token: string; created_at: string; expires_at: string }[];
   const now = Date.now();
   const currentHashed = currentToken ? hashToken(currentToken) : undefined;
   return rows
@@ -71,16 +74,18 @@ export function listSessions(userId: string, currentToken?: string): SessionInfo
     }));
 }
 
-export function destroyAllSessions(userId: string): void {
-  db.prepare("DELETE FROM sessions WHERE user_id = ?").run(userId);
+export async function destroyAllSessions(userId: string): Promise<void> {
+  await db.prepare("DELETE FROM sessions WHERE user_id = ?").run(userId);
 }
 
-export function destroySessionByPrefix(userId: string, tokenPrefix: string): boolean {
+export async function destroySessionByPrefix(userId: string, tokenPrefix: string): Promise<boolean> {
   const prefix = tokenPrefix.replace("…", "");
-  const rows = db.prepare("SELECT token FROM sessions WHERE user_id = ? AND token LIKE ?").all(userId, `${prefix}%`) as unknown as { token: string }[];
+  const rows = (await db
+    .prepare("SELECT token FROM sessions WHERE user_id = ? AND token LIKE ?")
+    .all(userId, `${prefix}%`)) as unknown as { token: string }[];
   if (rows.length === 0) return false;
   for (const row of rows) {
-    db.prepare("DELETE FROM sessions WHERE token = ?").run(row.token);
+    await db.prepare("DELETE FROM sessions WHERE token = ?").run(row.token);
   }
   return true;
 }
@@ -92,11 +97,15 @@ export function destroySessionByPrefix(userId: string, tokenPrefix: string): boo
  * forever). Returns the number of rows removed, mainly so tests can
  * assert on it directly rather than waiting for the interval below.
  */
-export function sweepExpiredSessions(): number {
-  const result = db.prepare("DELETE FROM sessions WHERE expires_at < ?").run(new Date().toISOString());
+export async function sweepExpiredSessions(): Promise<number> {
+  const result = await db.prepare("DELETE FROM sessions WHERE expires_at < ?").run(new Date().toISOString());
   return Number(result.changes);
 }
 
 const SESSION_SWEEP_INTERVAL_MS = 60 * 60 * 1000; // hourly
-const sessionSweepInterval = setInterval(() => sweepExpiredSessions(), SESSION_SWEEP_INTERVAL_MS);
+const sessionSweepInterval = setInterval(() => {
+  sweepExpiredSessions().catch((err) => {
+    logger.error("session_sweep_failed", { error: (err as Error).message });
+  });
+}, SESSION_SWEEP_INTERVAL_MS);
 sessionSweepInterval.unref();

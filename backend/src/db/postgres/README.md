@@ -1,53 +1,30 @@
-# PostgreSQL readiness — status and how to use it
+# PostgreSQL — the production database
 
-## What this is, honestly
+## What this is
 
-This directory contains real, tested PostgreSQL infrastructure: a
-connection pool (`pool.ts`), a migration runner (`migrate.ts`), and a
-baseline schema (`migrations/0001_initial_schema.sql`) translated from the
-live SQLite schema in `src/db/index.ts`. All of it has been run and
-verified against a real local PostgreSQL 16 server — the migration creates
-every table, foreign keys are genuinely enforced, and a real insert/select
-round trip works.
+PostgreSQL is now the single production database for this backend.
+`src/db/index.ts` no longer wraps `node:sqlite`; it's a thin async adapter
+(`db.prepare(sql).get/all/run(...)`, same call shape every route/service
+already used, now returning Promises) over the real connection pool in
+this directory (`pool.ts`), with the schema created by the migration
+runner (`migrate.ts`) and the versioned SQL files in `migrations/`.
 
-**What this is not:** the app's actual data layer. `src/db/index.ts` (SQLite,
-via `node:sqlite`) is still what every route handler in this codebase reads
-and writes through — nothing in `src/` imports anything from this directory.
-Nothing here is wired into a live request path.
+There is no SQLite fallback anywhere in production code. `getPostgresPool()`
+fails closed with a clear `MissingDatabaseUrlError` if `DATABASE_URL` is
+unset, and the server's startup sequence (`src/index.ts`'s `start()`) awaits
+`initDb()` — which runs every pending migration — before it starts
+accepting requests, exiting (after alerting) if that fails.
 
-## Why it's split this way
-
-`node:sqlite`'s `DatabaseSync` is fully synchronous. `pg` (and any real
-PostgreSQL driver) is inherently asynchronous. There are 171 `db.prepare()`
-call sites across this codebase — routes, services, tests — all written
-assuming synchronous execution. Actually switching the app over to
-PostgreSQL means converting that data-access code to async, which cascades
-into most route handlers. That is a large, genuinely risky rewrite, not a
-driver swap, and doing it blind (as part of an unrelated hardening pass)
-was explicitly decided against — see the project's Postgres-readiness
-decision: build this infrastructure now, defer the call-site conversion as
-its own explicitly-scoped follow-up.
-
-So this directory exists to make that follow-up smaller and lower-risk
-when it happens: the schema translation, connection handling, and
-migration tooling are already done and already proven against a real
-database. What's left is exactly the async conversion described above —
-nothing more.
-
-## The migration path
-
-1. **Local dev (current default, unchanged):** SQLite via `node:sqlite`,
-   `NETTLE_DB_PATH` (defaults to `./nettle.db`, or `:memory:` in tests).
-   Nothing about this changes — no existing developer workflow is affected.
-2. **PostgreSQL (this directory, ready but unused):** point `DATABASE_URL`
-   at a real Postgres instance and run `npm run db:migrate:postgres` to
-   create the schema. Verified against a real local PostgreSQL 16 server
-   during this work (`backend/test/postgresMigration.test.ts`).
-3. **AWS RDS PostgreSQL (not deployed, not tested):** the same schema and
-   migration runner target RDS once it exists — `DATABASE_URL` becomes an
-   RDS connection string retrieved from AWS Secrets Manager at runtime (see
-   `infra/` and `AWS_GITHUB_DEPLOYMENT.md`). This has not been deployed or
-   tested against real RDS; do not treat it as verified until it is.
+The one remaining `node:sqlite` import left anywhere in `src/` is
+`src/scanner/osvVulnerabilities.ts`, and it is not this application's
+database: it opens a bundled, read-only, point-in-time npm vulnerability
+snapshot (`src/scanner/osv-data/npm-vulnerabilities.db`, built by
+`scripts/build-osv-db.js`) shipped as a static asset alongside the app,
+analogous to the bundled Semgrep rule YAML files — nothing in the running
+application ever writes to it. Converting that to PostgreSQL would mean
+building an ingestion pipeline for a static reference dataset, which is a
+different, unrelated piece of work from migrating the app's own
+persistent state.
 
 ## Using it
 
@@ -56,25 +33,39 @@ nothing more.
 export DATABASE_URL="postgres://user:password@host:5432/dbname"
 # DATABASE_SSL=disable only for a local Postgres with no TLS configured —
 # never set this against a real production database.
-npm run db:migrate:postgres
+npm run db:migrate:postgres   # or just start the server — it migrates on boot
 ```
 
 `getPostgresPool()` (`pool.ts`) fails closed with a clear
 `MissingDatabaseUrlError` if `DATABASE_URL` is unset — there is no silent
-fallback to SQLite or to any default connection string. That guard only
-applies to code that actually calls this module, though: since nothing in
-`src/` does yet, it does not currently affect how the live app starts up
-or behaves. It will matter once something does.
+fallback to SQLite or to any default connection string.
+
+## AWS RDS
+
+The same schema and migration runner target RDS once it exists —
+`DATABASE_URL` becomes an RDS connection string retrieved from AWS Secrets
+Manager at runtime (see `infra/` and `AWS_GITHUB_DEPLOYMENT.md`). Actually
+provisioning and connecting to a real RDS instance requires an AWS account
+and has not been done or verified from this repository — that step is
+labeled `REQUIRES AWS ACCOUNT` / `REQUIRES AWS CONFIGURATION` throughout
+the docs referenced above, and nothing here should be read as claiming
+otherwise.
 
 ## Testing
 
-`test/postgresMigration.test.ts` runs against a real PostgreSQL server —
-no mocking. It probes for one at `NETTLE_TEST_DATABASE_URL` (default
-`postgres://nettle:nettle_test_password@localhost:5432/nettle_test`) and
-skips with a clear reason if none is reachable, rather than failing CI
-environments that don't provision Postgres. To run it locally:
+Local backend tests (`npm test`) now run against a real local PostgreSQL
+server by default — `package.json`'s `pretest` script
+(`test/resetTestDb.ts`) resets the schema and applies every migration
+before the suite runs, pointed at `NETTLE_TEST_DATABASE_URL` (default
+`postgres://nettle:nettle_test_password@localhost:5432/nettle_test`), and
+fails loudly if that database isn't reachable rather than silently
+skipping the whole suite. To run it locally:
 
 ```bash
 createdb nettle_test   # or: docker run -p 5432:5432 -e POSTGRES_PASSWORD=... postgres:16
-npm test -- test/postgresMigration.test.ts
+npm test
 ```
+
+`test/postgresMigration.test.ts` additionally verifies the migrated schema
+directly (every table exists, foreign keys are enforced, migrations are
+idempotent) rather than through the application layer.

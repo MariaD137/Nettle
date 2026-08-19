@@ -16,11 +16,15 @@ export interface NettleDatabaseStackProps extends StackProps {
  * CDK — `cdk synth` produces a valid CloudFormation template — but "PASS"
  * here means "the code is correct," not "an RDS instance exists."
  *
- * Also not yet consumed by the application: the backend's data-access layer
- * (src/db/index.ts) still reads/writes SQLite exclusively — see
- * backend/src/db/postgres/README.md for why that conversion is deferred.
- * This stack exists so provisioning a real Postgres instance is ready the
- * moment that conversion happens, not before.
+ * The application side of this is no longer deferred: the backend's
+ * data-access layer (backend/src/db/index.ts) is PostgreSQL-only now, with
+ * no SQLite fallback (see backend/src/db/postgres/README.md) — it requires
+ * a real PostgreSQL connection to start at all. What's still pending is
+ * purely the AWS side: an actual `cdk deploy Nettle-Database` against a
+ * real account, and then wiring this stack's outputs into Nettle-Api (see
+ * api-stack.ts's `databaseSecretArn`/`databaseEndpointAddress` props and
+ * bin/app.ts's REQUIRES AWS CONFIGURATION note) — neither of which this
+ * repository can do on its own.
  */
 export class NettleDatabaseStack extends Stack {
   public readonly instanceEndpoint: string;
@@ -67,10 +71,20 @@ export class NettleDatabaseStack extends Stack {
     this.instanceEndpoint = instance.dbInstanceEndpointAddress;
     this.secretArn = instance.secret!.secretArn;
 
-    new CfnOutput(this, "DatabaseEndpoint", { value: instance.dbInstanceEndpointAddress });
+    new CfnOutput(this, "DatabaseEndpoint", {
+      value: instance.dbInstanceEndpointAddress,
+      description: "Pass this as api-stack.ts's databaseEndpointAddress prop (see bin/app.ts)",
+    });
     new CfnOutput(this, "DatabaseSecretArn", {
       value: instance.secret!.secretArn,
-      description: "Secrets Manager secret holding host/port/username/password/dbname — never a plaintext DATABASE_URL",
+      // Credentials.fromGeneratedSecret("nettle_admin") above puts only
+      // `username` and the generated `password` in this secret — no
+      // host/port/dbname (this stack configures no SecretTargetAttachment
+      // rotation, which is what would add those). Pass this as
+      // api-stack.ts's databaseSecretArn prop (see bin/app.ts); host/port/
+      // dbname come from DatabaseEndpoint above and a fixed default
+      // instead, not from this secret.
+      description: "Secrets Manager secret holding username/password only — never a plaintext DATABASE_URL",
     });
   }
 }

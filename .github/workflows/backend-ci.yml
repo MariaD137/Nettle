@@ -28,6 +28,22 @@ jobs:
     defaults:
       run:
         working-directory: backend
+    # backend/src/db is PostgreSQL-only now (no SQLite fallback) — see the
+    # same services: block and comment in ci.yml's backend-quality job.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: nettle
+          POSTGRES_PASSWORD: nettle_test_password
+          POSTGRES_DB: nettle_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0

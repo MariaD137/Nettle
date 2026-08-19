@@ -21,18 +21,18 @@ process.env.NETTLE_WEBHOOK_SECRET ??= crypto.randomBytes(32).toString("hex");
 let counter = 0;
 async function projectId(): Promise<string> {
   const user = await createUser(`webhook-ssrf-${counter++}@example.com`, "correct horse battery staple");
-  return createProject(user.id, "SSRF Test Project").id;
+  return (await createProject(user.id, "SSRF Test Project")).id;
 }
 
-function lastEvent(webhookId: string): { status: string; last_error: string | null } {
-  return db
+async function lastEvent(webhookId: string): Promise<{ status: string; last_error: string | null }> {
+  return (await db
     .prepare("SELECT status, last_error FROM webhook_events WHERE webhook_id = ? ORDER BY created_at DESC LIMIT 1")
-    .get(webhookId) as { status: string; last_error: string | null };
+    .get(webhookId)) as { status: string; last_error: string | null };
 }
 
 async function deliverAndGetOutcome(webhookUrl: string): Promise<{ status: string; last_error: string | null }> {
   const pid = await projectId();
-  const webhook = createWebhookConfig(pid, "generic", webhookUrl, ["scan.completed"]);
+  const webhook = await createWebhookConfig(pid, "generic", webhookUrl, ["scan.completed"]);
   await sendWebhook(pid, "scan.completed", { hello: "world" });
   return lastEvent(webhook.id);
 }

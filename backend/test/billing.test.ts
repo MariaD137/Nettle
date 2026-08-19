@@ -133,7 +133,7 @@ test("a genuinely, correctly-signed checkout.session.completed webhook activates
   process.env.STRIPE_WEBHOOK_SECRET = webhookSecret;
 
   const user = await createUser("webhook-activates@example.com", "correct horse battery staple");
-  assert.equal(getUserById(user.id)!.subscriptionStatus, "none");
+  assert.equal((await getUserById(user.id))!.subscriptionStatus, "none");
 
   const payload = JSON.stringify({
     id: "evt_test_123",
@@ -160,7 +160,7 @@ test("a genuinely, correctly-signed checkout.session.completed webhook activates
     });
     assert.equal(res.status, 200, JSON.stringify(await res.json()));
 
-    const updated = getUserById(user.id)!;
+    const updated = (await getUserById(user.id))!;
     assert.equal(updated.subscriptionStatus, "active");
     assert.equal(updated.plan, "tier1");
     assert.equal(updated.stripeCustomerId, "cus_test_123");
@@ -222,8 +222,8 @@ test("a genuinely, correctly-signed invoice.payment_failed webhook marks the use
   process.env.STRIPE_WEBHOOK_SECRET = webhookSecret;
 
   const user = await createUser("payment-failed@example.com", "correct horse battery staple");
-  setStripeCustomerId(user.id, "cus_payment_failed_test");
-  setSubscriptionStatus(user.id, "tier1", "active");
+  await setStripeCustomerId(user.id, "cus_payment_failed_test");
+  await setSubscriptionStatus(user.id, "tier1", "active");
 
   const payload = JSON.stringify({
     id: "evt_payment_failed_test",
@@ -249,11 +249,11 @@ test("a genuinely, correctly-signed invoice.payment_failed webhook marks the use
     });
     assert.equal(res.status, 200, JSON.stringify(await res.json()));
 
-    const updated = getUserById(user.id)!;
+    const updated = (await getUserById(user.id))!;
     assert.equal(updated.subscriptionStatus, "past_due");
     assert.equal(updated.plan, "tier1");
 
-    const failures = getPaymentFailures(user.id);
+    const failures = await getPaymentFailures(user.id);
     assert.equal(failures.length, 1);
     assert.equal(failures[0].stripeInvoiceId, "in_test_123");
     assert.equal(failures[0].amountDue, 4900);
@@ -278,8 +278,8 @@ test("two genuinely concurrent deliveries of the same event id produce side effe
   process.env.STRIPE_WEBHOOK_SECRET = webhookSecret;
 
   const user = await createUser("webhook-concurrent-race@example.com", "correct horse battery staple");
-  setStripeCustomerId(user.id, "cus_concurrent_race_test");
-  setSubscriptionStatus(user.id, "tier1", "active");
+  await setStripeCustomerId(user.id, "cus_concurrent_race_test");
+  await setSubscriptionStatus(user.id, "tier1", "active");
 
   const payload = JSON.stringify({
     id: "evt_concurrent_race_test",
@@ -324,7 +324,7 @@ test("two genuinely concurrent deliveries of the same event id produce side effe
     const duplicateCount = [firstBody, secondBody].filter((b) => b.duplicate === true).length;
     assert.equal(duplicateCount, 1, "exactly one of the two concurrent requests should see duplicate:true");
 
-    const failures = getPaymentFailures(user.id);
+    const failures = await getPaymentFailures(user.id);
     assert.equal(failures.length, 1, "the side effect (a payment_failures row) must be recorded exactly once, not twice");
   } finally {
     server.close();
@@ -339,8 +339,8 @@ test("customer.subscription.updated re-derives the plan from Stripe's own price 
   process.env.STRIPE_PRICE_TIER2 = "price_test_tier2";
 
   const user = await createUser("webhook-upgrade@example.com", "correct horse battery staple");
-  setStripeCustomerId(user.id, "cus_upgrade_test");
-  setSubscriptionStatus(user.id, "tier1", "active");
+  await setStripeCustomerId(user.id, "cus_upgrade_test");
+  await setSubscriptionStatus(user.id, "tier1", "active");
 
   const payload = JSON.stringify({
     id: "evt_upgrade_test",
@@ -366,7 +366,7 @@ test("customer.subscription.updated re-derives the plan from Stripe's own price 
     });
     assert.equal(res.status, 200, JSON.stringify(await res.json()));
 
-    const updated = getUserById(user.id)!;
+    const updated = (await getUserById(user.id))!;
     // The stored plan must reflect the subscription's actual current price
     // (tier2), not the plan it was on before the portal upgrade.
     assert.equal(updated.plan, "tier2");
@@ -384,8 +384,8 @@ test("customer.subscription.updated re-derives the plan from Stripe's own price 
   process.env.STRIPE_PRICE_TIER2 = "price_test_tier2";
 
   const user = await createUser("webhook-downgrade@example.com", "correct horse battery staple");
-  setStripeCustomerId(user.id, "cus_downgrade_test");
-  setSubscriptionStatus(user.id, "tier2", "active");
+  await setStripeCustomerId(user.id, "cus_downgrade_test");
+  await setSubscriptionStatus(user.id, "tier2", "active");
 
   const payload = JSON.stringify({
     id: "evt_downgrade_test",
@@ -411,7 +411,7 @@ test("customer.subscription.updated re-derives the plan from Stripe's own price 
     });
     assert.equal(res.status, 200, JSON.stringify(await res.json()));
 
-    const updated = getUserById(user.id)!;
+    const updated = (await getUserById(user.id))!;
     // This is the exact bug the fix closes: without re-deriving plan from
     // Stripe's price, this would still read "tier2" here, keeping Tier 2
     // scan quota and full-report access after the customer downgraded.
@@ -428,8 +428,8 @@ test("customer.subscription.deleted resets the plan to free, not just the status
   process.env.STRIPE_WEBHOOK_SECRET = webhookSecret;
 
   const user = await createUser("webhook-cancel@example.com", "correct horse battery staple");
-  setStripeCustomerId(user.id, "cus_cancel_test");
-  setSubscriptionStatus(user.id, "tier2", "active");
+  await setStripeCustomerId(user.id, "cus_cancel_test");
+  await setSubscriptionStatus(user.id, "tier2", "active");
 
   const payload = JSON.stringify({
     id: "evt_cancel_test",
@@ -455,7 +455,7 @@ test("customer.subscription.deleted resets the plan to free, not just the status
     });
     assert.equal(res.status, 200, JSON.stringify(await res.json()));
 
-    const updated = getUserById(user.id)!;
+    const updated = (await getUserById(user.id))!;
     // A canceled subscription must not leave a stale "tier2" sitting on the
     // account forever — the product's cancellation policy is that paid
     // access ends, and the stored plan should say so.
@@ -472,8 +472,8 @@ test("customer.subscription.updated with a terminal status (incomplete_expired) 
   process.env.STRIPE_WEBHOOK_SECRET = webhookSecret;
 
   const user = await createUser("webhook-incomplete-expired@example.com", "correct horse battery staple");
-  setStripeCustomerId(user.id, "cus_incomplete_expired_test");
-  setSubscriptionStatus(user.id, "tier1", "active");
+  await setStripeCustomerId(user.id, "cus_incomplete_expired_test");
+  await setSubscriptionStatus(user.id, "tier1", "active");
 
   const payload = JSON.stringify({
     id: "evt_incomplete_expired_test",
@@ -499,7 +499,7 @@ test("customer.subscription.updated with a terminal status (incomplete_expired) 
     });
     assert.equal(res.status, 200, JSON.stringify(await res.json()));
 
-    const updated = getUserById(user.id)!;
+    const updated = (await getUserById(user.id))!;
     assert.equal(updated.plan, "free");
     assert.equal(updated.subscriptionStatus, "incomplete_expired");
   } finally {
@@ -515,8 +515,8 @@ test("customer.subscription.updated with a non-terminal status (past_due) preser
   process.env.STRIPE_PRICE_TIER2 = "price_test_tier2";
 
   const user = await createUser("webhook-subscription-pastdue@example.com", "correct horse battery staple");
-  setStripeCustomerId(user.id, "cus_subscription_pastdue_test");
-  setSubscriptionStatus(user.id, "tier1", "active");
+  await setStripeCustomerId(user.id, "cus_subscription_pastdue_test");
+  await setSubscriptionStatus(user.id, "tier1", "active");
 
   const payload = JSON.stringify({
     id: "evt_subscription_pastdue_test",
@@ -542,7 +542,7 @@ test("customer.subscription.updated with a non-terminal status (past_due) preser
     });
     assert.equal(res.status, 200, JSON.stringify(await res.json()));
 
-    const updated = getUserById(user.id)!;
+    const updated = (await getUserById(user.id))!;
     assert.equal(updated.plan, "tier1");
     assert.equal(updated.subscriptionStatus, "past_due");
   } finally {

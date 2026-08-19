@@ -19,6 +19,23 @@ const api = new NettleApiStack(app, "Nettle-Api", {
   env,
   vpc: network.vpc,
   connectorSecurityGroup: network.connectorSecurityGroup,
+  // REQUIRES AWS CONFIGURATION: the backend has no SQLite fallback and
+  // will not start without a real PostgreSQL connection (see
+  // backend/src/db/postgres/README.md). These two values only exist after
+  // a human has deployed Nettle-Database in a real AWS account — this
+  // repository does not do that on its own, and these are deliberately
+  // left unset here rather than guessed. Once Nettle-Database has been
+  // deployed once, fill these in from its outputs (`cdk deploy
+  // Nettle-Database` prints `DatabaseSecretArn` and `DatabaseEndpoint`)
+  // and redeploy Nettle-Api:
+  //   databaseSecretArn: "arn:aws:secretsmanager:...",
+  //   databaseEndpointAddress: "....rds.amazonaws.com",
+  // Deliberately not wired automatically by referencing the
+  // NettleDatabaseStack instance below — that would create a hard
+  // CloudFormation cross-stack dependency, so Nettle-Api could no longer
+  // be deployed or updated independently of Nettle-Database. Whether to
+  // couple them that tightly is an operator decision for whoever actually
+  // deploys this, not something to decide by default here.
 });
 
 // Not deployed as part of the default flow: provisioning a real RDS

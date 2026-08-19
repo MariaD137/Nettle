@@ -36,8 +36,8 @@ function toSettings(row: DetectionSettingsRow): DetectionSettings {
 }
 
 /** Always returns a usable settings object — defaults when no override exists. */
-export function getDetectionSettings(projectId: string): DetectionSettings {
-  const row = db.prepare("SELECT * FROM detection_settings WHERE project_id = ?").get(projectId) as
+export async function getDetectionSettings(projectId: string): Promise<DetectionSettings> {
+  const row = (await db.prepare("SELECT * FROM detection_settings WHERE project_id = ?").get(projectId)) as
     | DetectionSettingsRow
     | undefined;
   if (row) return toSettings(row);
@@ -52,34 +52,47 @@ function clampThreshold(value: unknown, fallback: number): number {
 
 /**
  * Upserts an override row. Any field omitted keeps its current value (or
- * the default, if this project has never customized anything before).
+ * the default, if this project has never customized anything before). A
+ * single INSERT ... ON CONFLICT (project_id) DO UPDATE — project_id is the
+ * primary key, so this is atomic against a concurrent upsert for the same
+ * project, unlike the old SELECT-then-branch shape.
  */
-export function updateDetectionSettings(
+export async function updateDetectionSettings(
   projectId: string,
   updates: { bruteForceThreshold?: unknown; highRequestRateThreshold?: unknown; credentialStuffingMinIps?: unknown }
-): DetectionSettings {
-  const current = getDetectionSettings(projectId);
-  const bruteForceThreshold = updates.bruteForceThreshold !== undefined ? clampThreshold(updates.bruteForceThreshold, current.bruteForceThreshold) : current.bruteForceThreshold;
-  const highRequestRateThreshold = updates.highRequestRateThreshold !== undefined ? clampThreshold(updates.highRequestRateThreshold, current.highRequestRateThreshold) : current.highRequestRateThreshold;
-  const credentialStuffingMinIps = updates.credentialStuffingMinIps !== undefined ? clampThreshold(updates.credentialStuffingMinIps, current.credentialStuffingMinIps) : current.credentialStuffingMinIps;
+): Promise<DetectionSettings> {
+  const current = await getDetectionSettings(projectId);
+  const bruteForceThreshold =
+    updates.bruteForceThreshold !== undefined
+      ? clampThreshold(updates.bruteForceThreshold, current.bruteForceThreshold)
+      : current.bruteForceThreshold;
+  const highRequestRateThreshold =
+    updates.highRequestRateThreshold !== undefined
+      ? clampThreshold(updates.highRequestRateThreshold, current.highRequestRateThreshold)
+      : current.highRequestRateThreshold;
+  const credentialStuffingMinIps =
+    updates.credentialStuffingMinIps !== undefined
+      ? clampThreshold(updates.credentialStuffingMinIps, current.credentialStuffingMinIps)
+      : current.credentialStuffingMinIps;
   const updatedAt = new Date().toISOString();
 
-  const existing = db.prepare("SELECT 1 FROM detection_settings WHERE project_id = ?").get(projectId);
-  if (existing) {
-    db.prepare(
-      "UPDATE detection_settings SET brute_force_threshold = ?, high_request_rate_threshold = ?, credential_stuffing_min_ips = ?, updated_at = ? WHERE project_id = ?"
-    ).run(bruteForceThreshold, highRequestRateThreshold, credentialStuffingMinIps, updatedAt, projectId);
-  } else {
-    db.prepare(
-      "INSERT INTO detection_settings (project_id, brute_force_threshold, high_request_rate_threshold, credential_stuffing_min_ips, updated_at) VALUES (?, ?, ?, ?, ?)"
-    ).run(projectId, bruteForceThreshold, highRequestRateThreshold, credentialStuffingMinIps, updatedAt);
-  }
+  await db
+    .prepare(
+      `INSERT INTO detection_settings (project_id, brute_force_threshold, high_request_rate_threshold, credential_stuffing_min_ips, updated_at)
+       VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT (project_id) DO UPDATE SET
+         brute_force_threshold = EXCLUDED.brute_force_threshold,
+         high_request_rate_threshold = EXCLUDED.high_request_rate_threshold,
+         credential_stuffing_min_ips = EXCLUDED.credential_stuffing_min_ips,
+         updated_at = EXCLUDED.updated_at`
+    )
+    .run(projectId, bruteForceThreshold, highRequestRateThreshold, credentialStuffingMinIps, updatedAt);
 
   return getDetectionSettings(projectId);
 }
 
 /** Restores a project to the built-in defaults by removing its override row. */
-export function resetDetectionSettings(projectId: string): DetectionSettings {
-  db.prepare("DELETE FROM detection_settings WHERE project_id = ?").run(projectId);
+export async function resetDetectionSettings(projectId: string): Promise<DetectionSettings> {
+  await db.prepare("DELETE FROM detection_settings WHERE project_id = ?").run(projectId);
   return getDetectionSettings(projectId);
 }

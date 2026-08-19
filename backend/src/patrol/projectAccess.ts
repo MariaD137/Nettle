@@ -17,9 +17,12 @@ import type { Project } from "./types";
  * Returns the project when userId genuinely owns projectId, null
  * otherwise (missing project, wrong owner, or no userId at all).
  */
-export function getOwnedProject(projectId: string | null | undefined, userId: string | null | undefined): Project | null {
+export async function getOwnedProject(
+  projectId: string | null | undefined,
+  userId: string | null | undefined
+): Promise<Project | null> {
   if (!projectId || !userId) return null;
-  const project = getProject(projectId);
+  const project = await getProject(projectId);
   if (!project || project.userId !== userId) return null;
   return project;
 }

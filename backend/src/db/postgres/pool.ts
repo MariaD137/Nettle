@@ -1,32 +1,53 @@
 import { Pool } from "pg";
 
-// Deliberately separate from src/db/index.ts, which remains the app's real
-// (SQLite) data layer for now — see README.md in this directory for why.
-// This module is not imported by any live request path; it exists so the
-// connection/pooling piece of Postgres-readiness is real, tested code
-// rather than a stub, ready for the migration runner and for whichever
-// future change actually switches the app's data access over.
+// The real, only connection to the app's database — src/db/index.ts's
+// async adapter is built on top of this pool. Accepts two configuration
+// shapes so both a local/dev setup and App Runner's Secrets Manager
+// integration work without a code change on either side:
+//
+//   1. DATABASE_URL — a single connection string. Natural for local dev,
+//      docker-compose, and anywhere a full URL is easy to hand-configure.
+//   2. Discrete PGHOST/PGPORT/PGUSER/PGPASSWORD/PGDATABASE — needed
+//      because App Runner's `runtimeEnvironmentSecrets` maps exactly one
+//      Secrets Manager JSON key to one environment variable; it cannot
+//      interpolate several secret fields into a single DATABASE_URL
+//      string. RDS's CDK-generated credentials secret (see
+//      infra/lib/database-stack.ts) stores host/port/username/password/
+//      dbname as separate JSON keys for exactly this reason, so
+//      infra/lib/api-stack.ts maps each one to its own PG* env var (see
+//      that file's REQUIRES AWS CONFIGURATION note on actually wiring
+//      DATABASE_SECRET_ARN through). `pg`'s Pool reads these PG* variables
+//      itself when no `connectionString` is supplied — this module only
+//      needs to check that at least one of the two forms is present.
 
 export class MissingDatabaseUrlError extends Error {
   constructor() {
     super(
-      "DATABASE_URL is not configured — there is no default. Set it to a PostgreSQL " +
-        "connection string, e.g. postgres://user:password@host:5432/dbname"
+      "No PostgreSQL connection is configured — there is no default and no SQLite fallback. " +
+        "Set DATABASE_URL to a connection string (e.g. postgres://user:password@host:5432/dbname), " +
+        "or set PGHOST/PGPORT/PGUSER/PGPASSWORD/PGDATABASE individually."
     );
   }
+}
+
+function hasDiscretePgEnv(): boolean {
+  return Boolean(process.env.PGHOST && process.env.PGUSER && process.env.PGDATABASE);
 }
 
 let pool: Pool | null = null;
 
 // Lazy singleton, same pattern as billing/stripeClient.ts's getStripeClient
 // — importing this module must not crash a process that never intends to
-// use Postgres (every environment today, until the deferred call-site
-// conversion happens).
+// use Postgres (e.g. a script that only needs other exports from db/index.ts).
 export function getPostgresPool(): Pool {
   if (!pool) {
     const connectionString = process.env.DATABASE_URL;
-    if (!connectionString) throw new MissingDatabaseUrlError();
+    if (!connectionString && !hasDiscretePgEnv()) throw new MissingDatabaseUrlError();
     pool = new Pool({
+      // Omitting connectionString when unset lets `pg` fall back to the
+      // standard PGHOST/PGPORT/PGUSER/PGPASSWORD/PGDATABASE environment
+      // variables itself — passing `connectionString: undefined` here is
+      // equivalent to not passing the key at all.
       connectionString,
       max: parseInt(process.env.DATABASE_POOL_MAX || "10", 10),
       idleTimeoutMillis: 30_000,

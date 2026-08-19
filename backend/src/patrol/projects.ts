@@ -35,11 +35,11 @@ function toProject(row: ProjectRow): Project {
   };
 }
 
-export function createProject(
+export async function createProject(
   userId: string,
   name: string,
   opts?: { url?: string; repoUrl?: string; repoBranch?: string; description?: string; environment?: string }
-): Project {
+): Promise<Project> {
   const project: Project = {
     id: newId(),
     userId,
@@ -54,29 +54,31 @@ export function createProject(
     archivedAt: null,
     createdAt: new Date().toISOString(),
   };
-  db.prepare(
-    "INSERT INTO projects (id, user_id, name, api_key, url, repo_url, repo_branch, description, environment, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
-  ).run(
-    project.id,
-    project.userId,
-    project.name,
-    project.apiKey,
-    project.url,
-    project.repoUrl,
-    project.repoBranch,
-    project.description,
-    project.environment,
-    project.createdAt
-  );
-  seedDefaultApiKey(project.id, project.apiKey, project.createdAt);
+  await db
+    .prepare(
+      "INSERT INTO projects (id, user_id, name, api_key, url, repo_url, repo_branch, description, environment, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+    )
+    .run(
+      project.id,
+      project.userId,
+      project.name,
+      project.apiKey,
+      project.url,
+      project.repoUrl,
+      project.repoBranch,
+      project.description,
+      project.environment,
+      project.createdAt
+    );
+  await seedDefaultApiKey(project.id, project.apiKey, project.createdAt);
   return project;
 }
 
-export function updateProject(
+export async function updateProject(
   id: string,
   updates: { name?: string; url?: string; repoUrl?: string; repoBranch?: string; description?: string; environment?: string }
-): Project | null {
-  const existing = getProject(id);
+): Promise<Project | null> {
+  const existing = await getProject(id);
   if (!existing) return null;
   const name = updates.name ?? existing.name;
   const url = updates.url !== undefined ? updates.url : existing.url;
@@ -84,9 +86,11 @@ export function updateProject(
   const repoBranch = updates.repoBranch !== undefined ? updates.repoBranch : existing.repoBranch;
   const description = updates.description !== undefined ? updates.description : existing.description;
   const environment = updates.environment ?? existing.environment;
-  db.prepare(
-    "UPDATE projects SET name = ?, url = ?, repo_url = ?, repo_branch = ?, description = ?, environment = ? WHERE id = ?"
-  ).run(name, url, repoUrl, repoBranch, description, environment, id);
+  await db
+    .prepare(
+      "UPDATE projects SET name = ?, url = ?, repo_url = ?, repo_branch = ?, description = ?, environment = ? WHERE id = ?"
+    )
+    .run(name, url, repoUrl, repoBranch, description, environment, id);
   return getProject(id);
 }
 
@@ -98,9 +102,9 @@ export function updateProject(
  * — `hasRepoAccessToken` reflects the change, the token value itself never
  * does.
  */
-export function setRepoAccessToken(id: string, token: string | null): Project | null {
+export async function setRepoAccessToken(id: string, token: string | null): Promise<Project | null> {
   const encrypted = token ? encryptToken(token) : null;
-  db.prepare("UPDATE projects SET repo_access_token_encrypted = ? WHERE id = ?").run(encrypted, id);
+  await db.prepare("UPDATE projects SET repo_access_token_encrypted = ? WHERE id = ?").run(encrypted, id);
   return getProject(id);
 }
 
@@ -108,30 +112,30 @@ export function setRepoAccessToken(id: string, token: string | null): Project | 
  * The one place the plaintext token is ever reconstructed — server-side,
  * immediately before a git clone, never returned from an API route.
  */
-export function getDecryptedRepoAccessToken(id: string): string | null {
-  const row = db.prepare("SELECT repo_access_token_encrypted FROM projects WHERE id = ?").get(id) as
+export async function getDecryptedRepoAccessToken(id: string): Promise<string | null> {
+  const row = (await db.prepare("SELECT repo_access_token_encrypted FROM projects WHERE id = ?").get(id)) as
     | { repo_access_token_encrypted: string | null }
     | undefined;
   if (!row?.repo_access_token_encrypted) return null;
   return decryptToken(row.repo_access_token_encrypted);
 }
 
-export function deleteProject(id: string): void {
-  db.prepare("DELETE FROM alerts WHERE project_id = ?").run(id);
-  db.prepare("DELETE FROM events WHERE project_id = ?").run(id);
-  db.prepare("DELETE FROM scans WHERE project_id = ?").run(id);
-  db.prepare("DELETE FROM finding_statuses WHERE project_id = ?").run(id);
-  db.prepare("DELETE FROM api_keys WHERE project_id = ?").run(id);
-  db.prepare("DELETE FROM projects WHERE id = ?").run(id);
+export async function deleteProject(id: string): Promise<void> {
+  await db.prepare("DELETE FROM alerts WHERE project_id = ?").run(id);
+  await db.prepare("DELETE FROM events WHERE project_id = ?").run(id);
+  await db.prepare("DELETE FROM scans WHERE project_id = ?").run(id);
+  await db.prepare("DELETE FROM finding_statuses WHERE project_id = ?").run(id);
+  await db.prepare("DELETE FROM api_keys WHERE project_id = ?").run(id);
+  await db.prepare("DELETE FROM projects WHERE id = ?").run(id);
 }
 
-export function archiveProject(id: string): Project | null {
-  db.prepare("UPDATE projects SET archived_at = ? WHERE id = ?").run(new Date().toISOString(), id);
+export async function archiveProject(id: string): Promise<Project | null> {
+  await db.prepare("UPDATE projects SET archived_at = ? WHERE id = ?").run(new Date().toISOString(), id);
   return getProject(id);
 }
 
-export function restoreProject(id: string): Project | null {
-  db.prepare("UPDATE projects SET archived_at = NULL WHERE id = ?").run(id);
+export async function restoreProject(id: string): Promise<Project | null> {
+  await db.prepare("UPDATE projects SET archived_at = NULL WHERE id = ?").run(id);
   return getProject(id);
 }
 
@@ -143,16 +147,18 @@ export function restoreProject(id: string): Project | null {
  * the two stay in sync regardless of which surface — this endpoint or the
  * newer per-key management UI — touches the default key next.
  */
-export function rotateApiKey(id: string): Project | null {
+export async function rotateApiKey(id: string): Promise<Project | null> {
   const key = newApiKey();
-  const defaultRow = getDefaultApiKeyRow(id);
+  const defaultRow = await getDefaultApiKeyRow(id);
   if (defaultRow) {
     // Stored in plain, same as seedDefaultApiKey — see the module comment
     // in patrol/apiKeys.ts on why the default row can't be hashed while
     // projects.api_key mirrors it in the clear.
-    db.prepare("UPDATE api_keys SET key = ?, key_masked = ?, last_used_at = NULL WHERE id = ?").run(key, maskKey(key), defaultRow.id);
+    await db
+      .prepare("UPDATE api_keys SET key = ?, key_masked = ?, last_used_at = NULL WHERE id = ?")
+      .run(key, maskKey(key), defaultRow.id);
   }
-  db.prepare("UPDATE projects SET api_key = ? WHERE id = ?").run(key, id);
+  await db.prepare("UPDATE projects SET api_key = ? WHERE id = ?").run(key, id);
   return getProject(id);
 }
 
@@ -162,8 +168,8 @@ export function rotateApiKey(id: string): Project | null {
  * (POST /api/projects/:id/api-keys/:keyId/rotate), so the legacy
  * projects.api_key column reflects it too.
  */
-export function setDefaultApiKeyValue(id: string, key: string): void {
-  db.prepare("UPDATE projects SET api_key = ? WHERE id = ?").run(key, id);
+export async function setDefaultApiKeyValue(id: string, key: string): Promise<void> {
+  await db.prepare("UPDATE projects SET api_key = ? WHERE id = ?").run(key, id);
 }
 
 /**
@@ -174,8 +180,8 @@ export function setDefaultApiKeyValue(id: string, key: string): void {
  * everywhere automatically. Use findProjectByApiKeyForScope() instead
  * wherever the caller should also enforce what the key is allowed to do.
  */
-export function findProjectByApiKey(apiKey: string): Project | null {
-  const resolved = resolveApiKey(apiKey);
+export async function findProjectByApiKey(apiKey: string): Promise<Project | null> {
+  const resolved = await resolveApiKey(apiKey);
   return resolved ? getProject(resolved.projectId) : null;
 }
 
@@ -186,25 +192,27 @@ export function findProjectByApiKey(apiKey: string): Project | null {
  * (fall back to anonymous/unattributed rather than hard-failing), not a
  * distinct error path.
  */
-export function findProjectByApiKeyForScope(apiKey: string, scope: ApiKeyScope): Project | null {
-  const resolved = resolveApiKey(apiKey, scope);
+export async function findProjectByApiKeyForScope(apiKey: string, scope: ApiKeyScope): Promise<Project | null> {
+  const resolved = await resolveApiKey(apiKey, scope);
   return resolved ? getProject(resolved.projectId) : null;
 }
 
-export function getProject(id: string): Project | null {
-  const row = db.prepare("SELECT * FROM projects WHERE id = ?").get(id) as ProjectRow | undefined;
+export async function getProject(id: string): Promise<Project | null> {
+  const row = (await db.prepare("SELECT * FROM projects WHERE id = ?").get(id)) as ProjectRow | undefined;
   return row ? toProject(row) : null;
 }
 
-export function listProjectsByUser(userId: string, includeArchived = false): Project[] {
+export async function listProjectsByUser(userId: string, includeArchived = false): Promise<Project[]> {
   const sql = includeArchived
     ? "SELECT * FROM projects WHERE user_id = ? ORDER BY created_at DESC"
     : "SELECT * FROM projects WHERE user_id = ? AND archived_at IS NULL ORDER BY created_at DESC";
-  const rows = db.prepare(sql).all(userId) as unknown as ProjectRow[];
+  const rows = (await db.prepare(sql).all(userId)) as unknown as ProjectRow[];
   return rows.map(toProject);
 }
 
-export function countProjectsByUser(userId: string): number {
-  const row = db.prepare("SELECT COUNT(*) as count FROM projects WHERE user_id = ? AND archived_at IS NULL").get(userId) as { count: number };
-  return row.count;
+export async function countProjectsByUser(userId: string): Promise<number> {
+  const row = (await db
+    .prepare("SELECT COUNT(*) as count FROM projects WHERE user_id = ? AND archived_at IS NULL")
+    .get(userId)) as { count: number | string };
+  return Number(row.count);
 }

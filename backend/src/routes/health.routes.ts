@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { db } from "../db/index";
 import { getQueueStats } from "../jobs/scanJobs";
+import { asyncHandler } from "../middleware/asyncHandler";
 
 export const healthRouter = Router();
 
@@ -11,10 +12,10 @@ const processStartedAt = Date.now();
 // needs, and nothing an unauthenticated caller shouldn't see — no secret
 // names, no env values, no counts scoped to a specific customer, no stack
 // traces. Anything more detailed lives behind /api/admin/*.
-healthRouter.get("/health", (_req, res) => {
+healthRouter.get("/health", asyncHandler(async (_req, res) => {
   let dbOk = true;
   try {
-    db.prepare("SELECT 1").get();
+    await db.prepare("SELECT 1").get();
   } catch {
     dbOk = false;
   }
@@ -27,4 +28,4 @@ healthRouter.get("/health", (_req, res) => {
     database: dbOk ? "ok" : "unreachable",
     scanQueue: getQueueStats(),
   });
-});
+}));

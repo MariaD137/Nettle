@@ -1,5 +1,4 @@
 import { db, newId } from '../db/index';
-import crypto from 'crypto';
 
 export interface CustomRule {
   id: string;
@@ -148,11 +147,11 @@ export async function createCustomRule(
 ): Promise<CustomRule | null> {
   try {
     // Validate rule count
-    const existing = db.prepare(
+    const existing = (await db.prepare(
       'SELECT COUNT(*) as count FROM custom_rules WHERE project_id = ?'
-    ).get(projectId) as { count: number };
+    ).get(projectId)) as { count: number | string };
 
-    if (existing.count >= MAX_RULES_PER_PROJECT) {
+    if (Number(existing.count) >= MAX_RULES_PER_PROJECT) {
       return null;
     }
 
@@ -170,7 +169,7 @@ export async function createCustomRule(
     const id = newId();
     const now = new Date().toISOString();
 
-    db.prepare(`
+    await db.prepare(`
       INSERT INTO custom_rules
       (id, project_id, name, description, pattern_type, pattern_value, weight, severity, enabled, version, created_by, created_at, updated_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)
@@ -195,34 +194,46 @@ export async function createCustomRule(
   }
 }
 
-export function getCustomRule(ruleId: string): CustomRule | null {
-  const row = db.prepare('SELECT * FROM custom_rules WHERE id = ?').get(ruleId) as any;
+// Explicit column list (not `SELECT *`) so the additive `seq` column added
+// for stable ordering (see migration 0003) never leaks into a CustomRule
+// object — it exists purely as a tiebreaker for the ORDER BY below.
+const CUSTOM_RULE_COLUMNS =
+  'id, project_id, name, description, pattern_type, pattern_value, weight, severity, enabled, version, created_by, created_at, updated_at';
+
+export async function getCustomRule(ruleId: string): Promise<CustomRule | null> {
+  const row = (await db.prepare(`SELECT ${CUSTOM_RULE_COLUMNS} FROM custom_rules WHERE id = ?`).get(ruleId)) as any;
   if (!row) return null;
   return {
     ...row,
+    weight: Number(row.weight),
+    version: Number(row.version),
     enabled: row.enabled === 1,
   };
 }
 
-export function listCustomRules(projectId: string, enabledOnly = false): CustomRule[] {
+export async function listCustomRules(projectId: string, enabledOnly = false): Promise<CustomRule[]> {
   // created_at has only millisecond resolution, so rules created in quick
-  // succession can tie — rowid DESC breaks the tie in insertion order.
+  // succession can tie — `seq` (an additive BIGSERIAL column, migration
+  // 0003) breaks the tie in true insertion order, replacing the implicit
+  // `rowid` SQLite provided for free.
   const query = enabledOnly
-    ? 'SELECT * FROM custom_rules WHERE project_id = ? AND enabled = 1 ORDER BY created_at DESC, rowid DESC'
-    : 'SELECT * FROM custom_rules WHERE project_id = ? ORDER BY created_at DESC, rowid DESC';
+    ? `SELECT ${CUSTOM_RULE_COLUMNS} FROM custom_rules WHERE project_id = ? AND enabled = 1 ORDER BY created_at DESC, seq DESC`
+    : `SELECT ${CUSTOM_RULE_COLUMNS} FROM custom_rules WHERE project_id = ? ORDER BY created_at DESC, seq DESC`;
 
-  const rows = db.prepare(query).all(projectId) as any[];
+  const rows = (await db.prepare(query).all(projectId)) as any[];
   return rows.map(row => ({
     ...row,
+    weight: Number(row.weight),
+    version: Number(row.version),
     enabled: row.enabled === 1,
   }));
 }
 
-export function updateCustomRule(
+export async function updateCustomRule(
   ruleId: string,
   updates: Partial<CustomRule>
-): CustomRule | null {
-  const existing = getCustomRule(ruleId);
+): Promise<CustomRule | null> {
+  const existing = await getCustomRule(ruleId);
   if (!existing) return null;
 
   // If pattern changed, validate it
@@ -240,7 +251,7 @@ export function updateCustomRule(
   const newVersion = (existing.version || 0) + 1;
 
   // Record version
-  db.prepare(`
+  await db.prepare(`
     INSERT INTO rule_versions
     (id, rule_id, version, pattern_value, weight, severity, changes, created_by, created_at)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -259,7 +270,7 @@ export function updateCustomRule(
   // Update rule. Fixed column list — never built from the keys of the
   // caller-supplied `updates` object, so there's no way to inject an
   // arbitrary column name here.
-  db.prepare(`
+  await db.prepare(`
     UPDATE custom_rules
     SET name = ?, description = ?, pattern_type = ?, pattern_value = ?,
         weight = ?, severity = ?, enabled = ?, version = ?, updated_at = ?
@@ -280,26 +291,26 @@ export function updateCustomRule(
   return getCustomRule(ruleId);
 }
 
-export function deleteCustomRule(ruleId: string): boolean {
-  const existing = getCustomRule(ruleId);
+export async function deleteCustomRule(ruleId: string): Promise<boolean> {
+  const existing = await getCustomRule(ruleId);
   if (!existing) return false;
 
-  db.prepare('DELETE FROM rule_versions WHERE rule_id = ?').run(ruleId);
-  db.prepare('DELETE FROM rule_test_results WHERE rule_id = ?').run(ruleId);
-  db.prepare('DELETE FROM custom_rules WHERE id = ?').run(ruleId);
+  await db.prepare('DELETE FROM rule_versions WHERE rule_id = ?').run(ruleId);
+  await db.prepare('DELETE FROM rule_test_results WHERE rule_id = ?').run(ruleId);
+  await db.prepare('DELETE FROM custom_rules WHERE id = ?').run(ruleId);
 
   return true;
 }
 
-export function getRuleVersions(ruleId: string): RuleVersion[] {
-  const rows = db.prepare(
+export async function getRuleVersions(ruleId: string): Promise<RuleVersion[]> {
+  const rows = (await db.prepare(
     'SELECT * FROM rule_versions WHERE rule_id = ? ORDER BY version DESC'
-  ).all(ruleId) as unknown as RuleVersion[];
+  ).all(ruleId)) as unknown as RuleVersion[];
   return rows;
 }
 
 export async function testRule(ruleId: string, events: any[]): Promise<TestResult | null> {
-  const rule = getCustomRule(ruleId);
+  const rule = await getCustomRule(ruleId);
   if (!rule) return null;
   if (events.length > 10000) return null;
 
@@ -346,7 +357,7 @@ export async function testRule(ruleId: string, events: any[]): Promise<TestResul
     const testRunId = newId();
     const resultId = newId();
 
-    db.prepare(`
+    await db.prepare(`
       INSERT INTO rule_test_results
       (id, rule_id, test_run_id, events_matched, true_positives, false_positives, accuracy, execution_time_ms, created_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -406,9 +417,9 @@ export function evaluateCustomRule(rule: CustomRule | null, event: any, window: 
   }
 }
 
-export function getTestResults(ruleId: string, limit = 10): TestResult[] {
-  const rows = db.prepare(
+export async function getTestResults(ruleId: string, limit = 10): Promise<TestResult[]> {
+  const rows = (await db.prepare(
     'SELECT * FROM rule_test_results WHERE rule_id = ? ORDER BY created_at DESC LIMIT ?'
-  ).all(ruleId, limit) as unknown as TestResult[];
+  ).all(ruleId, limit)) as unknown as TestResult[];
   return rows;
 }

@@ -29,16 +29,16 @@ async function subscriberWithProject(): Promise<{ token: string; projectId: stri
   const app = buildApp();
   const { server, base } = await listen(app);
   const user = await createUser(`alert-analytics-route-${counter++}@example.com`, "correct horse battery staple");
-  setSubscriptionStatus(user.id, "tier1", "active");
-  const token = createSession(user.id);
-  const project = createProject(user.id, "Alert Analytics Route Target");
+  await setSubscriptionStatus(user.id, "tier1", "active");
+  const token = await createSession(user.id);
+  const project = await createProject(user.id, "Alert Analytics Route Target");
   return { token, projectId: project.id, base, server };
 }
 
 test("GET /api/projects/:id/alerts/analytics returns a timeline and rankings for the project's own alerts", async () => {
   const { token, projectId, base, server } = await subscriberWithProject();
   try {
-    createAlert(projectId, "critical", "suspicious-path-8.8.8.8", 'Request to "/wp-admin" from 8.8.8.8 matches a common attack-probe pattern.');
+    await createAlert(projectId, "critical", "suspicious-path-8.8.8.8", 'Request to "/wp-admin" from 8.8.8.8 matches a common attack-probe pattern.');
 
     const res = await fetch(`${base}/api/projects/${projectId}/alerts/analytics`, {
       headers: { Authorization: `Bearer ${token}` },

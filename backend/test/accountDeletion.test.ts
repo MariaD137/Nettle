@@ -27,37 +27,37 @@ const CLEAN_APP = path.join(__dirname, "fixtures", "clean-app");
 // function (rule_versions/rule_test_results/ml_baselines).
 async function seedFullAccount(emailPrefix: string) {
   const user = await createUser(`${emailPrefix}@example.com`, "correct horse battery staple");
-  const project = createProject(user.id, `${emailPrefix} project`);
+  const project = await createProject(user.id, `${emailPrefix} project`);
 
-  createPasswordResetToken(user.id);
-  createSession(user.id);
-  recordScanUsage(user.id, project.id, "upload");
+  await createPasswordResetToken(user.id);
+  await createSession(user.id);
+  await recordScanUsage(user.id, project.id, "upload");
 
-  const webhook = createWebhookConfig(project.id, "generic", "https://example.com/hook", ["scan.completed"]);
-  queueWebhookEvent(webhook.id, "scan.completed", { ok: true });
+  const webhook = await createWebhookConfig(project.id, "generic", "https://example.com/hook", ["scan.completed"]);
+  await queueWebhookEvent(webhook.id, "scan.completed", { ok: true });
 
-  createNotificationChannel(project.id, "email", `${emailPrefix}@ops.example.com`, ["scan.completed"]);
-  createApiKey(project.id, "Extra key", ["scan"]);
-  updateDetectionSettings(project.id, { bruteForceThreshold: 3 });
-  recordFindingSeen(project.id, "some-finding-hash", new Date().toISOString());
-  updateModelStatus(project.id, "isolation_forest", true, 0.9, 100);
+  await createNotificationChannel(project.id, "email", `${emailPrefix}@ops.example.com`, ["scan.completed"]);
+  await createApiKey(project.id, "Extra key", ["scan"]);
+  await updateDetectionSettings(project.id, { bruteForceThreshold: 3 });
+  await recordFindingSeen(project.id, "some-finding-hash", new Date().toISOString());
+  await updateModelStatus(project.id, "isolation_forest", true, 0.9, 100);
 
   const now = new Date().toISOString();
-  db.prepare(
+  await db.prepare(
     "INSERT INTO ml_baselines (id, project_id, metric_name, aggregation_period, hour_of_day, value, updated_at) VALUES (?, ?, 'request_rate', 'hourly', 12, 10, ?)"
   ).run(newId(), project.id, now);
-  db.prepare(
+  await db.prepare(
     "INSERT INTO anomaly_scores (id, project_id, event_id, composite_score, is_anomaly, created_at) VALUES (?, ?, ?, 0.9, 1, ?)"
   ).run(newId(), project.id, newId(), now);
 
   const ruleId = newId();
-  db.prepare(
+  await db.prepare(
     "INSERT INTO custom_rules (id, project_id, name, pattern_type, pattern_value, weight, severity, version, created_by, created_at, updated_at) VALUES (?, ?, 'Test rule', 'exact', '/x', 50, 'medium', 1, ?, ?, ?)"
   ).run(ruleId, project.id, user.id, now, now);
-  db.prepare(
+  await db.prepare(
     "INSERT INTO rule_versions (id, rule_id, version, pattern_value, weight, severity, created_by, created_at) VALUES (?, ?, 1, '/x', 50, 'medium', ?, ?)"
   ).run(newId(), ruleId, user.id, now);
-  db.prepare(
+  await db.prepare(
     "INSERT INTO rule_test_results (id, rule_id, test_run_id, events_matched, created_at) VALUES (?, ?, ?, 1, ?)"
   ).run(newId(), ruleId, newId(), now);
 
@@ -67,22 +67,22 @@ async function seedFullAccount(emailPrefix: string) {
   // table (a delivery outcome record that includes the account's real
   // destination email/phone) was previously missing from deleteUser()'s
   // purge list entirely.
-  db.prepare(
+  await db.prepare(
     "INSERT INTO notification_deliveries (id, project_id, channel, destination, event_type, status, attempt_count, created_at) VALUES (?, ?, 'email', ?, 'scan.completed', 'sent', 1, ?)"
   ).run(newId(), project.id, `${emailPrefix}@ops.example.com`, now);
 
-  createAlert(project.id, "critical", "brute-force", "test alert");
-  recordEvent(project.id, { ip: "203.0.113.1", method: "GET", path: "/", statusCode: 200 });
-  const stored = recordScan(project.id, runScan(CLEAN_APP));
+  await createAlert(project.id, "critical", "brute-force", "test alert");
+  await recordEvent(project.id, { ip: "203.0.113.1", method: "GET", path: "/", statusCode: 200 });
+  const stored = await recordScan(project.id, runScan(CLEAN_APP));
   const hash = stored.report.findings[0]
     ? hashFinding(stored.report.findings[0].category, stored.report.findings[0].title, stored.report.findings[0].file)
     : "no-findings-fallback-hash";
-  upsertFindingStatus(project.id, hash, "in_progress");
+  await upsertFindingStatus(project.id, hash, "in_progress");
 
   return { user, project };
 }
 
-function countsForProject(projectId: string): Record<string, number> {
+async function countsForProject(projectId: string): Promise<Record<string, number>> {
   const tables = [
     "webhooks",
     "notification_channels",
@@ -101,58 +101,70 @@ function countsForProject(projectId: string): Record<string, number> {
   ];
   const counts: Record<string, number> = {};
   for (const table of tables) {
-    const { count } = db.prepare(`SELECT COUNT(*) as count FROM ${table} WHERE project_id = ?`).get(projectId) as { count: number };
-    counts[table] = count;
+    const { count } = (await db.prepare(`SELECT COUNT(*) as count FROM ${table} WHERE project_id = ?`).get(projectId)) as { count: number };
+    counts[table] = Number(count);
   }
   return counts;
 }
 
-function countsForUser(userId: string): Record<string, number> {
-  const { passwordResets } = {
-    passwordResets: (db.prepare("SELECT COUNT(*) as count FROM password_resets WHERE user_id = ?").get(userId) as { count: number }).count,
-  };
-  const sessions = (db.prepare("SELECT COUNT(*) as count FROM sessions WHERE user_id = ?").get(userId) as { count: number }).count;
-  const scanUsage = (db.prepare("SELECT COUNT(*) as count FROM scan_usage WHERE user_id = ?").get(userId) as { count: number }).count;
-  const projects = (db.prepare("SELECT COUNT(*) as count FROM projects WHERE user_id = ?").get(userId) as { count: number }).count;
+async function countsForUser(userId: string): Promise<Record<string, number>> {
+  const passwordResets = Number(
+    ((await db.prepare("SELECT COUNT(*) as count FROM password_resets WHERE user_id = ?").get(userId)) as { count: number }).count
+  );
+  const sessions = Number(
+    ((await db.prepare("SELECT COUNT(*) as count FROM sessions WHERE user_id = ?").get(userId)) as { count: number }).count
+  );
+  const scanUsage = Number(
+    ((await db.prepare("SELECT COUNT(*) as count FROM scan_usage WHERE user_id = ?").get(userId)) as { count: number }).count
+  );
+  const projects = Number(
+    ((await db.prepare("SELECT COUNT(*) as count FROM projects WHERE user_id = ?").get(userId)) as { count: number }).count
+  );
   return { passwordResets, sessions, scanUsage, projects };
 }
 
-function ruleChildCounts(projectId: string): { versions: number; testResults: number; webhookEvents: number } {
-  const rule = db.prepare("SELECT id FROM custom_rules WHERE project_id = ?").get(projectId) as { id: string } | undefined;
-  const webhook = db.prepare("SELECT id FROM webhooks WHERE project_id = ?").get(projectId) as { id: string } | undefined;
-  const versions = rule ? (db.prepare("SELECT COUNT(*) as count FROM rule_versions WHERE rule_id = ?").get(rule.id) as { count: number }).count : 0;
-  const testResults = rule ? (db.prepare("SELECT COUNT(*) as count FROM rule_test_results WHERE rule_id = ?").get(rule.id) as { count: number }).count : 0;
-  const webhookEvents = webhook ? (db.prepare("SELECT COUNT(*) as count FROM webhook_events WHERE webhook_id = ?").get(webhook.id) as { count: number }).count : 0;
+async function ruleChildCounts(projectId: string): Promise<{ versions: number; testResults: number; webhookEvents: number }> {
+  const rule = (await db.prepare("SELECT id FROM custom_rules WHERE project_id = ?").get(projectId)) as { id: string } | undefined;
+  const webhook = (await db.prepare("SELECT id FROM webhooks WHERE project_id = ?").get(projectId)) as { id: string } | undefined;
+  const versions = rule
+    ? Number(((await db.prepare("SELECT COUNT(*) as count FROM rule_versions WHERE rule_id = ?").get(rule.id)) as { count: number }).count)
+    : 0;
+  const testResults = rule
+    ? Number(((await db.prepare("SELECT COUNT(*) as count FROM rule_test_results WHERE rule_id = ?").get(rule.id)) as { count: number }).count)
+    : 0;
+  const webhookEvents = webhook
+    ? Number(((await db.prepare("SELECT COUNT(*) as count FROM webhook_events WHERE webhook_id = ?").get(webhook.id)) as { count: number }).count)
+    : 0;
   return { versions, testResults, webhookEvents };
 }
 
 test("deleteUser purges every project-scoped and account-scoped table, leaving zero orphaned rows", async () => {
   const { user, project } = await seedFullAccount("purge-target");
 
-  const before = countsForProject(project.id);
+  const before = await countsForProject(project.id);
   for (const [table, count] of Object.entries(before)) {
     assert.ok(count > 0, `expected a seeded row in ${table} before deletion`);
   }
-  const ruleChildrenBefore = ruleChildCounts(project.id);
+  const ruleChildrenBefore = await ruleChildCounts(project.id);
   assert.ok(ruleChildrenBefore.versions > 0);
   assert.ok(ruleChildrenBefore.testResults > 0);
   assert.ok(ruleChildrenBefore.webhookEvents > 0);
 
-  deleteUser(user.id);
+  await deleteUser(user.id);
 
-  const after = countsForProject(project.id);
+  const after = await countsForProject(project.id);
   for (const [table, count] of Object.entries(after)) {
     assert.equal(count, 0, `expected ${table} to be fully purged after account deletion`);
   }
-  const ruleChildrenAfter = ruleChildCounts(project.id);
+  const ruleChildrenAfter = await ruleChildCounts(project.id);
   assert.equal(ruleChildrenAfter.versions, 0);
   assert.equal(ruleChildrenAfter.testResults, 0);
   assert.equal(ruleChildrenAfter.webhookEvents, 0);
 
-  const userCounts = countsForUser(user.id);
+  const userCounts = await countsForUser(user.id);
   assert.deepEqual(userCounts, { passwordResets: 0, sessions: 0, scanUsage: 0, projects: 0 });
 
-  const userRow = db.prepare("SELECT id FROM users WHERE id = ?").get(user.id);
+  const userRow = await db.prepare("SELECT id FROM users WHERE id = ?").get(user.id);
   assert.equal(userRow, undefined);
 });
 
@@ -160,16 +172,16 @@ test("deleteUser never touches another account's data", async () => {
   const target = await seedFullAccount("purge-isolation-target");
   const bystander = await seedFullAccount("purge-isolation-bystander");
 
-  deleteUser(target.user.id);
+  await deleteUser(target.user.id);
 
-  const bystanderCounts = countsForProject(bystander.project.id);
+  const bystanderCounts = await countsForProject(bystander.project.id);
   for (const [table, count] of Object.entries(bystanderCounts)) {
     assert.ok(count > 0, `deleting another account must not remove ${table} rows belonging to this one`);
   }
-  const bystanderUserCounts = countsForUser(bystander.user.id);
+  const bystanderUserCounts = await countsForUser(bystander.user.id);
   assert.ok(bystanderUserCounts.sessions > 0);
   assert.ok(bystanderUserCounts.projects > 0);
 
-  const bystanderRow = db.prepare("SELECT id FROM users WHERE id = ?").get(bystander.user.id);
+  const bystanderRow = await db.prepare("SELECT id FROM users WHERE id = ?").get(bystander.user.id);
   assert.ok(bystanderRow);
 });

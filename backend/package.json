@@ -10,7 +10,8 @@
     "build": "tsc && mkdir -p dist/scanner/semgrep-rules dist/scanner/osv-data dist/db/postgres/migrations && cp src/scanner/semgrep-rules/*.yaml dist/scanner/semgrep-rules/ && cp src/scanner/osv-data/*.db dist/scanner/osv-data/ && cp src/db/postgres/migrations/*.sql dist/db/postgres/migrations/",
     "dev": "tsx watch src/index.ts",
     "start": "node dist/index.js",
-    "test": "NETTLE_DB_PATH=:memory: node --import tsx --test test/*.test.ts",
+    "pretest": "tsx test/resetTestDb.ts",
+    "test": "DATABASE_URL=\"${NETTLE_TEST_DATABASE_URL:-postgres://nettle:nettle_test_password@localhost:5432/nettle_test}\" DATABASE_SSL=disable node --import tsx --test --test-concurrency=1 test/*.test.ts",
     "lint": "tsc --noEmit",
     "db:migrate:postgres": "tsx src/db/postgres/migrate.ts"
   },
