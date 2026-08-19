@@ -436,6 +436,37 @@ db.exec(`
     ON notification_channels(project_id, channel);
 `);
 
+// Stripe redelivers webhooks (their own docs say "at least once") — this
+// records every event id we've already handled so a redelivery is
+// recognized and skipped instead of re-applying side effects (duplicate
+// payment-failure emails, re-running subscription updates twice).
+db.exec(`
+  CREATE TABLE IF NOT EXISTS stripe_events (
+    event_id TEXT PRIMARY KEY,
+    event_type TEXT NOT NULL,
+    processed_at TEXT NOT NULL
+  );
+`);
+
+// Per-invoice failure history, separate from users.subscription_status
+// (which only holds the current state) — this is what a billing UI shows
+// as "why was I charged and it failed" history, and what the payment
+// warning banner counts to decide whether to show at all.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS payment_failures (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    stripe_invoice_id TEXT NOT NULL,
+    amount_due INTEGER,
+    currency TEXT,
+    failure_reason TEXT,
+    occurred_at TEXT NOT NULL,
+    resolved_at TEXT,
+    FOREIGN KEY (user_id) REFERENCES users(id)
+  );
+  CREATE INDEX IF NOT EXISTS idx_payment_failures_user ON payment_failures(user_id, occurred_at DESC);
+`);
+
 export function newId(): string {
   return crypto.randomUUID();
 }

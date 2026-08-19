@@ -6,7 +6,8 @@ import type { Server } from "http";
 import { AddressInfo } from "net";
 import { billingRouter, billingWebhookRouter } from "../src/routes/billing.routes";
 import { authRouter } from "../src/routes/auth.routes";
-import { createUser, getUserById } from "../src/auth/users";
+import { createUser, getUserById, setStripeCustomerId, setSubscriptionStatus } from "../src/auth/users";
+import { getPaymentFailures } from "../src/billing/stripeEvents";
 
 function listen(app: express.Express): Promise<{ server: Server; base: string }> {
   return new Promise((resolve) => {
@@ -163,6 +164,129 @@ test("a genuinely, correctly-signed checkout.session.completed webhook activates
     assert.equal(updated.subscriptionStatus, "active");
     assert.equal(updated.plan, "tier1");
     assert.equal(updated.stripeCustomerId, "cus_test_123");
+  } finally {
+    server.close();
+  }
+});
+
+test("redelivering the same event id is a no-op the second time", async () => {
+  const webhookSecret = "whsec_test_secret_for_local_tests_only";
+  process.env.STRIPE_SECRET_KEY = "sk_test_fake_key_for_local_tests_only";
+  process.env.STRIPE_WEBHOOK_SECRET = webhookSecret;
+
+  const user = await createUser("webhook-redelivery@example.com", "correct horse battery staple");
+
+  const payload = JSON.stringify({
+    id: "evt_redelivery_test",
+    object: "event",
+    type: "checkout.session.completed",
+    data: {
+      object: {
+        id: "cs_redelivery_test",
+        object: "checkout.session",
+        customer: "cus_redelivery_test",
+        metadata: { userId: user.id, plan: "tier1" },
+      },
+    },
+  });
+  const signature = signStripePayload(payload, webhookSecret);
+
+  const { server, base } = await listen(buildApp());
+  try {
+    const first = await fetch(`${base}/api/billing/webhook`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Stripe-Signature": signature },
+      body: payload,
+    });
+    assert.equal(first.status, 200);
+    assert.equal((await first.json()).duplicate, undefined);
+
+    // Stripe would recompute a fresh, valid signature for a genuine
+    // redelivery of the same event id — reuse the same one here since it's
+    // still valid for this exact payload.
+    const second = await fetch(`${base}/api/billing/webhook`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Stripe-Signature": signature },
+      body: payload,
+    });
+    assert.equal(second.status, 200);
+    assert.equal((await second.json()).duplicate, true);
+  } finally {
+    server.close();
+  }
+});
+
+test("a genuinely, correctly-signed invoice.payment_failed webhook marks the user past_due and records the failure", async () => {
+  const webhookSecret = "whsec_test_secret_for_local_tests_only";
+  process.env.STRIPE_SECRET_KEY = "sk_test_fake_key_for_local_tests_only";
+  process.env.STRIPE_WEBHOOK_SECRET = webhookSecret;
+
+  const user = await createUser("payment-failed@example.com", "correct horse battery staple");
+  setStripeCustomerId(user.id, "cus_payment_failed_test");
+  setSubscriptionStatus(user.id, "tier1", "active");
+
+  const payload = JSON.stringify({
+    id: "evt_payment_failed_test",
+    object: "event",
+    type: "invoice.payment_failed",
+    data: {
+      object: {
+        id: "in_test_123",
+        object: "invoice",
+        customer: "cus_payment_failed_test",
+        amount_due: 4900,
+        currency: "usd",
+      },
+    },
+  });
+
+  const { server, base } = await listen(buildApp());
+  try {
+    const res = await fetch(`${base}/api/billing/webhook`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Stripe-Signature": signStripePayload(payload, webhookSecret) },
+      body: payload,
+    });
+    assert.equal(res.status, 200, JSON.stringify(await res.json()));
+
+    const updated = getUserById(user.id)!;
+    assert.equal(updated.subscriptionStatus, "past_due");
+    assert.equal(updated.plan, "tier1");
+
+    const failures = getPaymentFailures(user.id);
+    assert.equal(failures.length, 1);
+    assert.equal(failures[0].stripeInvoiceId, "in_test_123");
+    assert.equal(failures[0].amountDue, 4900);
+  } finally {
+    server.close();
+  }
+});
+
+test("portal-session requires auth", async () => {
+  const { server, base } = await listen(buildApp());
+  try {
+    const res = await fetch(`${base}/api/billing/portal-session`, { method: "POST" });
+    assert.equal(res.status, 401);
+  } finally {
+    server.close();
+  }
+});
+
+test("portal-session returns 400 for a user with no Stripe customer yet", async () => {
+  const { server, base } = await listen(buildApp());
+  try {
+    const signup = await fetch(`${base}/api/auth/signup`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email: "portal-no-customer@example.com", password: "correct horse battery staple" }),
+    });
+    const { token } = await signup.json();
+
+    const res = await fetch(`${base}/api/billing/portal-session`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    assert.equal(res.status, 400);
   } finally {
     server.close();
   }

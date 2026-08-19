@@ -237,6 +237,17 @@ export interface SessionInfo {
   current: boolean;
 }
 
+export interface PaymentFailure {
+  id: string;
+  userId: string;
+  stripeInvoiceId: string;
+  amountDue: number | null;
+  currency: string | null;
+  failureReason: string | null;
+  occurredAt: string;
+  resolvedAt: string | null;
+}
+
 export interface CustomRule {
   id: string;
   project_id: string;
@@ -705,6 +716,12 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ plan }),
     }),
+
+  createPortalSession: () =>
+    request<{ url: string }>("/api/billing/portal-session", { method: "POST" }),
+
+  getPaymentFailures: () =>
+    request<{ failures: PaymentFailure[] }>("/api/billing/payment-failures"),
 };
 
 export { ApiError };

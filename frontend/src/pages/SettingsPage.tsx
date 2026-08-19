@@ -30,6 +30,7 @@ export default function SettingsPage() {
           <span>{user?.createdAt ? new Date(user.createdAt).toLocaleDateString() : "—"}</span>
         </div>
       </div>
+      <BillingCard />
       <ChangeEmailCard onUpdated={refreshUser} />
       <ChangePasswordCard />
       <SessionsCard />
@@ -69,6 +70,44 @@ export default function SettingsPage() {
       <h1>Settings</h1>
 
       {body}
+    </div>
+  );
+}
+
+function BillingCard() {
+  const { user } = useAuth();
+  const [error, setError] = useState<string | null>(null);
+  const [opening, setOpening] = useState(false);
+
+  if (!user || user.plan === "free") return null;
+
+  async function openPortal() {
+    setError(null);
+    setOpening(true);
+    try {
+      const { url } = await api.createPortalSession();
+      window.location.href = url;
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Could not open billing portal");
+      setOpening(false);
+    }
+  }
+
+  return (
+    <div className="card">
+      <h2>Billing</h2>
+      {user.subscriptionStatus === "past_due" && (
+        <div className="error-banner">
+          Your last payment didn't go through. Update your payment method to avoid losing access.
+        </div>
+      )}
+      {error && <div className="error-banner">{error}</div>}
+      <p className="muted" style={{ margin: "4px 0 12px" }}>
+        Manage your subscription, update your payment method, or view invoices through Stripe.
+      </p>
+      <button onClick={openPortal} disabled={opening}>
+        {opening ? "Opening…" : "Manage billing"}
+      </button>
     </div>
   );
 }

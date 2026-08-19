@@ -2,6 +2,8 @@ import { Router, raw } from "express";
 import { getStripeClient, priceIdForPlan } from "../billing/stripeClient";
 import { requireAuth } from "../auth/middleware";
 import { getUserById, setStripeCustomerId, setSubscriptionStatus, getUserByStripeCustomerId } from "../auth/users";
+import { isStripeEventProcessed, markStripeEventProcessed, recordPaymentFailure, getPaymentFailures } from "../billing/stripeEvents";
+import { sendEmail } from "../integrations/email";
 import type Stripe from "stripe";
 
 // Split in two deliberately: the webhook needs the exact raw request bytes
@@ -43,7 +45,34 @@ billingRouter.post("/api/billing/checkout-session", requireAuth, async (req, res
   }
 });
 
-billingWebhookRouter.post("/api/billing/webhook", raw({ type: "application/json" }), (req, res) => {
+// Lets a subscriber manage their own subscription (cancel, change plan,
+// update payment method) directly through Stripe's own hosted UI, without
+// Nettle needing to reimplement any of that. Only reachable once a
+// customer id exists, which happens on first successful checkout.
+billingRouter.post("/api/billing/portal-session", requireAuth, async (req, res) => {
+  const user = getUserById(req.userId!);
+  if (!user) return res.status(401).json({ error: "Invalid session" });
+  if (!user.stripeCustomerId) {
+    return res.status(400).json({ error: "No billing account yet — subscribe first" });
+  }
+
+  try {
+    const stripe = getStripeClient();
+    const session = await stripe.billingPortal.sessions.create({
+      customer: user.stripeCustomerId,
+      return_url: process.env.BILLING_PORTAL_RETURN_URL ?? "http://localhost:5173/settings",
+    });
+    res.json({ url: session.url });
+  } catch (err) {
+    res.status(503).json({ error: "Billing is not available", detail: (err as Error).message });
+  }
+});
+
+billingRouter.get("/api/billing/payment-failures", requireAuth, (req, res) => {
+  res.json({ failures: getPaymentFailures(req.userId!) });
+});
+
+billingWebhookRouter.post("/api/billing/webhook", raw({ type: "application/json" }), async (req, res) => {
   const signature = req.header("stripe-signature");
   const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
 
@@ -57,6 +86,14 @@ billingWebhookRouter.post("/api/billing/webhook", raw({ type: "application/json"
     event = stripe.webhooks.constructEvent(req.body, signature, webhookSecret);
   } catch (err) {
     return res.status(400).json({ error: `Webhook signature verification failed: ${(err as Error).message}` });
+  }
+
+  // Stripe redelivers webhooks (at-least-once delivery is documented
+  // behavior, not an edge case) — without this, a redelivered
+  // invoice.payment_failed would send the customer a second "payment
+  // failed" email for the exact same invoice.
+  if (isStripeEventProcessed(event.id)) {
+    return res.json({ received: true, duplicate: true });
   }
 
   switch (event.type) {
@@ -82,7 +119,36 @@ billingWebhookRouter.post("/api/billing/webhook", raw({ type: "application/json"
       }
       break;
     }
+    case "invoice.payment_failed": {
+      const invoice = event.data.object as Stripe.Invoice;
+      if (typeof invoice.customer === "string") {
+        const user = getUserByStripeCustomerId(invoice.customer);
+        if (user) {
+          // Reflects the failure immediately rather than waiting on a
+          // separate customer.subscription.updated event, which Stripe
+          // typically also sends but isn't guaranteed to arrive first (or
+          // at all, e.g. if the subscription hasn't actually transitioned
+          // yet on this retry). "past_due" is an existing recognized
+          // status — hasActiveSubscription() already excludes it.
+          setSubscriptionStatus(user.id, user.plan, "past_due");
+          recordPaymentFailure({
+            userId: user.id,
+            stripeInvoiceId: invoice.id ?? "unknown",
+            amountDue: invoice.amount_due,
+            currency: invoice.currency,
+            failureReason: invoice.last_finalization_error?.message ?? null,
+          });
+          await sendEmail(
+            user.email,
+            "Your Nettle payment didn't go through",
+            `We weren't able to process your latest payment. Please update your payment method to avoid an interruption to your subscription.\n\nManage billing: ${process.env.BILLING_PORTAL_RETURN_URL ?? "http://localhost:5173/settings"}`,
+          );
+        }
+      }
+      break;
+    }
   }
 
+  markStripeEventProcessed(event.id, event.type);
   res.json({ received: true });
 });
