@@ -93,7 +93,13 @@ export function setSubscriptionStatus(
     const row = db.prepare("SELECT last_subscription_event_at FROM users WHERE id = ?").get(userId) as
       | { last_subscription_event_at: number | null }
       | undefined;
-    if (row?.last_subscription_event_at != null && eventCreatedAt <= row.last_subscription_event_at) {
+    // Strictly less-than, not <=: Stripe timestamps events to the second,
+    // and it's common for several related events (checkout.session.completed,
+    // customer.subscription.updated, ...) to share the same second. Only
+    // reject a genuinely older event; literal replay of the same event is
+    // already handled separately by the event-ID ledger in webhookLedger.ts,
+    // so there's no need to also drop a same-second event here.
+    if (row?.last_subscription_event_at != null && eventCreatedAt < row.last_subscription_event_at) {
       return false;
     }
   }

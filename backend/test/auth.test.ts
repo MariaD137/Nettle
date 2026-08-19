@@ -267,3 +267,37 @@ test("forgot-password never exposes the reset token in production", async () => 
     server.close();
   }
 });
+
+test("forgot-password still responds if the email provider throws", async () => {
+  const app = express();
+  app.use(express.json());
+  app.use(authRouter);
+  const { server, base } = await listen(app);
+
+  // Marking a provider "configured" makes email/mailer.ts's sendEmail()
+  // throw (no real send implementation exists yet) — this must not leave
+  // the request hanging (Express 4 doesn't forward an async handler's
+  // unhandled rejection to error middleware on its own).
+  const originalSmtpHost = process.env.SMTP_HOST;
+  try {
+    await fetch(`${base}/api/auth/signup`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email: "reset-provider-throws@example.com", password: "correct horse battery staple" }),
+    });
+
+    process.env.SMTP_HOST = "smtp.example.com";
+    const res = await fetch(`${base}/api/auth/forgot-password`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email: "reset-provider-throws@example.com" }),
+    });
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.equal(body.message, "If that email is registered, a reset link has been sent");
+  } finally {
+    if (originalSmtpHost === undefined) delete process.env.SMTP_HOST;
+    else process.env.SMTP_HOST = originalSmtpHost;
+    server.close();
+  }
+});

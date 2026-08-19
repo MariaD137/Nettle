@@ -96,11 +96,24 @@ authRouter.post("/api/auth/forgot-password", authLimiter, async (req, res) => {
   if (user) {
     const resetToken = createPasswordResetToken(user.id);
     const resetUrl = `${process.env.FRONTEND_BASE_URL ?? "http://localhost:5173"}/reset-password?token=${resetToken}`;
-    const sent = await sendEmail({
-      to: email,
-      subject: "Reset your Nettle password",
-      text: `Reset your password: ${resetUrl}\nThis link expires in 1 hour. If you didn't request this, ignore this email.`,
-    });
+    // sendEmail can throw (e.g. a provider is configured but the send call
+    // fails, or configured-but-unimplemented — see email/mailer.ts). Express
+    // 4 does not forward an async handler's unhandled rejection to error
+    // middleware, so without this catch a throw here would leave the
+    // request hanging forever instead of responding. The reset token is
+    // already created regardless, so a delivery failure shouldn't block the
+    // generic response — the caller can retry, and this endpoint's response
+    // is identical either way so it never confirms account existence.
+    let sent = false;
+    try {
+      sent = await sendEmail({
+        to: email,
+        subject: "Reset your Nettle password",
+        text: `Reset your password: ${resetUrl}\nThis link expires in 1 hour. If you didn't request this, ignore this email.`,
+      });
+    } catch (err) {
+      console.error("[forgot-password] sendEmail failed:", (err as Error).message);
+    }
     // No email provider is wired up yet (see email/mailer.ts). Outside
     // production, hand the token back directly so local dev and tests can
     // drive the reset flow without one — this must never happen once a real
