@@ -8,6 +8,12 @@ import { recordScan } from "../src/patrol/scans";
 import { createWebhookConfig } from "../src/integrations/webhooks";
 import { runScan } from "../src/scanner";
 import path from "path";
+import crypto from "crypto";
+
+// generateSignature() now fails closed with no default secret (see
+// src/integrations/webhooks.ts) — needs an explicit value for delivery to
+// actually reach this test's receiver instead of failing in the retry loop.
+process.env.NETTLE_WEBHOOK_SECRET ??= crypto.randomBytes(32).toString("hex");
 
 const CLEAN_APP = path.join(__dirname, "fixtures", "clean-app");
 

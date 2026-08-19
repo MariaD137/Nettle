@@ -16,6 +16,7 @@
 import { Worker } from "worker_threads";
 import path from "path";
 import crypto from "crypto";
+import fs from "fs";
 import { sourceScanSteps, URL_SCAN_STEPS, type ScanStepEvent } from "../scanner/index";
 import type { ScanReport } from "../scanner/types";
 import type { ScanWorkerInput, ScanWorkerMessage } from "../scanner/scanWorker";
@@ -61,6 +62,8 @@ interface InternalJob {
   input: ScanWorkerInput;
   meta: ScanJobMeta;
   worker: Worker | null;
+  tmpDir: string | null;
+  timeoutHandle: NodeJS.Timeout | null;
 }
 
 const jobs = new Map<string, InternalJob>();
@@ -73,6 +76,18 @@ function maxConcurrent(): number {
   const raw = process.env.NETTLE_MAX_CONCURRENT_SCANS;
   const n = raw ? parseInt(raw, 10) : 2;
   return Number.isFinite(n) && n > 0 ? n : 2;
+}
+
+// A whole-job ceiling on top of the individual per-step timeouts inside the
+// scanner itself (git clone, Semgrep, URL fetch, etc. each already bound
+// their own worst case). Those protect against one stage hanging; this
+// protects against a job that keeps making slow-but-real progress forever
+// and never trips any single step's limit. Not simply "raise a timeout" —
+// this is a new, independent ceiling around the whole job.
+function jobTimeoutMs(): number {
+  const raw = process.env.NETTLE_SCAN_JOB_TIMEOUT_MS;
+  const n = raw ? parseInt(raw, 10) : 10 * 60 * 1000; // 10 minutes
+  return Number.isFinite(n) && n > 0 ? n : 10 * 60 * 1000;
 }
 
 function stepsFor(input: ScanWorkerInput): ScanJobStep[] {
@@ -102,6 +117,8 @@ export function createScanJob(input: ScanWorkerInput, meta: ScanJobMeta): ScanJo
     input,
     meta,
     worker: null,
+    tmpDir: null,
+    timeoutHandle: null,
   };
   jobs.set(id, job);
   queue.push(id);
@@ -131,6 +148,8 @@ function startJob(job: InternalJob) {
   worker.on("message", (message: ScanWorkerMessage) => {
     if (message.type === "progress") {
       applyProgress(job, message.event);
+    } else if (message.type === "tmpdir") {
+      job.tmpDir = message.path;
     } else if (message.type === "done") {
       finishJob(job, "completed", { report: message.report });
     } else if (message.type === "error") {
@@ -150,6 +169,17 @@ function startJob(job: InternalJob) {
       finishJob(job, "failed", { error: `Scan worker exited unexpectedly (code ${code})` });
     }
   });
+
+  job.timeoutHandle = setTimeout(() => {
+    if (job.status !== "running") return;
+    const stalledStep = job.steps.find((s) => s.status === "running");
+    const stageLabel = stalledStep ? stalledStep.label : "an unknown stage";
+    job.worker?.terminate();
+    finishJob(job, "failed", {
+      error: `Scan timed out after ${Math.round(jobTimeoutMs() / 1000)}s while running: ${stageLabel}`,
+    });
+  }, jobTimeoutMs());
+  job.timeoutHandle.unref();
 }
 
 function applyProgress(job: InternalJob, event: ScanStepEvent) {
@@ -167,10 +197,22 @@ function finishJob(job: InternalJob, status: "completed" | "failed" | "cancelled
   if (status === "completed") {
     for (const step of job.steps) step.status = "done";
   }
+  if (job.timeoutHandle) {
+    clearTimeout(job.timeoutHandle);
+    job.timeoutHandle = null;
+  }
   if (job.worker) {
     runningCount--;
     job.worker.removeAllListeners();
     job.worker = null;
+  }
+  if (status !== "completed" && job.tmpDir) {
+    // A worker.terminate() (timeout or manual cancel) skips the worker's
+    // own `finally` cleanup — this is the best-effort fallback. Safe to
+    // call even when the worker did clean up on its own (e.g. a thrown
+    // error mid-scan): rmSync with force is a no-op on an already-gone path.
+    fs.rmSync(job.tmpDir, { recursive: true, force: true });
+    job.tmpDir = null;
   }
   if (status === "completed" && outcome.report && job.meta.onComplete) {
     job.meta.onComplete(outcome.report);

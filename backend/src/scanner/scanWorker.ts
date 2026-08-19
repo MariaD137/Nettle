@@ -25,6 +25,7 @@ export type ScanWorkerInput =
 
 export type ScanWorkerMessage =
   | { type: "progress"; event: ScanStepEvent }
+  | { type: "tmpdir"; path: string }
   | { type: "done"; report: import("./types").ScanReport }
   | { type: "error"; message: string };
 
@@ -39,6 +40,10 @@ async function main() {
   try {
     if (input.mode === "upload") {
       const extractDir = fs.mkdtempSync(path.join(os.tmpdir(), "nettle-job-upload-"));
+      // Reported so the job manager can best-effort clean this up if it has
+      // to forcibly terminate this thread (timeout or cancellation) — a
+      // terminated worker_thread never reaches the `finally` below.
+      post({ type: "tmpdir", path: extractDir });
       try {
         safeExtractZip(input.zipPath, extractDir);
         const scanRoot = resolveScanRoot(extractDir);
@@ -50,6 +55,7 @@ async function main() {
       }
     } else if (input.mode === "repo") {
       const cloneDir = fs.mkdtempSync(path.join(os.tmpdir(), "nettle-job-repo-"));
+      post({ type: "tmpdir", path: cloneDir });
       try {
         cloneRepo(input.repoUrl, input.branch, cloneDir, input.token);
         const report = runScan(cloneDir, "GITHUB", onProgress);

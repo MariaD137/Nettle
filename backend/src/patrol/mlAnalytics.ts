@@ -295,6 +295,63 @@ export class IsolationForest {
   }
 }
 
+// In-memory per-process cache of trained forests, keyed by project. Training
+// from scratch on every scored event would be both wasteful (querying and
+// rebuilding 50 trees per request) and pointless (the training set barely
+// changes event to event) — a forest is retrained at most once per interval.
+const forestCache = new Map<string, { forest: IsolationForest; trainedAt: number }>();
+const FOREST_RETRAIN_INTERVAL_MS = 30 * 60 * 1000;
+// Fewer real samples than this can't meaningfully isolate anything — an
+// isolation forest trained on a handful of points would just be noise
+// dressed up as a score. Return no forest rather than a fake-looking one.
+const MIN_TRAINING_SAMPLES = 20;
+
+// Trains (or reuses a recent cached) IsolationForest from this project's own
+// recent event history — the actual, measured traffic to its endpoints, not
+// synthetic data. Returns null when there isn't yet enough history to train
+// on, which callers must treat as "no isolation-forest signal available"
+// rather than substituting a placeholder.
+function getOrTrainForest(projectId: string): IsolationForest | null {
+  const cached = forestCache.get(projectId);
+  if (cached && Date.now() - cached.trainedAt < FOREST_RETRAIN_INTERVAL_MS) {
+    return cached.forest;
+  }
+
+  const rows = db.prepare(`
+    SELECT occurred_at, method, path, status_code, user_agent
+    FROM events
+    WHERE project_id = ? AND occurred_at > datetime('now', '-24 hours')
+    ORDER BY occurred_at DESC
+    LIMIT 2000
+  `).all(projectId) as unknown as {
+    occurred_at: string;
+    method: string;
+    path: string;
+    status_code: number;
+    user_agent: string | null;
+  }[];
+
+  if (rows.length < MIN_TRAINING_SAMPLES) {
+    forestCache.delete(projectId);
+    return null;
+  }
+
+  const features = rows.map((row) =>
+    extractFeatures({
+      occurredAt: row.occurred_at,
+      method: row.method,
+      path: row.path,
+      statusCode: row.status_code,
+      userAgent: row.user_agent ?? undefined,
+    } as StoredEvent)
+  );
+
+  const forest = new IsolationForest();
+  forest.train(features);
+  forestCache.set(projectId, { forest, trainedAt: Date.now() });
+  return forest;
+}
+
 // Extract features from event
 export function extractFeatures(event: StoredEvent, baseline?: any): number[] {
   const hour = new Date(event.occurredAt).getHours();
@@ -341,9 +398,14 @@ export async function scoreEventAnomaly(
   const features = extractFeatures(event);
   const model = getModelStatus(projectId);
   if (model?.is_active) {
-    // In production, would load serialized model from cache
-    // For now, use simple scoring
-    isolationScore = Math.random(); // Placeholder
+    const forest = getOrTrainForest(projectId);
+    // No forest means too little history to train on yet (see
+    // MIN_TRAINING_SAMPLES below) — leave isolationScore at 0 rather than
+    // inventing a number; the composite score below already falls back to
+    // the z-score path whenever isolationScore isn't populated.
+    if (forest) {
+      isolationScore = forest.score(features);
+    }
   }
 
   // Composite score (weighted average)

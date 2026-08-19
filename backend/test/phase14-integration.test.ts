@@ -15,6 +15,11 @@ import { sendSplunkAlert, sendSplunkMetric, sendSplunkEvent } from '../src/integ
 import { sendDatadogAlert, sendDatadogMetric, sendDatadogEvent, sendDatadogLog } from '../src/integrations/datadog';
 import crypto from 'crypto';
 
+// generateSignature() now fails closed with no default secret (see
+// src/integrations/webhooks.ts) — tests need an explicit value, same
+// pattern used for NETTLE_TOKEN_ENCRYPTION_KEY in tokenEncryption.test.ts.
+process.env.NETTLE_WEBHOOK_SECRET ??= crypto.randomBytes(32).toString('hex');
+
 // Setup: Create test user and project
 const testUserId = newId();
 const testProjectId = newId();
@@ -96,13 +101,23 @@ test('Phase 14: Integration Ecosystem', { timeout: 10 * 60_000 }, async (t) => {
     ok(/^[0-9a-f]{64}$/.test(signature1), 'Signature should be valid hex');
 
     // Verify with crypto
-    const secret = process.env.NETTLE_WEBHOOK_SECRET || 'nettle-webhook';
+    const secret = process.env.NETTLE_WEBHOOK_SECRET!;
     const expected = crypto
       .createHmac('sha256', secret)
       .update(JSON.stringify(payload))
       .digest('hex');
 
     strictEqual(signature1, expected);
+  });
+
+  await t.test('Webhook: signing fails closed with no default secret', () => {
+    const saved = process.env.NETTLE_WEBHOOK_SECRET;
+    delete process.env.NETTLE_WEBHOOK_SECRET;
+    try {
+      throws(() => generateSignature({ a: 1 }), /NETTLE_WEBHOOK_SECRET is not configured/);
+    } finally {
+      process.env.NETTLE_WEBHOOK_SECRET = saved;
+    }
   });
 
   await t.test('Webhook: Payload structure for sendWebhook', async () => {

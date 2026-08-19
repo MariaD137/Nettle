@@ -222,9 +222,19 @@ function updateWebhookEventStatus(
   `).run(status, status === 'sent' ? now : null, error || null, eventId);
 }
 
+export class MissingWebhookSecretError extends Error {
+  constructor() {
+    super(
+      "NETTLE_WEBHOOK_SECRET is not configured — outbound webhook payloads cannot be signed until it is. " +
+        "Set an explicit value (e.g. via `openssl rand -hex 32`) in the environment; there is no default."
+    );
+  }
+}
+
 export function generateSignature(payload: Record<string, any>): string {
   const crypto = require('crypto');
-  const secret = process.env.NETTLE_WEBHOOK_SECRET || 'nettle-webhook';
+  const secret = process.env.NETTLE_WEBHOOK_SECRET;
+  if (!secret) throw new MissingWebhookSecretError();
   return crypto
     .createHmac('sha256', secret)
     .update(JSON.stringify(payload))

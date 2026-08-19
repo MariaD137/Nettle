@@ -36,9 +36,13 @@ const GAP_AUDIT: GapItem[] = [
     category: "Critical",
     title: "Worker Isolation for Untrusted Input",
     description: "Sandbox untrusted code analysis in separate process",
-    status: "PASS",
+    status: "FAIL",
     implementedBy: ["src/scanner/workerIsolation.ts"],
-    evidence: "WorkerPool with 1-4 isolated workers, resource limits, timeout enforcement",
+    evidence:
+      "workerIsolation.ts defines a WorkerPool abstraction, but it is not imported by the real scan " +
+      "pipeline (verified by repo-wide grep — its only importer is this audit file) and its task-processing " +
+      "body is a stub (\"Simulate task processing\"). Untrusted code analysis today runs in-process, not in " +
+      "an isolated worker. Re-verify after this is either wired into the real pipeline or removed as dead code.",
     testCount: 14,
   },
   {
@@ -102,9 +106,14 @@ const GAP_AUDIT: GapItem[] = [
     category: "High",
     title: "OSV Database Versioning & Freshness",
     description: "Track vulnerability database version, timestamp, confidence",
-    status: "PASS",
+    status: "FAIL",
     implementedBy: ["src/scanner/osvVersioning.ts"],
-    evidence: "OSVDatabaseMetadata with version, fetchedAt, lastUpdated, confidence",
+    evidence:
+      "osvVersioning.ts implements a full OSVDatabaseMetadata/freshness API, but it is not called by the " +
+      "real OSV lookup path (osvVulnerabilities.ts reads directly from the bundled static database with no " +
+      "metadata table; verified by repo-wide grep — this audit file was osvVersioning.ts's only other " +
+      "importer). Scan reports do not currently show database version, age, or a stale-database warning. " +
+      "Re-verify once osvVersioning.ts is actually wired into the scan pipeline.",
     testCount: 15,
   },
   {
@@ -421,11 +430,16 @@ ${GAP_AUDIT.filter((i) => i.status === "NOT_VERIFIED")
 
 CONCLUSION
 ----------
-Phase 5 audit confirms all prioritized gap items (Critical + High + Medium)
-have been implemented and tested. 16 low-priority items deferred to Phase 6+
-per remediation roadmap. Nettle is now a production-ready "intelligent
-launch-readiness coach" with comprehensive security analysis, transparent
-scoring, framework awareness, and legal compliance.
+Most prioritized gap items (Critical + High + Medium) are implemented and
+tested; two Critical/High items (C-2 worker isolation, H-5 OSV freshness)
+are marked FAIL above because the code they cite is not actually wired
+into the paths it claims to protect — see their evidence fields. 16
+low-priority items remain deferred to Phase 6+ per remediation roadmap.
+This report describes code-level implementation status only; it makes no
+claim about AWS or Stripe deployment readiness, which depend on
+infrastructure this codebase does not control. Do not read "PASS" here as
+"production ready" — see PRE_AWS_AUDIT.md and PRE_AWS_PRODUCTION_STATUS.md
+for the full readiness picture.
   `.trim();
 }
 
