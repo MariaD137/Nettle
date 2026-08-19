@@ -160,9 +160,12 @@ test("forgot-password sends a real reset email containing a working reset link, 
 
     await new Promise((resolve) => setTimeout(resolve, 300));
 
-    assert.equal(received.length, 1);
-    assert.ok(received[0].includes("Subject: Reset your Nettle password"));
-    assert.ok(received[0].includes("https://app.nettle.example/reset-password?token="));
+    // Signup itself now also sends a verification email into this same
+    // mailbox, so this asserts on the specific reset email rather than
+    // assuming it's the only mail sent during the test.
+    const resetEmails = received.filter((m) => m.includes("Subject: Reset your Nettle password"));
+    assert.equal(resetEmails.length, 1);
+    assert.ok(resetEmails[0].includes("https://app.nettle.example/reset-password?token="));
   } finally {
     server.close();
     await new Promise((resolve) => smtp.close(resolve as any));

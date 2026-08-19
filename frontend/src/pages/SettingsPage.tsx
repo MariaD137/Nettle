@@ -29,6 +29,7 @@ export default function SettingsPage() {
           <span className="settings-label">Member since</span>
           <span>{user?.createdAt ? new Date(user.createdAt).toLocaleDateString() : "—"}</span>
         </div>
+        {user && !user.emailVerifiedAt && <VerifyEmailNotice />}
       </div>
       <BillingCard />
       <ChangeEmailCard onUpdated={refreshUser} />
@@ -70,6 +71,41 @@ export default function SettingsPage() {
       <h1>Settings</h1>
 
       {body}
+    </div>
+  );
+}
+
+function VerifyEmailNotice() {
+  const [sent, setSent] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [sending, setSending] = useState(false);
+
+  async function resend() {
+    setError(null);
+    setSending(true);
+    try {
+      await api.resendVerification();
+      setSent(true);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Could not send verification email");
+    } finally {
+      setSending(false);
+    }
+  }
+
+  return (
+    <div className="error-banner" style={{ marginTop: 12 }}>
+      {sent ? (
+        "Verification email sent — check your inbox."
+      ) : (
+        <>
+          Your email address isn't verified yet.{" "}
+          <button className="link-btn" onClick={resend} disabled={sending}>
+            {sending ? "Sending…" : "Resend verification email"}
+          </button>
+        </>
+      )}
+      {error && <div>{error}</div>}
     </div>
   );
 }

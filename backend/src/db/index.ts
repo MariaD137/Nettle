@@ -326,6 +326,16 @@ if (!columnExists("users", "onboarding_completed_at")) {
   db.exec("UPDATE users SET onboarding_completed_at = created_at WHERE onboarding_completed_at IS NULL");
 }
 
+// NULL means not yet verified. Same backfill reasoning as onboarding above:
+// every account that existed before this column was introduced is stamped
+// verified as of its own created_at, so this never retroactively locks out
+// or nags an existing customer — only accounts signing up from here on are
+// genuinely unverified until they click the link.
+if (!columnExists("users", "email_verified_at")) {
+  db.exec("ALTER TABLE users ADD COLUMN email_verified_at TEXT");
+  db.exec("UPDATE users SET email_verified_at = created_at WHERE email_verified_at IS NULL");
+}
+
 // Phase 15: Performance Optimization — Additional Indexes
 db.exec(`
   CREATE INDEX IF NOT EXISTS idx_scans_project_status ON scans(project_id, status);
@@ -465,6 +475,18 @@ db.exec(`
     FOREIGN KEY (user_id) REFERENCES users(id)
   );
   CREATE INDEX IF NOT EXISTS idx_payment_failures_user ON payment_failures(user_id, occurred_at DESC);
+`);
+
+// Same shape and lifecycle as password_resets above: a cryptographically
+// random single-use token with an expiry, looked up by token rather than
+// user id so the link itself is the credential.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS email_verifications (
+    token TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    expires_at TEXT NOT NULL,
+    FOREIGN KEY (user_id) REFERENCES users(id)
+  );
 `);
 
 export function newId(): string {

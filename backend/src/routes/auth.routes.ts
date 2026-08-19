@@ -11,6 +11,9 @@ import {
   createPasswordResetToken,
   resolvePasswordResetToken,
   consumePasswordResetToken,
+  createEmailVerificationToken,
+  resolveEmailVerificationToken,
+  markEmailVerified,
   EmailAlreadyRegisteredError,
 } from "../auth/users";
 import { createSession, destroySession, listSessions, destroyAllSessions, destroySessionByPrefix } from "../auth/sessions";
@@ -28,6 +31,30 @@ const authLimiter = rateLimit({
   message: "Too many authentication attempts — try again in a few minutes",
 });
 
+// Deliberately tighter than authLimiter — this hits real outbound email
+// each time, so it needs its own low ceiling independent of how many
+// login/signup attempts the account has made.
+const resendVerificationLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  maxRequests: 5,
+  message: "Too many verification emails requested — try again in an hour",
+});
+
+function sendVerificationEmail(userId: string, email: string) {
+  const verifyToken = createEmailVerificationToken(userId);
+  const verifyUrl = `${process.env.FRONTEND_URL || "http://localhost:5173"}/verify-email?token=${verifyToken}`;
+  // Fire-and-forget, same reasoning as the password-reset email below: a
+  // slow/failing mail provider must not delay the caller's response.
+  sendEmail(
+    email,
+    "Verify your Nettle email address",
+    `Welcome to Nettle! Verify your email address here: ${verifyUrl}\n\nThis link expires in 24 hours.`,
+    `<p>Welcome to Nettle!</p><p><a href="${verifyUrl}">Verify your email address</a></p><p>This link expires in 24 hours.</p>`
+  ).then((result) => {
+    if (!result.sent) console.error(`Verification email to ${email} failed:`, result.error);
+  });
+}
+
 authRouter.post("/api/auth/signup", authLimiter, async (req, res) => {
   const email = typeof req.body?.email === "string" ? req.body.email.trim().toLowerCase() : "";
   const password = typeof req.body?.password === "string" ? req.body.password : "";
@@ -42,6 +69,7 @@ authRouter.post("/api/auth/signup", authLimiter, async (req, res) => {
   try {
     const user = await createUser(email, password);
     const token = createSession(user.id);
+    sendVerificationEmail(user.id, user.email);
     res.status(201).json({ token, user });
   } catch (err) {
     if (err instanceof EmailAlreadyRegisteredError) {
@@ -49,6 +77,32 @@ authRouter.post("/api/auth/signup", authLimiter, async (req, res) => {
     }
     throw err;
   }
+});
+
+authRouter.post("/api/auth/verify-email", authLimiter, (req, res) => {
+  const token = typeof req.body?.token === "string" ? req.body.token : "";
+  if (!token) {
+    return res.status(400).json({ error: "Verification token is required" });
+  }
+
+  const resolved = resolveEmailVerificationToken(token);
+  if (!resolved) {
+    return res.status(400).json({ error: "Invalid or expired verification link" });
+  }
+
+  const user = markEmailVerified(resolved.userId);
+  res.json({ message: "Email verified", user });
+});
+
+authRouter.post("/api/auth/resend-verification", requireAuth, resendVerificationLimiter, (req, res) => {
+  const user = getUserById(req.userId!);
+  if (!user) return res.status(401).json({ error: "Invalid session" });
+  if (user.emailVerifiedAt) {
+    return res.status(400).json({ error: "This email is already verified" });
+  }
+
+  sendVerificationEmail(user.id, user.email);
+  res.json({ message: "Verification email sent" });
 });
 
 authRouter.post("/api/auth/login", authLimiter, async (req, res) => {

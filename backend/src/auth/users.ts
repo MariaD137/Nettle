@@ -10,6 +10,7 @@ export interface User {
   subscriptionStatus: string;
   billingAnchor: string | null;
   onboardingCompletedAt: string | null;
+  emailVerifiedAt: string | null;
   createdAt: string;
 }
 
@@ -22,6 +23,7 @@ interface UserRow {
   subscription_status: string;
   billing_anchor: string | null;
   onboarding_completed_at: string | null;
+  email_verified_at: string | null;
   created_at: string;
 }
 
@@ -34,6 +36,7 @@ function toUser(row: UserRow): User {
     subscriptionStatus: row.subscription_status,
     billingAnchor: row.billing_anchor,
     onboardingCompletedAt: row.onboarding_completed_at,
+    emailVerifiedAt: row.email_verified_at,
     createdAt: row.created_at,
   };
 }
@@ -61,6 +64,7 @@ export async function createUser(email: string, password: string): Promise<User>
     subscriptionStatus: "none",
     billingAnchor: null,
     onboardingCompletedAt: null,
+    emailVerifiedAt: null,
     createdAt,
   };
 }
@@ -152,6 +156,44 @@ export function consumePasswordResetToken(token: string): void {
   db.prepare("DELETE FROM password_resets WHERE token = ?").run(token);
 }
 
+const EMAIL_VERIFICATION_TOKEN_LIFETIME_MS = 24 * 60 * 60 * 1000; // 24 hours
+
+export function createEmailVerificationToken(userId: string): string {
+  const token = crypto.randomBytes(32).toString("hex");
+  const expiresAt = new Date(Date.now() + EMAIL_VERIFICATION_TOKEN_LIFETIME_MS).toISOString();
+  db.prepare(
+    "INSERT INTO email_verifications (token, user_id, expires_at) VALUES (?, ?, ?)"
+  ).run(token, userId, expiresAt);
+  return token;
+}
+
+export function resolveEmailVerificationToken(token: string): { userId: string } | null {
+  const row = db.prepare("SELECT user_id, expires_at FROM email_verifications WHERE token = ?").get(token) as
+    | { user_id: string; expires_at: string }
+    | undefined;
+  if (!row) return null;
+  if (new Date(row.expires_at).getTime() < Date.now()) {
+    db.prepare("DELETE FROM email_verifications WHERE token = ?").run(token);
+    return null;
+  }
+  return { userId: row.user_id };
+}
+
+// Single-use: the token is deleted the moment it's successfully applied,
+// same as a password reset token — a link that already worked shouldn't
+// keep working if it leaks (email forwarding, browser history, etc).
+export function consumeEmailVerificationToken(token: string): void {
+  db.prepare("DELETE FROM email_verifications WHERE token = ?").run(token);
+}
+
+export function markEmailVerified(userId: string): User | null {
+  db.prepare(
+    "UPDATE users SET email_verified_at = ? WHERE id = ? AND email_verified_at IS NULL"
+  ).run(new Date().toISOString(), userId);
+  db.prepare("DELETE FROM email_verifications WHERE user_id = ?").run(userId);
+  return getUserById(userId);
+}
+
 export function updateEmail(userId: string, newEmail: string): User | null {
   const existing = db.prepare("SELECT 1 FROM users WHERE email = ? AND id != ?").get(newEmail, userId);
   if (existing) throw new EmailAlreadyRegisteredError();
@@ -170,6 +212,8 @@ export function updateEmail(userId: string, newEmail: string): User | null {
  */
 export function deleteUser(userId: string): void {
   db.prepare("DELETE FROM password_resets WHERE user_id = ?").run(userId);
+  db.prepare("DELETE FROM email_verifications WHERE user_id = ?").run(userId);
+  db.prepare("DELETE FROM payment_failures WHERE user_id = ?").run(userId);
   db.prepare("DELETE FROM sessions WHERE user_id = ?").run(userId);
   db.prepare("DELETE FROM scan_usage WHERE user_id = ?").run(userId);
 

@@ -7,6 +7,7 @@ import ProjectPage from "./pages/ProjectPage";
 import BillingResultPage from "./pages/BillingResultPage";
 import SettingsPage from "./pages/SettingsPage";
 import ResetPasswordPage from "./pages/ResetPasswordPage";
+import VerifyEmailPage from "./pages/VerifyEmailPage";
 import SubscribePage from "./pages/SubscribePage";
 import { CustomRulesPage } from "./pages/CustomRulesPage";
 import { AnalyticsPage } from "./pages/AnalyticsPage";
@@ -55,6 +56,7 @@ export default function App() {
     <Routes>
       <Route path="/login" element={<LoginPage />} />
       <Route path="/reset-password" element={<ResetPasswordPage />} />
+      <Route path="/verify-email" element={<VerifyEmailPage />} />
       <Route
         path="/subscribe"
         element={

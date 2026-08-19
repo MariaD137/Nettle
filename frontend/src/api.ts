@@ -7,6 +7,7 @@ export interface User {
   stripeCustomerId: string | null;
   subscriptionStatus: string;
   onboardingCompletedAt?: string | null;
+  emailVerifiedAt?: string | null;
   createdAt: string;
 }
 
@@ -407,6 +408,15 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ token, password }),
     }),
+
+  verifyEmail: (token: string) =>
+    request<{ message: string; user: User }>("/api/auth/verify-email", {
+      method: "POST",
+      body: JSON.stringify({ token }),
+    }),
+
+  resendVerification: () =>
+    request<{ message: string }>("/api/auth/resend-verification", { method: "POST" }),
 
   changePassword: (currentPassword: string, newPassword: string) =>
     request<{ message: string }>("/api/auth/change-password", {
