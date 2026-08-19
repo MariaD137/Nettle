@@ -175,3 +175,40 @@ test("admin failed-scans lists a real failed scan with its real project name", a
     syncAdminEmails();
   }
 });
+
+test("admin notification-failures lists a real failed delivery, and overview counts it", async () => {
+  const admin = await createUser("notiffailures-admin@example.com", "correct horse battery staple");
+  const adminToken = createSession(admin.id);
+  process.env.NETTLE_ADMIN_EMAILS = "notiffailures-admin@example.com";
+  syncAdminEmails();
+
+  const otherUser = await createUser("notiffailures-owner@example.com", "correct horse battery staple");
+  const project = createProject(otherUser.id, "Notification Failures Project");
+
+  const { db, newId } = await import("../src/db/index");
+  db.prepare(
+    "INSERT INTO notification_deliveries (id, project_id, channel, destination, event_type, status, attempt_count, last_error, created_at) VALUES (?, ?, ?, ?, ?, 'failed', ?, ?, ?)"
+  ).run(newId(), project.id, "sms", "+15550001111", "incident_alert", 3, "SMS is not configured", new Date().toISOString());
+
+  const { server, base } = await listen(buildApp());
+  try {
+    const listRes = await fetch(`${base}/api/admin/notification-failures`, {
+      headers: { Authorization: `Bearer ${adminToken}` },
+    });
+    assert.equal(listRes.status, 200);
+    const listBody = await listRes.json();
+    assert.ok(listBody.failures.some((f: any) => f.project_id === project.id && f.channel === "sms"));
+    // Destination (a phone number/email — PII) is deliberately not exposed here.
+    assert.ok(!listBody.failures.some((f: any) => "destination" in f));
+
+    const overviewRes = await fetch(`${base}/api/admin/overview`, {
+      headers: { Authorization: `Bearer ${adminToken}` },
+    });
+    const overviewBody = await overviewRes.json();
+    assert.ok(overviewBody.last24h.notificationFailures >= 1);
+  } finally {
+    server.close();
+    process.env.NETTLE_ADMIN_EMAILS = "";
+    syncAdminEmails();
+  }
+});

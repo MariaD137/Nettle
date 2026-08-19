@@ -496,6 +496,30 @@ db.exec(`
   );
 `);
 
+// Delivery outcome for direct email/SMS notification channels — the
+// notification_channels counterpart to webhook_events above, which
+// already tracked this for outbound webhooks. Lets an operator (and
+// /api/admin/notification-failures) see delivery failures instead of them
+// only ever reaching a console.error.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS notification_deliveries (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL,
+    channel TEXT NOT NULL,
+    destination TEXT NOT NULL,
+    event_type TEXT NOT NULL,
+    status TEXT NOT NULL,
+    attempt_count INTEGER NOT NULL DEFAULT 1,
+    last_error TEXT,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (project_id) REFERENCES projects(id)
+  );
+  CREATE INDEX IF NOT EXISTS idx_notification_deliveries_status
+    ON notification_deliveries(status, created_at DESC);
+  CREATE INDEX IF NOT EXISTS idx_notification_deliveries_project
+    ON notification_deliveries(project_id, created_at DESC);
+`);
+
 export function newId(): string {
   return crypto.randomUUID();
 }

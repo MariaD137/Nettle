@@ -6,6 +6,22 @@ import { getDetectionSettings } from "./detectionSettings";
 
 const ALERT_COOLDOWN_SECONDS = 300; // don't re-alert on an ongoing pattern every single request
 
+// A short, concrete next step appended to every alert message — the
+// customer-facing alert format this is meant to match (attack
+// description, count, severity, source, recommended action) is otherwise
+// missing the "what do I do about it" line, which is the part that
+// actually matters to whoever gets paged.
+const RECOMMENDED_ACTIONS: Record<string, string> = {
+  "brute-force": "Recommended action: consider temporarily blocking this IP and confirm the targeted account's password hasn't been compromised.",
+  "high-request-rate": "Recommended action: review this IP's traffic pattern and consider rate-limiting or blocking it if it isn't a known integration.",
+  "suspicious-path": "Recommended action: confirm this path isn't exposing a real file or admin panel, and block the source IP if the probing continues.",
+  "sqli-shaped": "Recommended action: verify the targeted endpoint uses parameterized queries and block the source IP if probing continues.",
+  "xss-shaped": "Recommended action: verify the targeted endpoint escapes/sanitizes output and block the source IP if probing continues.",
+  "cmdi-shaped": "Recommended action: verify the targeted endpoint never passes user input to a shell, and block the source IP if probing continues.",
+  "suspicious-user-agent": "Recommended action: block this IP if it isn't an authorized security scan you requested.",
+  "credential-stuffing": "Recommended action: consider requiring CAPTCHA or MFA on this endpoint and monitor for account takeovers on the affected accounts.",
+};
+
 const SUSPICIOUS_PATH_PATTERNS = [
   /\.\.\//, // path traversal
   /\/\.env/i,
@@ -103,7 +119,7 @@ export function runDetection(projectId: string, event: StoredEvent): Alert[] {
         projectId,
         "critical",
         "brute-force",
-        `${recentFailedAuth.length} failed-auth responses (401/403) from ${event.ip} in the last 60s — looks like a brute-force attempt.`
+        `${recentFailedAuth.length} failed-auth responses (401/403) from ${event.ip} in the last 60s — looks like a brute-force attempt. ${RECOMMENDED_ACTIONS["brute-force"]}`
       )
     );
   }
@@ -117,7 +133,7 @@ export function runDetection(projectId: string, event: StoredEvent): Alert[] {
         projectId,
         "medium",
         "high-request-rate",
-        `${lastTenSeconds.length} requests from ${event.ip} in 10s — possible scraping or denial-of-service probing.`
+        `${lastTenSeconds.length} requests from ${event.ip} in 10s — possible scraping or denial-of-service probing. ${RECOMMENDED_ACTIONS["high-request-rate"]}`
       )
     );
   }
@@ -128,7 +144,7 @@ export function runDetection(projectId: string, event: StoredEvent): Alert[] {
         projectId,
         "critical",
         "suspicious-path-" + event.ip,
-        `Request to "${event.path}" from ${event.ip} matches a common attack-probe pattern (path traversal, exposed config, or known CMS admin path).`
+        `Request to "${event.path}" from ${event.ip} matches a common attack-probe pattern (path traversal, exposed config, or known CMS admin path). ${RECOMMENDED_ACTIONS["suspicious-path"]}`
       )
     );
   }
@@ -139,7 +155,7 @@ export function runDetection(projectId: string, event: StoredEvent): Alert[] {
         projectId,
         "critical",
         "sqli-shaped-" + event.ip,
-        `Request to "${event.path}" from ${event.ip} contains a SQL-injection-shaped pattern.`
+        `Request to "${event.path}" from ${event.ip} contains a SQL-injection-shaped pattern. ${RECOMMENDED_ACTIONS["sqli-shaped"]}`
       )
     );
   }
@@ -150,7 +166,7 @@ export function runDetection(projectId: string, event: StoredEvent): Alert[] {
         projectId,
         "critical",
         "xss-shaped-" + event.ip,
-        `Request to "${event.path}" from ${event.ip} contains a cross-site-scripting-shaped pattern.`
+        `Request to "${event.path}" from ${event.ip} contains a cross-site-scripting-shaped pattern. ${RECOMMENDED_ACTIONS["xss-shaped"]}`
       )
     );
   }
@@ -161,7 +177,7 @@ export function runDetection(projectId: string, event: StoredEvent): Alert[] {
         projectId,
         "critical",
         "cmdi-shaped-" + event.ip,
-        `Request to "${event.path}" from ${event.ip} contains an OS-command-injection-shaped pattern.`
+        `Request to "${event.path}" from ${event.ip} contains an OS-command-injection-shaped pattern. ${RECOMMENDED_ACTIONS["cmdi-shaped"]}`
       )
     );
   }
@@ -172,7 +188,7 @@ export function runDetection(projectId: string, event: StoredEvent): Alert[] {
         projectId,
         "critical",
         "suspicious-user-agent-" + event.ip,
-        `Request from ${event.ip} used a User-Agent ("${event.userAgent}") matching a known security-scanning tool.`
+        `Request from ${event.ip} used a User-Agent ("${event.userAgent}") matching a known security-scanning tool. ${RECOMMENDED_ACTIONS["suspicious-user-agent"]}`
       )
     );
   }
@@ -200,7 +216,7 @@ export function runDetection(projectId: string, event: StoredEvent): Alert[] {
         projectId,
         "critical",
         "credential-stuffing-" + event.path,
-        `${sameFailedAuthPath.length} failed-auth responses (401/403) against "${event.path}" from ${distinctIps.size} different IPs in the last 60s — looks like distributed credential stuffing rather than a single attacker.`
+        `${sameFailedAuthPath.length} failed-auth responses (401/403) against "${event.path}" from ${distinctIps.size} different IPs in the last 60s — looks like distributed credential stuffing rather than a single attacker. ${RECOMMENDED_ACTIONS["credential-stuffing"]}`
       )
     );
   }

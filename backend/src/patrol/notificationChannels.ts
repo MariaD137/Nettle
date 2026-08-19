@@ -1,6 +1,7 @@
 import { db, newId } from "../db";
 import { sendEmail } from "../integrations/email";
 import { sendSms } from "../integrations/sms";
+import { incrementCounter, Metric } from "../observability/metrics";
 
 export type NotificationChannelType = "email" | "sms";
 
@@ -114,12 +115,46 @@ export function deleteNotificationChannel(id: string): void {
   db.prepare("DELETE FROM notification_channels WHERE id = ?").run(id);
 }
 
+const DELIVERY_RETRY_BACKOFF_MS = [500, 2000];
+
+async function deliverWithRetry(
+  channel: NotificationChannel,
+  send: () => Promise<{ sent: boolean; error?: string }>,
+  eventType: string
+): Promise<void> {
+  let lastError: string | undefined;
+  let attempt = 0;
+
+  for (; attempt < 1 + DELIVERY_RETRY_BACKOFF_MS.length; attempt++) {
+    if (attempt > 0) {
+      await new Promise((resolve) => setTimeout(resolve, DELIVERY_RETRY_BACKOFF_MS[attempt - 1]));
+    }
+    const result = await send();
+    if (result.sent) {
+      db.prepare(
+        "INSERT INTO notification_deliveries (id, project_id, channel, destination, event_type, status, attempt_count, created_at) VALUES (?, ?, ?, ?, ?, 'sent', ?, ?)"
+      ).run(newId(), channel.projectId, channel.channel, channel.destination, eventType, attempt + 1, new Date().toISOString());
+      return;
+    }
+    lastError = result.error;
+  }
+
+  incrementCounter(Metric.NotificationDeliveryFailures);
+  db.prepare(
+    "INSERT INTO notification_deliveries (id, project_id, channel, destination, event_type, status, attempt_count, last_error, created_at) VALUES (?, ?, ?, ?, ?, 'failed', ?, ?, ?)"
+  ).run(newId(), channel.projectId, channel.channel, channel.destination, eventType, attempt, lastError || null, new Date().toISOString());
+  console.error(`Notification channel delivery failed after ${attempt} attempt(s):`, lastError);
+}
+
 /**
  * Fans a project event out to every active email/SMS channel subscribed to
- * it. Fire-and-forget by design, matching notifyAlertWebhooks/
- * notifyScanCompleted — a slow or failing send must never block or fail
- * the caller. `smsBody` should be short (SMS carriers truncate/split long
- * messages); it defaults to `subject` when omitted.
+ * it. Fire-and-forget from the caller's side — createAlert et al. never
+ * await this, so a slow or failing send can't block or fail the request
+ * that triggered it — but each delivery gets real retry-with-backoff and
+ * its outcome (including which attempt it took, or the final error) is
+ * persisted to notification_deliveries, the direct-channel counterpart to
+ * webhook_events. `smsBody` should be short (SMS carriers truncate/split
+ * long messages); it defaults to `subject` when omitted.
  */
 export function notifyChannels(
   projectId: string,
@@ -130,15 +165,13 @@ export function notifyChannels(
 ): void {
   const channels = getNotificationChannels(projectId).filter((c) => c.isActive && c.eventTypes.includes(eventType));
 
-  const deliveries = channels.map((c) => {
-    if (c.channel === "email") return sendEmail(c.destination, subject, textBody, opts?.html);
-    return sendSms(c.destination, opts?.smsBody || subject);
-  });
-
-  Promise.allSettled(deliveries).then((results) => {
-    for (const r of results) {
-      if (r.status === "fulfilled" && !r.value.sent) console.error("Notification channel delivery failed:", r.value.error);
-      if (r.status === "rejected") console.error("Notification channel delivery threw:", r.reason);
-    }
-  });
+  for (const channel of channels) {
+    const send =
+      channel.channel === "email"
+        ? () => sendEmail(channel.destination, subject, textBody, opts?.html)
+        : () => sendSms(channel.destination, opts?.smsBody || subject);
+    deliverWithRetry(channel, send, eventType).catch((err) => {
+      console.error("Notification delivery threw unexpectedly:", err);
+    });
+  }
 }

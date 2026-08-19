@@ -138,3 +138,75 @@ test("notifyChannels delivers to a real local mail receiver and a real local SMS
     process.env.TWILIO_API_BASE = originalTwilioBase;
   }
 });
+
+test("a successful delivery is persisted to notification_deliveries as sent", async () => {
+  const user = await createUser("notif-delivery-success@example.com", "correct horse battery staple");
+  const project = createProject(user.id, "Delivery Success Target").id;
+
+  const smtp = new SMTPServer({
+    disabledCommands: ["AUTH", "STARTTLS"],
+    onData(stream, _session, callback) {
+      stream.on("data", () => {});
+      stream.on("end", callback);
+    },
+  });
+  await new Promise<void>((resolve) => smtp.listen(0, resolve));
+  const smtpPort = (smtp.server.address() as AddressInfo).port;
+  const originalHost = process.env.SMTP_HOST;
+  const originalPort = process.env.SMTP_PORT;
+  process.env.SMTP_HOST = "localhost";
+  process.env.SMTP_PORT = String(smtpPort);
+
+  try {
+    createNotificationChannel(project, "email", "success@example.com", ["scan.completed"]);
+    notifyChannels(project, "scan.completed", "Scan done", "Your scan finished.");
+
+    await new Promise((resolve) => setTimeout(resolve, 400));
+
+    const { db } = await import("../src/db/index");
+    const row = db
+      .prepare("SELECT status, attempt_count FROM notification_deliveries WHERE project_id = ?")
+      .get(project) as { status: string; attempt_count: number };
+    assert.equal(row.status, "sent");
+    assert.equal(row.attempt_count, 1);
+  } finally {
+    await new Promise((resolve) => smtp.close(resolve as any));
+    process.env.SMTP_HOST = originalHost;
+    process.env.SMTP_PORT = originalPort;
+  }
+});
+
+test("a persistently-failing delivery retries with backoff, then persists status=failed with the real attempt count and error", async () => {
+  const user = await createUser("notif-delivery-failure@example.com", "correct horse battery staple");
+  const project = createProject(user.id, "Delivery Failure Target").id;
+
+  const originalSid = process.env.TWILIO_ACCOUNT_SID;
+  delete process.env.TWILIO_ACCOUNT_SID; // sendSms fails deterministically and immediately every attempt
+
+  try {
+    createNotificationChannel(project, "sms", "+15551234567", ["scan.completed"]);
+    const before = (await import("../src/observability/metrics")).getMetricsSnapshot().counters[
+      "notification_delivery_failures_total"
+    ] || 0;
+
+    notifyChannels(project, "scan.completed", "Scan done", "Your scan finished.");
+
+    // 1 initial attempt + backoff of 500ms + 2000ms between the 2 retries.
+    await new Promise((resolve) => setTimeout(resolve, 3200));
+
+    const { db } = await import("../src/db/index");
+    const row = db
+      .prepare("SELECT status, attempt_count, last_error FROM notification_deliveries WHERE project_id = ?")
+      .get(project) as { status: string; attempt_count: number; last_error: string };
+    assert.equal(row.status, "failed");
+    assert.equal(row.attempt_count, 3);
+    assert.ok(row.last_error.includes("SMS is not configured"));
+
+    const after = (await import("../src/observability/metrics")).getMetricsSnapshot().counters[
+      "notification_delivery_failures_total"
+    ] || 0;
+    assert.equal(after, before + 1);
+  } finally {
+    process.env.TWILIO_ACCOUNT_SID = originalSid;
+  }
+});

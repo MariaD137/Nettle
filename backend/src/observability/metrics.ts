@@ -76,5 +76,6 @@ export const Metric = {
   RateLimitExceeded: "rate_limit_exceeded_total",
   StripeWebhookFailures: "stripe_webhook_failures_total",
   WebhookDeliveryFailures: "webhook_delivery_failures_total",
+  NotificationDeliveryFailures: "notification_delivery_failures_total",
   AlertsGenerated: "alerts_generated_total",
 } as const;

@@ -43,6 +43,12 @@ adminRouter.get("/api/admin/overview", requireAuth, requireAdmin, (_req, res) =>
       .get(RECENT_WINDOW) as { n: number }
   ).n;
 
+  const notificationFailuresRecent = (
+    db
+      .prepare("SELECT COUNT(*) as n FROM notification_deliveries WHERE status = 'failed' AND created_at > datetime('now', ?)")
+      .get(RECENT_WINDOW) as { n: number }
+  ).n;
+
   // Tier 2 abuse/security signal — counted by severity, not itemized, so
   // this stays a triage summary rather than a feed of raw attacker data.
   const alertsBySeverityRecent = db
@@ -55,6 +61,7 @@ adminRouter.get("/api/admin/overview", requireAuth, requireAdmin, (_req, res) =>
       failedScans: failedScansRecent,
       webhookFailures: webhookFailuresRecent,
       paymentFailures: paymentFailuresRecent,
+      notificationFailures: notificationFailuresRecent,
       alertsBySeverity: Object.fromEntries(alertsBySeverityRecent.map((r) => [r.severity, r.n])),
     },
     activeAlerts,
@@ -78,6 +85,19 @@ adminRouter.get("/api/admin/failed-scans", requireAuth, requireAdmin, (req, res)
     )
     .all(limit);
   res.json({ scans: rows });
+});
+
+adminRouter.get("/api/admin/notification-failures", requireAuth, requireAdmin, (req, res) => {
+  const limit = Math.min(parseInt(String(req.query.limit ?? "50"), 10) || 50, 200);
+  const rows = db
+    .prepare(
+      `SELECT id, project_id, channel, event_type, attempt_count, last_error, created_at
+       FROM notification_deliveries
+       WHERE status = 'failed'
+       ORDER BY created_at DESC LIMIT ?`
+    )
+    .all(limit);
+  res.json({ failures: rows });
 });
 
 adminRouter.get("/api/admin/webhook-failures", requireAuth, requireAdmin, (req, res) => {
