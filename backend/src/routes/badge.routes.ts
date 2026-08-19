@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { getProject } from "../patrol/projects";
 import { computeBadgeState, renderBadgeSVG } from "../patrol/badge";
+import { publicRateLimit } from "../middleware/rateLimit";
 
 export const badgeRouter = Router();
 
@@ -9,7 +10,7 @@ export const badgeRouter = Router();
 // header. The project ID in the URL is not a secret (unlike the API key
 // used for event ingestion); it only reveals a pass/fail badge state.
 
-badgeRouter.get("/api/projects/:id/badge.svg", (req, res) => {
+badgeRouter.get("/api/projects/:id/badge.svg", publicRateLimit, (req, res) => {
   const project = getProject(req.params.id);
   if (!project) return res.status(404).end();
 
@@ -19,7 +20,7 @@ badgeRouter.get("/api/projects/:id/badge.svg", (req, res) => {
   res.send(renderBadgeSVG(state));
 });
 
-badgeRouter.get("/api/projects/:id/badge.json", (req, res) => {
+badgeRouter.get("/api/projects/:id/badge.json", publicRateLimit, (req, res) => {
   const project = getProject(req.params.id);
   if (!project) return res.status(404).json({ error: "Project not found" });
 

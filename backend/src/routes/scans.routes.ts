@@ -14,6 +14,7 @@ import { getUserById } from "../auth/users";
 import { applyScanAccess } from "../billing/scanAccess";
 import { getQuotaState, recordScanUsage } from "../billing/scanQuota";
 import { safeExtractZip } from "../scanner/safeExtraction";
+import { scanRateLimit } from "../middleware/rateLimit";
 import type { Request as ExpressRequest } from "express";
 
 export const scansRouter = Router();
@@ -59,7 +60,7 @@ export const upload = multer({
   limits: { fileSize: 25 * 1024 * 1024 }, // 25MB — plenty for source code, not for asset-heavy repos
 });
 
-scansRouter.post("/api/scans", optionalAuth, upload.single("codebase"), (req: Request, res: Response) => {
+scansRouter.post("/api/scans", scanRateLimit, optionalAuth, upload.single("codebase"), (req: Request, res: Response) => {
   if (!req.file) {
     return res.status(400).json({ error: "Upload a zip file under the 'codebase' field" });
   }
@@ -126,7 +127,7 @@ scansRouter.post("/api/scans", optionalAuth, upload.single("codebase"), (req: Re
 const ALLOWED_HOSTS = ["github.com", "gitlab.com", "bitbucket.org"];
 export const REPO_URL_PATTERN = /^https:\/\/(github\.com|gitlab\.com|bitbucket\.org)\/[\w.\-]+\/[\w.\-]+(\.git)?$/;
 
-scansRouter.post("/api/scans/repo", requireAuth, requireSubscription, (req: Request, res: Response) => {
+scansRouter.post("/api/scans/repo", scanRateLimit, requireAuth, requireSubscription, (req: Request, res: Response) => {
   const repoUrl = typeof req.body?.repoUrl === "string" ? req.body.repoUrl.trim() : "";
   const branch = typeof req.body?.branch === "string" ? req.body.branch.trim() : "";
   const apiKey = typeof req.body?.apiKey === "string" ? req.body.apiKey.trim() : "";
@@ -185,7 +186,7 @@ scansRouter.post("/api/scans/repo", requireAuth, requireSubscription, (req: Requ
  * (for abuse accountability and quota metering) and an explicit ownership/
  * authorization confirmation, unlike the anonymous-friendly zip upload.
  */
-scansRouter.post("/api/scans/url", requireAuth, async (req: Request, res: Response) => {
+scansRouter.post("/api/scans/url", scanRateLimit, requireAuth, async (req: Request, res: Response) => {
   const targetUrl = typeof req.body?.url === "string" ? req.body.url.trim() : "";
   const confirmed = req.body?.confirmed === true;
 

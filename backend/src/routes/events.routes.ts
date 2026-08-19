@@ -2,6 +2,7 @@ import { Router } from "express";
 import { findProjectByApiKeyForScope } from "../patrol/projects";
 import { recordEvent } from "../patrol/events";
 import { runDetection } from "../patrol/detection";
+import { publicRateLimit } from "../middleware/rateLimit";
 import type { IncomingEvent } from "../patrol/types";
 
 export const eventsRouter = Router();
@@ -17,7 +18,7 @@ function isValidEvent(body: unknown): body is IncomingEvent {
   );
 }
 
-eventsRouter.post("/api/events", (req, res) => {
+eventsRouter.post("/api/events", publicRateLimit, (req, res) => {
   const apiKey = req.header("x-nettle-api-key");
   if (!apiKey) {
     return res.status(401).json({ error: "Missing X-Nettle-Api-Key header" });

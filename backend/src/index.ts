@@ -12,7 +12,7 @@ import customRulesRouter from "./routes/customRules.routes";
 import analyticsRouter from "./routes/analytics.routes";
 import integrationsRouter from "./routes/integrations.routes";
 import { internalRouter } from "./routes/internal.routes";
-import { scanRateLimit, publicRateLimit, apiRateLimit } from "./middleware/rateLimit";
+import { apiRateLimit } from "./middleware/rateLimit";
 import { initializeScanner } from "./scanner/initialization";
 import { backfillFindingHistory } from "./patrol/findingHistory";
 import { backfillApiKeys, backfillHashedApiKeys } from "./patrol/apiKeys";
@@ -35,13 +35,24 @@ app.use(billingWebhookRouter);
 
 app.use(express.json());
 app.use(healthRouter);
+// apiRateLimit is intentionally the only rate limiter mounted app-wide —
+// scanRateLimit/publicRateLimit used to be mounted the same way
+// (`app.use(scanRateLimit, scansRouter)`), but since that middleware form
+// runs for every request that reaches this point in the stack regardless
+// of which router ends up handling it, it meant EVERY API call — not just
+// scan submissions — was consuming scanRateLimit's 30-requests-per-minute
+// budget (and every call was also consuming publicRateLimit's, twice
+// over). Both are now applied per-route, inside the routers that actually
+// need them (see scans.routes.ts, scanJobs.routes.ts, events.routes.ts,
+// badge.routes.ts), matching how auth.routes.ts already scopes its own
+// stricter authLimiter to just signup/login/forgot-password/reset-password.
 app.use(apiRateLimit);
-app.use(scanRateLimit, scansRouter);
-app.use(scanRateLimit, scanJobsRouter);
+app.use(scansRouter);
+app.use(scanJobsRouter);
 app.use(projectsRouter);
-app.use(publicRateLimit, eventsRouter);
+app.use(eventsRouter);
 app.use(authRouter);
-app.use(publicRateLimit, badgeRouter);
+app.use(badgeRouter);
 app.use(billingRouter);
 app.use('/api/custom-rules', customRulesRouter);
 app.use('/api/analytics', analyticsRouter);

@@ -167,8 +167,19 @@ router.get(
     // Get recent anomalies
     const anomalies = getAnomalies(projectId, 5, 0.7);
 
-    // Get model status
-    const modelStatus = getModelStatus(projectId);
+    // Get model status. getModelStatus() returns null until a model has
+    // actually been trained for this project — true for every project by
+    // default, since nothing trains one automatically — so this needs the
+    // same "not trained yet" fallback the dedicated /model-status endpoint
+    // above already has, just in the flat shape this response (and the
+    // frontend's ModelStatus component) actually uses.
+    const modelStatus = getModelStatus(projectId) ?? {
+      model_type: null,
+      is_active: false,
+      trained_at: null,
+      training_samples: 0,
+      accuracy: null,
+    };
 
     res.json({
       metrics: {

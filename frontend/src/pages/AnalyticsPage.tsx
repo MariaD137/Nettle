@@ -315,10 +315,16 @@ function BaselineChart({ baselines }: BaselineChartProps) {
 }
 
 interface ModelStatusProps {
-  status: ModelStatus;
+  status: ModelStatus | null | undefined;
 }
 
 function ModelStatus({ status }: ModelStatusProps) {
+  // The backend now always sends a real object (a "not trained yet"
+  // default when no model exists), but this stays defensive rather than
+  // trusting that forever — a null/undefined status here previously took
+  // the whole page down with it (no error boundary above this component).
+  if (!status) return null;
+
   const statusText = status.is_active ? 'Active' : 'Inactive';
   const statusColor = status.is_active ? '#00aa00' : '#999';
 
@@ -346,7 +352,7 @@ function ModelStatus({ status }: ModelStatusProps) {
         )}
         <div className="status-item">
           <label>Training Samples</label>
-          <div className="status-value">{status.training_samples.toLocaleString()}</div>
+          <div className="status-value">{(status.training_samples ?? 0).toLocaleString()}</div>
         </div>
         {status.accuracy && (
           <div className="status-item">
