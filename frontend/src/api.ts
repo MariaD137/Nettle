@@ -1,5 +1,26 @@
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8080";
 
+// import.meta.env.PROD is a real Vite build-time flag (true for `vite
+// build`, false for the dev server) — this only fires for an actual
+// production build missing the var, never for local dev, which keeps the
+// localhost fallback above exactly as it was. A production build pointed
+// at nothing would otherwise silently send every request to the visiting
+// user's own machine — a confusing wall of failed network calls instead
+// of one clear error at load time. Deliberately a function called from
+// main.tsx rather than a bare top-level throw in this module: an
+// unconditional-looking throw at module-evaluation time confused Vite's
+// Rolldown bundler's dead-code analysis into stripping this module's
+// later exports (verified — a real production build broke this way
+// before this was moved into a function).
+export function assertApiBaseConfigured(): void {
+  if (import.meta.env.PROD && !import.meta.env.VITE_API_BASE_URL) {
+    throw new Error(
+      "VITE_API_BASE_URL is not set in this production build — the app has no API to talk to. " +
+        "Set it at build time (see .env.example and AWS_GITHUB_DEPLOYMENT.md)."
+    );
+  }
+}
+
 export interface User {
   id: string;
   email: string;

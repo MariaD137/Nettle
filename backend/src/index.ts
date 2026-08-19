@@ -20,16 +20,25 @@ import { adminRouter } from "./routes/admin.routes";
 import { syncAdminEmails } from "./auth/users";
 import { logger } from "./observability/logger";
 import { incrementCounter, Metric } from "./observability/metrics";
+import { getAllowedOrigins } from "./corsConfig";
 
 const app = express();
 const PORT = process.env.PORT || 8080;
 
-// The dashboard is a separate origin from the API (see frontend/) — CORS is
-// a real production need here, not just a dev convenience. Wide open for
-// now since every route that returns account-specific data already requires
-// a bearer token, not a cookie, so there's no CSRF surface from a permissive
-// origin policy the way there would be with cookie-based auth.
-app.use(cors());
+// The dashboard is a separate origin from the API (see frontend/). Every
+// route that returns account-specific data requires a bearer token, not a
+// cookie, so a permissive origin policy was never a CSRF hole — but
+// restricting it to the real frontend origin(s) is still real
+// defense-in-depth (an XSS or malicious extension that got hold of a
+// token benefits less from also being able to read cross-origin
+// responses from any site), so it's no longer wide open.
+//
+// See corsConfig.ts — with neither CORS_ALLOWED_ORIGINS nor FRONTEND_URL
+// set (local dev by default), this reflects whatever origin actually
+// asks, same as the old cors() default, so no existing dev workflow breaks.
+const allowedOrigins = getAllowedOrigins();
+
+app.use(cors(allowedOrigins.length > 0 ? { origin: allowedOrigins } : undefined));
 
 // Must be mounted BEFORE express.json(): Stripe signs the exact raw request
 // bytes, and constructEvent() verifies against those same raw bytes. If
