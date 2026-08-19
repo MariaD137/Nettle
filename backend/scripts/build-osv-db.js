@@ -33,6 +33,17 @@ db.exec(`
     summary TEXT NOT NULL
   );
   CREATE INDEX idx_vuln_package ON vulnerabilities(package);
+
+  -- Single-row table recording when this snapshot was actually built, so
+  -- scanOSVVulnerabilities() can report real freshness instead of no
+  -- freshness signal at all. Additive: osvVulnerabilities.ts falls back
+  -- gracefully (status UNKNOWN) for any .db file built before this table
+  -- existed.
+  CREATE TABLE metadata (
+    generated_at TEXT NOT NULL,
+    record_count INTEGER NOT NULL,
+    source TEXT NOT NULL
+  );
 `);
 
 function severityLabel(record) {
@@ -87,6 +98,11 @@ for (const file of files) {
     }
   }
 }
+db.prepare("INSERT INTO metadata (generated_at, record_count, source) VALUES (?, ?, ?)").run(
+  new Date().toISOString(),
+  rowsInserted,
+  "osv.dev npm bulk export"
+);
 db.exec("COMMIT");
 
 console.log(`Processed ${filesProcessed} files, inserted ${rowsInserted} npm vulnerability ranges.`);

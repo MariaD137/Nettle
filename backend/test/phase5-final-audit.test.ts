@@ -59,11 +59,25 @@ test("Phase 5: Audit report categorizes by priority", () => {
   assert.ok(report.includes("Low (L-1 to L-16)"));
 });
 
-test("Phase 5: Critical items are in PASS status", () => {
+test("Phase 5: two of three critical items genuinely PASS; C-2 honestly reports it does not", () => {
+  // C-2 (worker isolation) was previously marked PASS on the strength of
+  // workerIsolation.ts existing, without checking that anything actually
+  // calls it — it doesn't; the real scan pipeline runs analysis in-process,
+  // and workerIsolation.ts's own task handler is a stub. This test guards
+  // against that specific false-positive pattern recurring, not just
+  // against the count going down.
   const critical = getItemsByStatus("PASS").filter((i) => i.id.startsWith("C"));
 
-  assert.ok(critical.length >= 3, "Should have 3 critical items implemented");
-  assert.ok(critical.every((i) => i.testCount > 0), "Each should have tests");
+  assert.ok(critical.length >= 2, "C-1 and C-3 should be implemented");
+  assert.ok(critical.every((i) => i.testCount > 0), "Each PASS item should have tests");
+  assert.ok(
+    critical.every((i) => i.id !== "C-2"),
+    "C-2 must not be reported PASS while workerIsolation.ts is unwired dead code"
+  );
+
+  const c2 = getItemsByStatus("FAIL").find((i) => i.id === "C-2");
+  assert.ok(c2, "C-2 should be explicitly FAIL, not silently dropped");
+  assert.ok(c2!.evidence.includes("not imported by the real scan pipeline"));
 });
 
 test("Phase 5: High priority items are mostly PASS", () => {

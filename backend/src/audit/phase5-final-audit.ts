@@ -106,15 +106,17 @@ const GAP_AUDIT: GapItem[] = [
     category: "High",
     title: "OSV Database Versioning & Freshness",
     description: "Track vulnerability database version, timestamp, confidence",
-    status: "FAIL",
-    implementedBy: ["src/scanner/osvVersioning.ts"],
+    status: "PASS",
+    implementedBy: ["src/scanner/osvVulnerabilities.ts", "backend/scripts/build-osv-db.js"],
     evidence:
-      "osvVersioning.ts implements a full OSVDatabaseMetadata/freshness API, but it is not called by the " +
-      "real OSV lookup path (osvVulnerabilities.ts reads directly from the bundled static database with no " +
-      "metadata table; verified by repo-wide grep — this audit file was osvVersioning.ts's only other " +
-      "importer). Scan reports do not currently show database version, age, or a stale-database warning. " +
-      "Re-verify once osvVersioning.ts is actually wired into the scan pipeline.",
-    testCount: 15,
+      "build-osv-db.js now writes a metadata table (generated_at, record_count, source) alongside the " +
+      "vulnerabilities table it already built. getOSVDatabaseFreshness() in osvVulnerabilities.ts reads it " +
+      "and is called directly from scanOSVVulnerabilities() on every scan, so every report carries a real " +
+      "CURRENT/STALE/UNKNOWN status, database age, and record count — not the osvVersioning.ts module, which " +
+      "remains unused dead code (see its own note, if re-added to this table). The currently-bundled .db file " +
+      "pre-dates this table and correctly reports UNKNOWN rather than a fabricated freshness value until it " +
+      "is rebuilt.",
+    testCount: 8,
   },
   {
     id: "H-6",

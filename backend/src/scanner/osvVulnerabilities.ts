@@ -6,6 +6,56 @@ import { loadLockfileGraph, findDependencyPaths } from "./lockfileGraph";
 
 const DB_PATH = path.join(__dirname, "osv-data", "npm-vulnerabilities.db");
 
+// A bulk OSV export is a point-in-time snapshot, not a live feed (see
+// scripts/build-osv-db.js) — this is how long a snapshot is considered
+// current before findings should be caveated as possibly missing newer
+// disclosures.
+const STALE_AFTER_DAYS = 30;
+
+export interface OSVDatabaseFreshness {
+  status: "CURRENT" | "STALE" | "UNKNOWN";
+  generatedAt: string | null;
+  ageDays: number | null;
+  recordCount: number | null;
+  source: string;
+}
+
+/**
+ * Reports the real freshness of the bundled OSV database — when it was
+ * actually built and how many records it has — by reading the metadata
+ * table build-osv-db.js writes. Databases built before that table existed
+ * (or a missing database file) report UNKNOWN rather than a fabricated
+ * freshness value.
+ */
+export function getOSVDatabaseFreshness(dbPath: string = DB_PATH): OSVDatabaseFreshness {
+  if (!fs.existsSync(dbPath)) {
+    return { status: "UNKNOWN", generatedAt: null, ageDays: null, recordCount: null, source: "none (database missing)" };
+  }
+
+  const db = new DatabaseSync(dbPath, { readOnly: true });
+  try {
+    const row = db.prepare("SELECT generated_at, record_count, source FROM metadata LIMIT 1").get() as
+      | { generated_at: string; record_count: number; source: string }
+      | undefined;
+    if (!row) {
+      return { status: "UNKNOWN", generatedAt: null, ageDays: null, recordCount: null, source: "unknown (pre-dates freshness tracking)" };
+    }
+    const ageDays = Math.floor((Date.now() - new Date(row.generated_at).getTime()) / (1000 * 60 * 60 * 24));
+    return {
+      status: ageDays <= STALE_AFTER_DAYS ? "CURRENT" : "STALE",
+      generatedAt: row.generated_at,
+      ageDays,
+      recordCount: row.record_count,
+      source: row.source,
+    };
+  } catch {
+    // metadata table doesn't exist on this build of the .db file.
+    return { status: "UNKNOWN", generatedAt: null, ageDays: null, recordCount: null, source: "unknown (pre-dates freshness tracking)" };
+  } finally {
+    db.close();
+  }
+}
+
 interface VulnRow {
   package: string;
   vuln_id: string;
@@ -89,6 +139,29 @@ export function scanOSVVulnerabilities(targetRoot: string): { findings: Finding[
   const findings: Finding[] = [];
   let anyFound = false;
 
+  const freshness = getOSVDatabaseFreshness();
+  if (freshness.status === "STALE") {
+    findings.push({
+      severity: "low",
+      category: "Dependencies",
+      title: `OSV vulnerability database is stale (${freshness.ageDays} days old)`,
+      detail: `The bundled dependency vulnerability database was generated ${freshness.ageDays} days ago (${freshness.generatedAt}, ${freshness.recordCount} records, source: ${freshness.source}). Vulnerabilities disclosed after that date will not be detected by this scan.`,
+      file: null,
+      line: null,
+      remediation: "Rebuild the OSV database with a fresh export: node scripts/build-osv-db.js",
+    });
+  } else if (freshness.status === "UNKNOWN") {
+    findings.push({
+      severity: "low",
+      category: "Dependencies",
+      title: "OSV vulnerability database freshness could not be determined",
+      detail: "This build of the bundled dependency vulnerability database pre-dates freshness tracking, so its age is unknown. Results below may be based on stale or current data — there's no way to tell from this build.",
+      file: null,
+      line: null,
+      remediation: "Rebuild the OSV database with a fresh export: node scripts/build-osv-db.js",
+    });
+  }
+
   for (const [name, range] of Object.entries(deps)) {
     const version = range.replace(/^[^\d]*/, "");
     const rows = query.all(name) as unknown as VulnRow[];
@@ -122,6 +195,13 @@ export function scanOSVVulnerabilities(targetRoot: string): { findings: Finding[
   const passed: Pass[] = anyFound
     ? []
     : [{ category: "Dependencies", title: "No known OSV vulnerabilities detected in declared dependencies" }];
+
+  if (freshness.status === "CURRENT") {
+    passed.push({
+      category: "Dependencies",
+      title: `OSV vulnerability database is current (${freshness.ageDays} day${freshness.ageDays === 1 ? "" : "s"} old, ${freshness.recordCount} records, generated ${freshness.generatedAt})`,
+    });
+  }
 
   return { findings, passed };
 }
