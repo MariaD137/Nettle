@@ -173,10 +173,49 @@ test("C-3: uncompressed size limit enforced", () => {
         () =>
           safeExtractZip(zipPath, extractDir, {
             maxUncompressedBytes: 500 * 1024 * 1024, // 500 MB limit
+            // Raised well above the 600MB test file so this test isolates
+            // the aggregate check specifically — see the dedicated
+            // "individual file size limit enforced" test above for the
+            // per-file cap on its own.
+            maxFileSizeBytes: 700 * 1024 * 1024,
             timeoutMs: 60_000,
           }),
         /exceeds limit/i,
         "Uncompressed size limit should be enforced"
+      );
+    } finally {
+      fs.rmSync(extractDir, { recursive: true, force: true });
+    }
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
+test("C-3: individual file size limit enforced (a single oversized file inside an otherwise-small archive)", () => {
+  // Distinct from the aggregate uncompressed-size test above: one file
+  // here is over the per-file cap even though the archive's total is well
+  // under maxUncompressedBytes — this is what actually catches a single
+  // huge file hidden among many small ones.
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "filesize-test-"));
+  try {
+    const bigFile = path.join(tmpDir, "big.bin");
+    fs.writeFileSync(bigFile, Buffer.alloc(2 * 1024 * 1024)); // 2 MB
+    fs.writeFileSync(path.join(tmpDir, "small.txt"), "tiny");
+
+    const zipPath = path.join(tmpDir, "onebig.zip");
+    execFileSync("zip", ["-q", "-0", zipPath, "big.bin", "small.txt"], { cwd: tmpDir });
+
+    const extractDir = fs.mkdtempSync(path.join(os.tmpdir(), "extract-"));
+    try {
+      assert.throws(
+        () =>
+          safeExtractZip(zipPath, extractDir, {
+            maxUncompressedBytes: 500 * 1024 * 1024, // aggregate cap not hit
+            maxFileSizeBytes: 1024 * 1024, // 1 MB — big.bin exceeds this alone
+            timeoutMs: 60_000,
+          }),
+        /individual size limit/i,
+        "A single oversized file should be rejected even under the aggregate cap"
       );
     } finally {
       fs.rmSync(extractDir, { recursive: true, force: true });

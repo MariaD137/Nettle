@@ -230,25 +230,40 @@ now real code, just without the queue in between yet (see known gaps).
 
 ## Known gaps
 
-**Tier 1 sandboxing.** The `/api/scans` endpoint currently extracts and reads
-the uploaded zip directly on the host running the API. That's fine for local
-development — it is **not** fine for production, since this endpoint runs
-static analysis over code an attacker fully controls. Before this goes
-anywhere near real traffic, extraction and scanning need to happen in an
-isolated, network-less sandbox (see the AWS architecture notes: ECS Fargate
-tasks with no NAT/egress, or a service like e2b/Modal purpose-built for
-executing untrusted code). A prior module (`scanner/workerIsolation.ts`)
-claimed to provide this via a worker-thread pool; it was dead code (never
-imported by the real scan pipeline) whose task handler was a stub, and has
-been removed. What actually runs today: `scanner/scanWorker.ts` executes a
-scan on a `worker_thread` for concurrency (so a slow scan doesn't block the
-HTTP event loop), with a real memory ceiling via Node's `resourceLimits`
-(`NETTLE_SCAN_WORKER_MAX_MEMORY_MB`) — a genuine but partial mitigation,
-not a security boundary, since worker_threads share the host process's
-OS-level privileges. The git clone / zip extraction / Semgrep invocation
-against untrusted input still run via `execFileSync` in the same
-container/filesystem/network as the API. Nothing in the codebase claims
-otherwise as of this note.
+**Tier 1 sandboxing — architecture exists in source, not yet deployed.**
+`/api/scans`, `/api/scans/repo`, and the async job queue (`jobs/scanJobs.ts`)
+no longer extract or clone untrusted input directly in this process — every
+source scan now goes through `scanner/isolatedRunner.ts`, which selects one
+of two backends via `NETTLE_SCANNER_BACKEND`:
+
+- **`worker_thread` (default, and the only backend active without further
+  AWS deployment):** `scanner/scanWorker.ts` / `scanner/workerThreadRunner.ts`
+  run the scan on a `worker_thread` for concurrency and a real memory
+  ceiling via Node's `resourceLimits` (`NETTLE_SCAN_WORKER_MAX_MEMORY_MB`)
+  — a genuine but partial mitigation, **not** a security boundary, since
+  worker_threads share the host process's OS-level privileges. The git
+  clone / zip extraction / Semgrep invocation against untrusted input still
+  run via `execFileSync` in the same container/filesystem/network as the
+  API under this backend.
+- **`fargate`:** each scan runs as a disposable ECS Fargate task with its
+  own IAM roles, its own security group with no network path to RDS, no
+  database or application secrets, and hard CPU/memory/ephemeral-storage/
+  timeout limits — a real process/microVM boundary, not just a thread. See
+  `scanner/ISOLATION.md` for the full architecture, threat model, and an
+  explicit list of what this is *not* (worker threads are not an OS
+  sandbox; Docker alone doesn't make arbitrary code safe). This backend
+  only activates once `infra/lib/scanner-stack.ts` has actually been
+  deployed and its outputs wired into the API's environment (see
+  `api-stack.ts`'s `scannerClusterArn` etc. props and `bin/app.ts`'s
+  REQUIRES AWS CONFIGURATION note) — **that deployment has not happened**;
+  this repository only contains the source code and a verified `cdk synth`
+  output for it.
+
+A prior module (`scanner/workerIsolation.ts`) claimed to provide isolation
+via a worker-thread pool; it was dead code (never imported by the real scan
+pipeline) whose task handler was a stub, and has been removed. Nothing in
+the codebase claims the `worker_thread` backend is a security boundary — it
+isn't, and the `fargate` backend only becomes real once actually deployed.
 
 **Billing is untested against a live Stripe account.** The webhook's
 signature verification is genuinely tested (see above), but the actual

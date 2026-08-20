@@ -3,6 +3,7 @@ import { App } from "aws-cdk-lib";
 import { NettleNetworkStack } from "../lib/network-stack";
 import { NettleApiStack } from "../lib/api-stack";
 import { NettleDatabaseStack } from "../lib/database-stack";
+import { NettleScannerStack } from "../lib/scanner-stack";
 import { NettleFrontendStack } from "../lib/frontend-stack";
 import { NettleCiStack } from "../lib/ci-stack";
 
@@ -36,6 +37,38 @@ const api = new NettleApiStack(app, "Nettle-Api", {
   // be deployed or updated independently of Nettle-Database. Whether to
   // couple them that tightly is an operator decision for whoever actually
   // deploys this, not something to decide by default here.
+  //
+  // REQUIRES AWS CONFIGURATION: same story as the database values above,
+  // for backend/src/scanner/ISOLATION.md's isolated-Fargate-task
+  // architecture. These only exist once a human has deployed
+  // Nettle-Scanner (`cdk deploy Nettle-Scanner`) and, for
+  // scannerCallbackBaseUrl specifically, ALSO already deployed Nettle-Api
+  // at least once to learn its own ServiceUrl (see scanner-stack.ts's and
+  // api-stack.ts's doc comments for why that one can't be wired
+  // automatically even in principle). Leaving these unset is not a broken
+  // state: NETTLE_SCANNER_BACKEND stays unset, and the app runs its
+  // existing worker_thread scanner backend exactly as it does today.
+  //   scannerClusterArn: "arn:aws:ecs:...:cluster/nettle-scanner",
+  //   scannerTaskDefinitionArn: "arn:aws:ecs:...:task-definition/nettle-scanner:1",
+  //   scannerTaskDefinitionFamily: "nettle-scanner",
+  //   scannerSecurityGroupId: "sg-...",
+  //   scannerSubnetIds: ["subnet-...", "subnet-..."],
+  //   scanInputBucketName: "...",
+  //   scanInputBucketArn: "arn:aws:s3:::...",
+  //   scannerTaskRoleArn: "arn:aws:iam::...:role/...",
+  //   scannerExecutionRoleArn: "arn:aws:iam::...:role/...",
+  //   scannerCallbackBaseUrl: "https://....awsapprunner.com",
+});
+
+// Same "prepared, not deployed" status as Nettle-Database: provisioning
+// the isolated scan-task infrastructure is a deliberate step (see
+// scanner-stack.ts and backend/src/scanner/ISOLATION.md), not a side
+// effect of deploying the API. Kept in the app tree so `cdk synth
+// Nettle-Scanner` / `cdk deploy Nettle-Scanner` work when that step is
+// actually taken.
+new NettleScannerStack(app, "Nettle-Scanner", {
+  env,
+  vpc: network.vpc,
 });
 
 // Not deployed as part of the default flow: provisioning a real RDS

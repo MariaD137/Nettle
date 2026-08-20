@@ -40,6 +40,41 @@ export interface NettleApiStackProps extends StackProps {
    */
   databaseSecretArn?: string;
   databaseEndpointAddress?: string;
+  /**
+   * Outputs from scanner-stack.ts (NettleScannerStack), if that stack has
+   * been deployed — wires NETTLE_SCANNER_BACKEND=fargate and the
+   * NETTLE_SCANNER_* env vars jobs/fargateScanner.ts requires into this
+   * service. Optional at the type level for the same reason
+   * databaseSecretArn/databaseEndpointAddress are: deploying the API stack
+   * must not *require* the scanner stack to exist first. Omitting these
+   * leaves NETTLE_SCANNER_BACKEND unset, which keeps the app on the
+   * worker_thread scanner backend (see scanner/isolatedRunner.ts) — a
+   * fully working default with zero AWS dependency, not a broken one.
+   *
+   * REQUIRES AWS CONFIGURATION: these values only exist once a human has
+   * deployed Nettle-Scanner (`cdk deploy Nettle-Scanner`) in a real AWS
+   * account and copied its outputs here (or into bin/app.ts) — nothing in
+   * this repository does that on its own.
+   */
+  scannerClusterArn?: string;
+  scannerTaskDefinitionArn?: string;
+  scannerSecurityGroupId?: string;
+  scannerSubnetIds?: string[];
+  scanInputBucketName?: string;
+  scanInputBucketArn?: string;
+  scannerTaskDefinitionFamily?: string;
+  scannerTaskRoleArn?: string;
+  scannerExecutionRoleArn?: string;
+  /**
+   * The API's own public URL, as a literal string copied from a prior
+   * deploy's ServiceUrl output — deliberately NOT `service.attrServiceUrl`
+   * referenced from within this same stack, which would be a circular
+   * reference (the service can't know its own generated URL while it's
+   * still being created). This is the same "deploy once without it, then
+   * copy the output back in and redeploy" bootstrapping this file already
+   * uses for databaseSecretArn/databaseEndpointAddress.
+   */
+  scannerCallbackBaseUrl?: string;
 }
 
 /**
@@ -101,6 +136,60 @@ export class NettleApiStack extends Stack {
         ],
       })
     );
+
+    // Least-privilege grant for the orchestrator side of ISOLATION.md's
+    // architecture: this instance role can launch and stop exactly one
+    // task definition family, in exactly one cluster, and can PassRole
+    // only the two roles scanner-stack.ts created for that task — it has
+    // no broader ECS or IAM permission at all. Every ARN below is a
+    // literal string copied from scanner-stack.ts's outputs (same
+    // deploy-then-copy-the-output pattern as databaseSecretArn above), not
+    // a live cross-stack reference — deploying Nettle-Api must not require
+    // Nettle-Scanner to already exist.
+    if (props.scannerTaskDefinitionFamily && props.scannerClusterArn) {
+      const scannerTaskDefFamilyArn = this.formatArn({
+        service: "ecs",
+        resource: "task-definition",
+        resourceName: `${props.scannerTaskDefinitionFamily}:*`,
+      });
+      // ECS's own documented pattern for scoping RunTask/StopTask to one
+      // cluster: the task-definition ARN is the resource, and the
+      // `ecs:cluster` condition key (not a resource ARN) is what actually
+      // restricts which cluster it can run in.
+      instanceRole.addToPolicy(
+        new PolicyStatement({
+          actions: ["ecs:RunTask"],
+          resources: [scannerTaskDefFamilyArn],
+          conditions: { ArnEquals: { "ecs:cluster": props.scannerClusterArn } },
+        })
+      );
+      // StopTask's resource is the running task's own ARN
+      // (arn:...:task/<cluster-name>/<task-id>), not the task definition —
+      // cluster name is the last path segment of scannerClusterArn.
+      const scannerClusterName = props.scannerClusterArn.split("/").pop();
+      instanceRole.addToPolicy(
+        new PolicyStatement({
+          actions: ["ecs:StopTask"],
+          resources: [this.formatArn({ service: "ecs", resource: "task", resourceName: `${scannerClusterName}/*` })],
+        })
+      );
+    }
+    if (props.scannerTaskRoleArn && props.scannerExecutionRoleArn) {
+      instanceRole.addToPolicy(
+        new PolicyStatement({
+          actions: ["iam:PassRole"],
+          resources: [props.scannerTaskRoleArn, props.scannerExecutionRoleArn],
+        })
+      );
+    }
+    if (props.scanInputBucketArn) {
+      instanceRole.addToPolicy(
+        new PolicyStatement({
+          actions: ["s3:PutObject"],
+          resources: [`${props.scanInputBucketArn}/uploads/*`],
+        })
+      );
+    }
 
     const vpcConnector = new CfnVpcConnector(this, "ApiVpcConnector", {
       subnets: props.vpc.privateSubnets.map((s) => s.subnetId),
@@ -165,6 +254,36 @@ export class NettleApiStack extends Stack {
         ]
       : [];
 
+    // Only set NETTLE_SCANNER_BACKEND=fargate (switching the app off its
+    // default worker_thread scanner backend — see scanner/isolatedRunner.ts)
+    // once every value the fargate path actually needs is present. A
+    // partially-configured scanner stack should leave the app on its
+    // working default, not half-enable an isolation path that's missing a
+    // required setting and would fail every scan. None of these are
+    // secrets — they're cluster/task/network identifiers, safe as plain
+    // runtimeEnvironmentVariables (compare runtimeEnvironmentSecrets above,
+    // reserved for Stripe/DB/token-encryption values).
+    const scannerConfigured = Boolean(
+      props.scannerClusterArn &&
+        props.scannerTaskDefinitionArn &&
+        props.scannerSecurityGroupId &&
+        props.scannerSubnetIds &&
+        props.scannerSubnetIds.length > 0 &&
+        props.scanInputBucketName &&
+        props.scannerCallbackBaseUrl
+    );
+    const scannerEnvVars = scannerConfigured
+      ? [
+          { name: "NETTLE_SCANNER_BACKEND", value: "fargate" },
+          { name: "NETTLE_SCANNER_CLUSTER_ARN", value: props.scannerClusterArn! },
+          { name: "NETTLE_SCANNER_TASK_DEFINITION_ARN", value: props.scannerTaskDefinitionArn! },
+          { name: "NETTLE_SCANNER_SECURITY_GROUP_ID", value: props.scannerSecurityGroupId! },
+          { name: "NETTLE_SCANNER_SUBNET_IDS", value: props.scannerSubnetIds!.join(",") },
+          { name: "NETTLE_SCAN_INPUT_BUCKET", value: props.scanInputBucketName! },
+          { name: "NETTLE_SCANNER_CALLBACK_BASE_URL", value: props.scannerCallbackBaseUrl! },
+        ]
+      : [];
+
     const service = new CfnService(this, "ApiService", {
       serviceName: "nettle-api",
       autoScalingConfigurationArn: autoScaling.attrAutoScalingConfigurationArn,
@@ -182,6 +301,7 @@ export class NettleApiStack extends Stack {
               { name: "NODE_ENV", value: "production" },
               { name: "PORT", value: "8080" },
               ...databaseEnvVars,
+              ...scannerEnvVars,
             ],
             // Every value here comes from Secrets Manager, never from CDK
             // source or this repository — see APP_SECRETS_NAME's doc

@@ -20,6 +20,8 @@ import fs from "fs";
 import { sourceScanSteps, URL_SCAN_STEPS, type ScanStepEvent } from "../scanner/index";
 import type { ScanReport } from "../scanner/types";
 import type { ScanWorkerInput, ScanWorkerMessage } from "../scanner/scanWorker";
+import { scannerBackend } from "../scanner/isolatedRunner";
+import { launchFargateScan, stopFargateScanTask, type FargateScanInput } from "./fargateScanner";
 import { incrementCounter, observeDuration, Metric } from "../observability/metrics";
 import { logger } from "../observability/logger";
 
@@ -78,6 +80,11 @@ interface InternalJob {
   worker: Worker | null;
   tmpDir: string | null;
   timeoutHandle: NodeJS.Timeout | null;
+  // Backend-agnostic cancellation: worker.terminate() for the worker_thread
+  // backend, ecs:StopTask (via stopFargateScanTask) for the fargate backend.
+  // Set once startJob picks a backend; null before that (a still-queued job
+  // has nothing running yet to cancel).
+  cancelFn: (() => void) | null;
 }
 
 const jobs = new Map<string, InternalJob>();
@@ -133,6 +140,7 @@ export function createScanJob(input: ScanWorkerInput, meta: ScanJobMeta): ScanJo
     worker: null,
     tmpDir: null,
     timeoutHandle: null,
+    cancelFn: null,
   };
   jobs.set(id, job);
   queue.push(id);
@@ -168,6 +176,16 @@ function startJob(job: InternalJob) {
   job.status = "running";
   job.startedAt = new Date().toISOString();
 
+  // URL scans never touch untrusted file content (see isolatedRunner.ts's
+  // module doc) and always stay on the in-process worker_thread path
+  // regardless of NETTLE_SCANNER_BACKEND — there is nothing for a Fargate
+  // task to isolate there. Everything else (upload/repo) honors the backend
+  // switch, same as the synchronous POST /api/scans* routes.
+  if (job.input.mode !== "url" && scannerBackend() === "fargate") {
+    startFargateJob(job);
+    return;
+  }
+
   const { file, execArgv } = workerEntry();
   const memoryLimitMb = workerMemoryLimitMb();
   const worker = new Worker(file, {
@@ -176,6 +194,7 @@ function startJob(job: InternalJob) {
     resourceLimits: { maxOldGenerationSizeMb: memoryLimitMb, maxYoungGenerationSizeMb: Math.min(64, memoryLimitMb) },
   });
   job.worker = worker;
+  job.cancelFn = () => worker.terminate();
 
   worker.on("message", (message: ScanWorkerMessage) => {
     if (message.type === "progress") {
@@ -206,9 +225,43 @@ function startJob(job: InternalJob) {
     if (job.status !== "running") return;
     const stalledStep = job.steps.find((s) => s.status === "running");
     const stageLabel = stalledStep ? stalledStep.label : "an unknown stage";
-    job.worker?.terminate();
+    job.cancelFn?.();
     finishJob(job, "failed", {
       error: `Scan timed out after ${Math.round(jobTimeoutMs() / 1000)}s while running: ${stageLabel}`,
+    });
+  }, jobTimeoutMs());
+  job.timeoutHandle.unref();
+}
+
+/**
+ * The Fargate-backed counterpart to the worker_thread branch above — same
+ * job bookkeeping (status, timeout, cancellation), but the actual scan runs
+ * in an isolated ECS task (see jobs/fargateScanner.ts and
+ * scanner/ISOLATION.md) instead of a thread in this process. There is no
+ * per-step progress channel from an isolated task, so steps stay "pending"
+ * until finishJob marks them all "done" on success; a failure leaves them
+ * as they were, same as an unstarted worker-thread job that failed before
+ * its first progress message.
+ */
+function startFargateJob(job: InternalJob) {
+  job.cancelFn = () => {
+    void stopFargateScanTask(job.id);
+  };
+
+  launchFargateScan(job.input as FargateScanInput, job.id)
+    .then((report) => finishJob(job, "completed", { report }))
+    .catch((err) => finishJob(job, "failed", { error: (err as Error).message || String(err) }));
+
+  // Same whole-job ceiling as the worker-thread path, layered on top of
+  // fargateScanner.ts's own registerPendingScan timeout. Intentional
+  // redundancy (see ISOLATION.md) — finishJob's idempotency guard makes a
+  // second timeout firing a no-op if the fargate-side one already resolved
+  // the job first.
+  job.timeoutHandle = setTimeout(() => {
+    if (job.status !== "running") return;
+    job.cancelFn?.();
+    finishJob(job, "failed", {
+      error: `Scan timed out after ${Math.round(jobTimeoutMs() / 1000)}s`,
     });
   }, jobTimeoutMs());
   job.timeoutHandle.unref();
@@ -237,8 +290,14 @@ function finishJob(job: InternalJob, status: "completed" | "failed" | "cancelled
     clearTimeout(job.timeoutHandle);
     job.timeoutHandle = null;
   }
-  if (job.worker) {
+  // runningCount is incremented exactly once, in startJob, for every job
+  // regardless of backend — decrementing on job.startedAt (rather than
+  // job.worker, which stays null for the whole fargate branch) is what
+  // keeps the concurrency ceiling accurate for both backends.
+  if (job.startedAt) {
     runningCount--;
+  }
+  if (job.worker) {
     job.worker.removeAllListeners();
     job.worker = null;
   }
@@ -290,9 +349,11 @@ export function cancelScanJob(id: string): boolean {
     return true;
   }
 
-  // Running: terminate the worker outright. This is real cancellation, not
-  // a client giving up on waiting — the child process actually stops.
-  job.worker?.terminate();
+  // Running: stop it outright (worker.terminate() or ecs:StopTask,
+  // whichever backend this job used — see job.cancelFn). This is real
+  // cancellation, not a client giving up on waiting — the running work
+  // actually stops, and no customer-controlled process is left behind.
+  job.cancelFn?.();
   finishJob(job, "cancelled", {});
   return true;
 }
@@ -329,7 +390,7 @@ sweepInterval.unref();
 
 /** Test-only: reset all in-memory state between test files/runs. */
 export function _resetScanJobsForTests(): void {
-  for (const job of jobs.values()) job.worker?.terminate();
+  for (const job of jobs.values()) job.cancelFn?.();
   jobs.clear();
   queue.length = 0;
   runningCount = 0;

@@ -16,6 +16,8 @@
     "db:migrate:postgres": "tsx src/db/postgres/migrate.ts"
   },
   "dependencies": {
+    "@aws-sdk/client-ecs": "^3.1114.0",
+    "@aws-sdk/client-s3": "^3.1114.0",
     "@types/geoip-lite": "^1.4.4",
     "@types/nodemailer": "^8.0.1",
     "cors": "^2.8.6",

@@ -3,9 +3,8 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 import multer from "multer";
-import { runScan, runUrlScan, SsrfBlockedError, UrlScanUnreachableError } from "../scanner";
-import { resolveScanRoot } from "../scanner/resolveScanRoot";
-import { cloneRepo } from "../scanner/gitAuth";
+import { runUrlScan, SsrfBlockedError, UrlScanUnreachableError } from "../scanner";
+import { runScanIsolated } from "../scanner/isolatedRunner";
 import { findProjectByApiKeyForScope, getDecryptedRepoAccessToken } from "../patrol/projects";
 import { recordScan } from "../patrol/scans";
 import { requireAuth, optionalAuth } from "../auth/middleware";
@@ -13,7 +12,6 @@ import { requireSubscription } from "../billing/subscription";
 import { resolveEntitlement } from "../billing/entitlement";
 import { applyScanAccess } from "../billing/scanAccess";
 import { reserveScanUsage, releaseScanUsage } from "../billing/scanQuota";
-import { safeExtractZip } from "../scanner/safeExtraction";
 import { scanRateLimit } from "../middleware/rateLimit";
 import { asyncHandler } from "../middleware/asyncHandler";
 import type { Request as ExpressRequest } from "express";
@@ -74,7 +72,7 @@ scansRouter.post("/api/scans", optionalAuth, scanRateLimit, upload.single("codeb
     return res.status(400).json({ error: "Upload a zip file under the 'codebase' field" });
   }
   if (path.extname(req.file.originalname).toLowerCase() !== ".zip") {
-    fs.unlinkSync(req.file.path);
+    fs.rmSync(req.file.path, { force: true });
     return res.status(400).json({ error: "Only .zip uploads are supported right now" });
   }
 
@@ -87,15 +85,16 @@ scansRouter.post("/api/scans", optionalAuth, scanRateLimit, upload.single("codeb
   const billedUserId = req.userId ?? upfrontProject?.userId;
   const { proceed, usageId } = await reserveOrRespond(billedUserId, upfrontProject?.id ?? null, "upload", res);
   if (!proceed) {
-    fs.unlinkSync(req.file.path);
+    fs.rmSync(req.file.path, { force: true });
     return;
   }
 
-  const extractDir = fs.mkdtempSync(path.join(os.tmpdir(), "nettle-scan-"));
   try {
-    safeExtractZip(req.file.path, extractDir);
-    const scanRoot = resolveScanRoot(extractDir);
-    const report = runScan(scanRoot);
+    // Extraction and scanning both happen outside this process now — see
+    // scanner/isolatedRunner.ts and scanner/ISOLATION.md. Neither backend
+    // it might select ever hands untrusted archive content back to this
+    // route; only the finished ScanReport crosses back.
+    const report = await runScanIsolated({ mode: "upload", zipPath: req.file.path });
 
     // Optional: if the request identifies a project (same API key the
     // monitoring middleware uses), persist the scan against it so the badge
@@ -133,8 +132,13 @@ scansRouter.post("/api/scans", optionalAuth, scanRateLimit, upload.single("codeb
 
     res.status(statusCode).json({ error: errorMsg, detail: msg });
   } finally {
-    fs.unlinkSync(req.file.path);
-    fs.rmSync(extractDir, { recursive: true, force: true });
+    // Both isolatedRunner backends already delete req.file.path themselves
+    // once they've consumed it (the worker thread's own finally block, or
+    // fargateScanner.ts right after its S3 upload) — this is a
+    // defense-in-depth fallback for any path that returned before that
+    // happened (the validation/quota checks above); force:true makes a
+    // second delete of an already-gone file a no-op instead of an error.
+    fs.rmSync(req.file.path, { force: true });
   }
 }));
 
@@ -164,11 +168,13 @@ scansRouter.post("/api/scans/repo", requireAuth, requireSubscription, scanRateLi
   // git, and never touches a log line, an error message, or the response.
   const repoToken = repoProject ? await getDecryptedRepoAccessToken(repoProject.id) : null;
 
-  const cloneDir = fs.mkdtempSync(path.join(os.tmpdir(), "nettle-repo-"));
   try {
-    cloneRepo(repoUrl, branch, cloneDir, repoToken);
-
-    const report = runScan(cloneDir);
+    // Cloning and scanning both happen outside this process now — see
+    // scanner/isolatedRunner.ts and scanner/ISOLATION.md. No cloneDir or
+    // finally-cleanup is needed here any more: the isolated worker/task
+    // owns its own clone directory (or container filesystem) end to end
+    // and removes it as part of its own cleanup.
+    const report = await runScanIsolated({ mode: "repo", repoUrl, branch, token: repoToken });
 
     let ownerUserId: string | undefined;
     if (repoProject) {
@@ -188,8 +194,6 @@ scansRouter.post("/api/scans/repo", requireAuth, requireSubscription, scanRateLi
       return res.status(400).json({ error: `Branch '${branch}' not found in the repository` });
     }
     res.status(422).json({ error: "Couldn't clone or scan the repository", detail: msg });
-  } finally {
-    fs.rmSync(cloneDir, { recursive: true, force: true });
   }
 }));
 

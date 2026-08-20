@@ -1,0 +1,52 @@
+# Image for the isolated Fargate scan task — see src/scanner/ISOLATION.md
+# and src/scanner/taskEntrypoint.ts. This is a SEPARATE, much smaller image
+# from backend/Dockerfile (the main API): it contains no Express server, no
+# route handlers, and (by construction, since taskEntrypoint.ts imports
+# nothing from db/, auth/, billing/, or integrations/) no code path that
+# could even reference a database credential or application secret. It
+# only ever runs one job, reports its result over one callback, and exits.
+#
+# Built and pushed to ECR as part of deploying infra/lib/scanner-stack.ts —
+# that deployment step is explicitly OUT OF SCOPE here (see ISOLATION.md's
+# "What's verified locally vs. requires AWS" section). This file only
+# defines what the image contains.
+
+# --- build stage ---
+FROM node:22-slim AS build
+WORKDIR /app
+COPY package*.json ./
+RUN npm ci
+COPY tsconfig.json ./
+COPY src ./src
+RUN npm run build
+
+# --- runtime stage ---
+FROM node:22-slim AS runtime
+WORKDIR /app
+ENV NODE_ENV=production
+
+# git is required to clone the target repository (repo-mode scans, see
+# src/scanner/gitAuth.ts). unzip is required to extract uploaded archives
+# (upload-mode scans, see src/scanner/safeExtraction.ts). python3/pip
+# install Semgrep, the real static analysis engine
+# (src/scanner/semgrepScanner.ts) — pinned to the same version as the main
+# API image so scan output doesn't drift between the two.
+RUN apt-get update && apt-get install -y --no-install-recommends git unzip python3 python3-pip \
+    && rm -rf /var/lib/apt/lists/* \
+    && pip3 install --no-cache-dir --break-system-packages "semgrep==1.65.0" cffi cryptography
+
+COPY package*.json ./
+RUN npm ci --omit=dev
+COPY --from=build /app/dist ./dist
+
+RUN addgroup --system nettle && adduser --system --ingroup nettle nettle
+USER nettle
+
+# No EXPOSE — this container serves no inbound traffic. It reads its job
+# from environment variables (set per-task by jobs/fargateScanner.ts's
+# RunTaskCommand override) and exits once it has posted its result or
+# error back to the API's callback endpoint. The ECS task definition
+# (infra/lib/scanner-stack.ts) runs this with a read-only root filesystem
+# plus a writable tmpfs mounted at /tmp, since this entrypoint only ever
+# writes to os.tmpdir().
+CMD ["node", "dist/scanner/taskEntrypoint.js"]

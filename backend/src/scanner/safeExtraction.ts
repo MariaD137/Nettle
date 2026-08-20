@@ -8,6 +8,7 @@ export interface ExtractionConfig {
   maxDepth?: number; // default 100
   maxRatio?: number; // default 10:1
   timeoutMs?: number; // default 30s
+  maxFileSizeBytes?: number; // default 50MB
 }
 
 const DEFAULTS: Required<ExtractionConfig> = {
@@ -16,6 +17,12 @@ const DEFAULTS: Required<ExtractionConfig> = {
   maxDepth: 100,
   maxRatio: 10,
   timeoutMs: 30_000,
+  // The aggregate maxUncompressedBytes above bounds total archive size, but
+  // doesn't stop one single huge file (well under the aggregate limit on
+  // its own, in an otherwise-small archive) from being handed to Semgrep's
+  // parser or read fully into memory by a scanner check. A single-file cap
+  // closes that independently of the aggregate one.
+  maxFileSizeBytes: 50 * 1024 * 1024, // 50 MB
 };
 
 /**
@@ -105,6 +112,11 @@ function verifyExtractedArchive(root: string, opts: Required<ExtractionConfig>):
         }
 
         const stat = fs.statSync(full);
+        if (stat.size > opts.maxFileSizeBytes) {
+          throw new Error(
+            `File exceeds individual size limit (max ${opts.maxFileSizeBytes / (1024 * 1024)} MB): ${path.relative(root, full)}`
+          );
+        }
         totalBytes += stat.size;
         if (totalBytes > opts.maxUncompressedBytes) {
           throw new Error(

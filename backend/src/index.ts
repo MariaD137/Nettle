@@ -12,6 +12,7 @@ import customRulesRouter from "./routes/customRules.routes";
 import analyticsRouter from "./routes/analytics.routes";
 import integrationsRouter from "./routes/integrations.routes";
 import { internalRouter } from "./routes/internal.routes";
+import { scanTaskCallbackRouter } from "./routes/scanTaskCallback.routes";
 import { apiRateLimit } from "./middleware/rateLimit";
 import { optionalAuth } from "./auth/middleware";
 import { initializeScanner } from "./scanner/initialization";
@@ -48,6 +49,14 @@ app.use(cors(allowedOrigins.length > 0 ? { origin: allowedOrigins } : undefined)
 // express.json() parsed the body first, the signature check would fail on
 // every real webhook delivery.
 app.use(billingWebhookRouter);
+
+// Also mounted before the app-wide express.json() (default 100kb limit) —
+// this router brings its own bigger-limit JSON parser (see
+// scanTaskCallback.routes.ts) because a real ScanReport for a large
+// repository can genuinely exceed 100kb, and a router mounted after the
+// app-wide parser already ran never gets a chance to re-parse the body
+// with a different limit.
+app.use(scanTaskCallbackRouter);
 
 app.use(express.json());
 
