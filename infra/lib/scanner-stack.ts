@@ -162,6 +162,17 @@ export class NettleScannerStack extends Stack {
     // Dockerfile.scanner-task's non-root USER) and none of them need any
     // elevated capability at all.
     linuxParameters.dropCapabilities(Capability.ALL);
+    // The container's root filesystem is read-only (see
+    // readonlyRootFilesystem below) — but taskEntrypoint.ts still needs
+    // somewhere to write the downloaded zip, its extraction directory, and
+    // the git clone directory (all under os.tmpdir(), i.e. /tmp). This is
+    // the ONLY writable location in the container: an in-memory tmpfs
+    // mounted at exactly /tmp, nowhere else. 1024 MiB comfortably covers
+    // safeExtraction.ts's 500MB aggregate archive cap plus the compressed
+    // zip itself, the git clone, and Semgrep's own scratch files, with
+    // headroom to spare — well short of the task's 2GB memory limit, which
+    // tmpfs usage counts against.
+    linuxParameters.addTmpfs({ containerPath: "/tmp", size: 1024 });
 
     const taskDefinition = new FargateTaskDefinition(this, "ScannerTaskDef", {
       family: "nettle-scanner",
