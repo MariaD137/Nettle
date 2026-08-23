@@ -1,4 +1,4 @@
-# Nettle (working name)
+# Nettle 
 
 Scans AI-built apps for the security, legal, and compliance gaps their
 creators don't know to look for — then keeps watching for hackers after
