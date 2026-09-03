@@ -15,7 +15,7 @@
   },
   "dependencies": {
     "cors": "^2.8.6",
-    "express": "^4.19.2",
+    "express": "^5.2.1",
     "multer": "^2.0.0",
     "stripe": "^22.3.2"
   },
