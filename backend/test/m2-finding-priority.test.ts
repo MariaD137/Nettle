@@ -21,7 +21,7 @@ function createFinding(overrides: Partial<CheckResult>): CheckResult {
     line: null,
     remediation: "Fix it",
     confidence: 100,
-    detectionMethod: ["manual"],
+    detectionMethod: "manual",
     whyItMatters: "It matters",
     ruleId: "test-rule",
     ...overrides,

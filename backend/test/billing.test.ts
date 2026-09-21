@@ -132,7 +132,7 @@ test("a genuinely, correctly-signed checkout.session.completed webhook activates
   process.env.STRIPE_WEBHOOK_SECRET = webhookSecret;
 
   const user = await createUser("webhook-activates@example.com", "correct horse battery staple");
-  assert.equal(getUserById(user.id)!.subscriptionStatus, "none");
+  assert.equal((await getUserById(user.id))!.subscriptionStatus, "none");
 
   const payload = JSON.stringify({
     id: "evt_test_123",
@@ -159,7 +159,7 @@ test("a genuinely, correctly-signed checkout.session.completed webhook activates
     });
     assert.equal(res.status, 200, JSON.stringify(await res.json()));
 
-    const updated = getUserById(user.id)!;
+    const updated = (await getUserById(user.id))!;
     assert.equal(updated.subscriptionStatus, "active");
     assert.equal(updated.plan, "tier1");
     assert.equal(updated.stripeCustomerId, "cus_test_123");

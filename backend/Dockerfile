@@ -28,20 +28,21 @@ COPY bin ./bin
 
 RUN addgroup --system nettle && adduser --system --ingroup nettle nettle
 
-# The database path is explicit, and lives outside /app.
+# No NETTLE_DB_PATH and no writable data volume.
 #
-# It previously defaulted to process.cwd()/nettle.db — that is /app, which is
-# owned by root so that the application cannot modify its own code. A non-root
-# process cannot create a file there, and src/db/index.ts opens the database at
-# import time, so the container crashed on startup before it could serve a
-# single request.
+# This image is production-only (NODE_ENV=production above), and in production
+# the application requires DATABASE_URL and refuses to start without it — see
+# assertProductionPersistence() in src/db/index.ts. SQLite is unreachable here
+# by construction, so a writable /data directory would be unused surface
+# rather than useful storage. Application state lives in RDS; see
+# docs/DATABASE.md.
 #
-# /data is the one writable location, owned by the run user and nothing else
-# (mode 0750, not a blanket chmod 777). /app stays root-owned and read-only to
-# the application. Scan workspaces continue to use /tmp.
-ENV NETTLE_DB_PATH=/data/nettle.db
-RUN mkdir -p /data && chown nettle:nettle /data && chmod 750 /data
-VOLUME ["/data"]
+# /app therefore stays root-owned and read-only to the application, which runs
+# as the unprivileged `nettle` user. The only writable location the process
+# needs is /tmp, used for scan extraction workspaces.
+#
+# DATABASE_URL is injected by App Runner from Secrets Manager
+# (infra/lib/api-stack.ts). It is never baked into the image.
 
 USER nettle
 

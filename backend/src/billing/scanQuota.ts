@@ -60,17 +60,19 @@ export function currentPeriod(anchorIso: string, now = new Date()): { start: Dat
   return { start, end };
 }
 
-export function recordScanUsage(userId: string, projectId: string | null, source: "upload" | "repo"): void {
-  db.prepare(
-    "INSERT INTO scan_usage (id, user_id, project_id, source, occurred_at) VALUES (?, ?, ?, ?, ?)"
-  ).run(newId(), userId, projectId, source, new Date().toISOString());
+export async function recordScanUsage(userId: string, projectId: string | null, source: "upload" | "repo"): Promise<void> {
+  await db.run("INSERT INTO scan_usage (id, user_id, project_id, source, occurred_at) VALUES (?, ?, ?, ?, ?)", [newId(), userId, projectId, source, new Date().toISOString()]);
 }
 
-export function countScanUsage(userId: string, since: Date): number {
-  const row = db
-    .prepare("SELECT COUNT(*) AS n FROM scan_usage WHERE user_id = ? AND occurred_at >= ?")
-    .get(userId, since.toISOString()) as { n: number } | undefined;
-  return row?.n ?? 0;
+export async function countScanUsage(userId: string, since: Date): Promise<number> {
+  // CAST plus Number(): PostgreSQL returns COUNT(*) as bigint, which pg hands
+  // back as a string to avoid precision loss. Without this the quota
+  // comparison below would compare a string to a number.
+  const row = await db.get<{ n: number | string }>(
+    "SELECT CAST(COUNT(*) AS INTEGER) AS n FROM scan_usage WHERE user_id = ? AND occurred_at >= ?",
+    [userId, since.toISOString()]
+  );
+  return Number(row?.n ?? 0);
 }
 
 /**
@@ -78,8 +80,8 @@ export function countScanUsage(userId: string, since: Date): number {
  * metered plan — the paywall has already turned those away, so there is no
  * meaningful quota to report.
  */
-export function getQuotaState(userId: string): QuotaState | null {
-  const user = getUserById(userId);
+export async function getQuotaState(userId: string): Promise<QuotaState | null> {
+  const user = await getUserById(userId);
   if (!user) return null;
 
   const limit = SCAN_QUOTAS[user.plan];
@@ -89,7 +91,7 @@ export function getQuotaState(userId: string): QuotaState | null {
   // back to its signup date so it gets a sensible period rather than none.
   const anchor = user.billingAnchor ?? user.createdAt;
   const { start, end } = currentPeriod(anchor);
-  const used = countScanUsage(userId, start);
+  const used = await countScanUsage(userId, start);
 
   return {
     limit,

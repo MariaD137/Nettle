@@ -13,44 +13,44 @@ const CLEAN_APP = path.join(__dirname, "fixtures", "clean-app");
 
 async function makeProject(email: string) {
   const user = await createUser(email, "correct horse battery staple");
-  return createProject(user.id, "Badge Target").id;
+  return (await createProject(user.id, "Badge Target")).id;
 }
 
 test("badge is 'unknown' for a project with no scans yet", async () => {
   const projectId = await makeProject("badge-unknown@example.com");
-  const state = computeBadgeState(projectId);
+  const state = await computeBadgeState(projectId);
   assert.equal(state.status, "unknown");
   assert.equal(state.score, null);
 });
 
 test("badge is 'protected' after a clean scan with no alerts", async () => {
   const projectId = await makeProject("badge-protected@example.com");
-  recordScan(projectId, runScan(CLEAN_APP));
-  const state = computeBadgeState(projectId);
+  await recordScan(projectId, runScan(CLEAN_APP));
+  const state = await computeBadgeState(projectId);
   assert.equal(state.status, "protected");
   assert.ok(state.score !== null && state.score >= 90, `expected high score, got ${state.score}`);
 });
 
 test("badge is 'critical' after a scan with critical findings", async () => {
   const projectId = await makeProject("badge-critical-scan@example.com");
-  recordScan(projectId, runScan(FLAWED_APP));
-  const state = computeBadgeState(projectId);
+  await recordScan(projectId, runScan(FLAWED_APP));
+  const state = await computeBadgeState(projectId);
   assert.equal(state.status, "critical");
 });
 
 test("badge is 'critical' if a clean scan is followed by a recent critical Tier 2 alert", async () => {
   const projectId = await makeProject("badge-critical-alert@example.com");
-  recordScan(projectId, runScan(CLEAN_APP));
-  createAlert(projectId, "critical", "brute-force", "simulated attack for the badge test");
-  const state = computeBadgeState(projectId);
+  await recordScan(projectId, runScan(CLEAN_APP));
+  await createAlert(projectId, "critical", "brute-force", "simulated attack for the badge test");
+  const state = await computeBadgeState(projectId);
   assert.equal(state.status, "critical", "a recent critical alert should override an otherwise-clean scan");
 });
 
 test("badge is 'caution' when the scan has only caution-level findings and no critical alert", async () => {
   const projectId = await makeProject("badge-caution@example.com");
-  recordScan(projectId, runScan(CLEAN_APP));
-  createAlert(projectId, "medium", "high-request-rate", "simulated low-severity alert for the badge test");
-  const state = computeBadgeState(projectId);
+  await recordScan(projectId, runScan(CLEAN_APP));
+  await createAlert(projectId, "medium", "high-request-rate", "simulated low-severity alert for the badge test");
+  const state = await computeBadgeState(projectId);
   // a caution-severity alert should not escalate a clean scan to critical
   assert.equal(state.status, "protected");
 });

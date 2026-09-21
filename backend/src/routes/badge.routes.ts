@@ -9,11 +9,11 @@ export const badgeRouter = Router();
 // header. The project ID in the URL is not a secret (unlike the API key
 // used for event ingestion); it only reveals a pass/fail badge state.
 
-badgeRouter.get("/api/projects/:id/badge.svg", (req, res) => {
-  const project = getProject(req.params.id);
+badgeRouter.get("/api/projects/:id/badge.svg", async (req, res) => {
+  const project = await getProject(req.params.id);
   if (!project) return res.status(404).end();
 
-  const state = computeBadgeState(project.id);
+  const state = await computeBadgeState(project.id);
   res.setHeader("Content-Type", "image/svg+xml");
   // The badge's whole purpose is to be embedded with a plain <img> on a
   // customer's own site, so it must opt out of the same-origin
@@ -23,11 +23,11 @@ badgeRouter.get("/api/projects/:id/badge.svg", (req, res) => {
   res.send(renderBadgeSVG(state));
 });
 
-badgeRouter.get("/api/projects/:id/badge.json", (req, res) => {
-  const project = getProject(req.params.id);
+badgeRouter.get("/api/projects/:id/badge.json", async (req, res) => {
+  const project = await getProject(req.params.id);
   if (!project) return res.status(404).json({ error: "Project not found" });
 
   res.setHeader("Cache-Control", "no-cache, max-age=0");
   res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
-  res.json(computeBadgeState(project.id));
+  res.json(await computeBadgeState(project.id));
 });

@@ -24,7 +24,7 @@ function createTestFinding(overrides: Partial<CheckResult>): CheckResult {
     line: null,
     remediation: "Fix it",
     confidence: 100,
-    detectionMethod: ["manual"],
+    detectionMethod: "manual",
     whyItMatters: "It matters",
     ruleId: "test-rule",
     ...overrides,
@@ -40,7 +40,7 @@ test("Phase 4: Evidence + Priority integration", () => {
     title: "Hardcoded API key",
     detail: evidence || "",
     severity: "low",
-    category: "hardcoded-secret",
+    category: "Security",
   });
 
   const priority = calculatePriority(finding);
@@ -54,7 +54,7 @@ test("Phase 4: Priority + Education integration", () => {
   // High-priority finding should have appropriate education
   const finding = createTestFinding({
     severity: "critical",
-    category: "sql-injection",
+    category: "Database",
     title: "SQL injection vulnerability",
   });
 
@@ -83,17 +83,17 @@ test("Phase 4: Multiple findings sorted by priority", () => {
     createTestFinding({
       severity: "low",
       title: "Best practice issue",
-      category: "best-practice",
+      category: "Code Quality",
     }),
     createTestFinding({
       severity: "critical",
       title: "SQL injection",
-      category: "sql-injection",
+      category: "Database",
     }),
     createTestFinding({
       severity: "medium",
       title: "Hardcoded API key",
-      category: "hardcoded-secret",
+      category: "Security",
     }),
   ];
 
@@ -120,7 +120,7 @@ test("Phase 4: Complex finding workflow", () => {
     severity: "high",
     title: "AWS secret key hardcoded",
     detail: "Found: AKIA1234567890ABCDEF in source",
-    category: "hardcoded-secret",
+    category: "Security",
   });
 
   // Step 1: Evidence redaction
@@ -157,7 +157,7 @@ test("Phase 4: Finding enrichment pipeline", () => {
   const rawFinding = createTestFinding({
     severity: "medium",
     title: "Missing authentication",
-    category: "no-authentication",
+    category: "Authentication",
   });
 
   // Enrich through pipeline
@@ -176,6 +176,7 @@ test("Phase 4: Evidence preserves finding context", () => {
     detail: "const PASSWORD = 'super-secret-pass'",
   });
 
+  assert.ok(finding.detail, "fixture must carry a detail to build evidence from");
   const evidence = createEvidence(finding.detail);
   assert.ok(evidence);
   assert.ok(!evidence.includes("super-secret"));

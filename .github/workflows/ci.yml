@@ -42,6 +42,13 @@ jobs:
       - name: Lint (typecheck)
         run: npm run lint
 
+      # Test code is excluded from tsconfig.json so `npm run build` emits only
+      # src/ into the image. It is still maintained TypeScript, so it gets its
+      # own typecheck rather than none at all — this caught a test asserting
+      # `.length` on an un-awaited Promise, which had been passing vacuously.
+      - name: Typecheck tests
+        run: npm run lint:test
+
       # Gated at high so it blocks on what is actually exploitable rather than
       # going permanently red on advisories with no fix available. Dependabot
       # (.github/dependabot.yml) handles the lower-severity drip.
@@ -53,6 +60,64 @@ jobs:
 
       - name: Build
         run: npm run build
+
+  # The suite runs twice: once on SQLite (what a developer runs locally) and
+  # once on PostgreSQL (what production actually uses). Testing only SQLite
+  # would leave the production engine unverified, and the two differ in ways
+  # that matter — COUNT(*) comes back as a string from PostgreSQL, foreign
+  # keys are enforced natively, and placeholders are rewritten.
+  backend-postgres:
+    name: Backend — Tests against PostgreSQL
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: ci-not-a-real-secret
+          POSTGRES_DB: nettle_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: backend/package-lock.json
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Semgrep
+        run: pip install semgrep==1.65.0
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Each test file gets its own database: the fixtures use fixed e-mail
+      # addresses, so sharing one database collides on users.email UNIQUE.
+      - name: Test against PostgreSQL
+        env:
+          PGPASSWORD: ci-not-a-real-secret
+        run: |
+          fail=0
+          for f in test/*.test.ts; do
+            dbname="nt_$(basename "$f" .test.ts | tr -cd '[:alnum:]' | tr 'A-Z' 'a-z')"
+            psql -h localhost -U postgres -q -c "CREATE DATABASE $dbname;"
+            DATABASE_URL="postgresql://postgres:ci-not-a-real-secret@localhost:5432/$dbname?sslmode=disable" \
+              node --import tsx --test "$f" || fail=1
+          done
+          exit $fail
 
   frontend-quality:
     name: Frontend — Lint, Test & Build

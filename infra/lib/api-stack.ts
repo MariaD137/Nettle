@@ -2,19 +2,32 @@ import { CfnOutput, RemovalPolicy, Stack, type StackProps } from "aws-cdk-lib";
 import { Repository, TagMutability } from "aws-cdk-lib/aws-ecr";
 import { CfnVpcConnector, CfnService } from "aws-cdk-lib/aws-apprunner";
 import { Role, ServicePrincipal, ManagedPolicy } from "aws-cdk-lib/aws-iam";
-import type { Vpc, SecurityGroup } from "aws-cdk-lib/aws-ec2";
+import { SubnetType, type Vpc, type SecurityGroup } from "aws-cdk-lib/aws-ec2";
+import { Secret, type ISecret } from "aws-cdk-lib/aws-secretsmanager";
 import type { Construct } from "constructs";
 
 export interface NettleApiStackProps extends StackProps {
   vpc: Vpc;
   connectorSecurityGroup: SecurityGroup;
+  /** Secrets Manager secret created with the RDS instance. */
+  databaseSecret: ISecret;
+  databaseEndpoint: string;
 }
 
 /**
- * The whole Tier 1 API as a single App Runner service. No RDS, no Cognito —
- * this is a stateless "upload code, get a report back" service with no
- * accounts yet. Adding a database is the right move once there's a reason
- * for one (paying customers, saved scan history), not before.
+ * The Tier 1/Tier 2 API as a single App Runner service.
+ *
+ * Configuration is split deliberately:
+ *   runtimeEnvironmentVariables — non-sensitive values, visible in the console
+ *   runtimeEnvironmentSecrets   — Secrets Manager ARNs, resolved by App Runner
+ *                                 at start-up and never rendered into the
+ *                                 template, the repository or a log line
+ *
+ * No secret VALUE appears in this file. The application secret below is
+ * created empty: CDK provisions the container, an operator populates it once,
+ * out of band. Generating a placeholder Stripe key would be worse than an
+ * empty one, because the service would start and fail confusingly at the first
+ * charge rather than at boot.
  */
 export class NettleApiStack extends Stack {
   public readonly serviceUrl: string;
@@ -25,9 +38,30 @@ export class NettleApiStack extends Stack {
 
     const repository = new Repository(this, "ScanApiRepo", {
       repositoryName: "nettle-api",
-      imageTagMutability: TagMutability.MUTABLE, // App Runner auto-deploys by watching the :latest tag
+      imageTagMutability: TagMutability.MUTABLE, // App Runner auto-deploys by watching :latest
       removalPolicy: RemovalPolicy.DESTROY,
       emptyOnDelete: true,
+    });
+
+    /**
+     * Application secrets, as opposed to the database credentials RDS
+     * generates. Created as an empty shell with the expected keys documented
+     * so an operator knows exactly what to fill in:
+     *
+     *   STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET,
+     *   STRIPE_PRICE_TIER1, STRIPE_PRICE_TIER2
+     *
+     * Populate with:
+     *   aws secretsmanager put-secret-value \
+     *     --secret-id nettle/application \
+     *     --secret-string '{"STRIPE_SECRET_KEY":"...", ...}'
+     */
+    const appSecret = new Secret(this, "ApplicationSecret", {
+      secretName: "nettle/application",
+      description:
+        "Nettle application secrets. Keys: STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET, " +
+        "STRIPE_PRICE_TIER1, STRIPE_PRICE_TIER2. Populate out of band; never in source control.",
+      removalPolicy: RemovalPolicy.RETAIN,
     });
 
     const ecrAccessRole = new Role(this, "ApiEcrAccessRole", {
@@ -35,8 +69,19 @@ export class NettleApiStack extends Stack {
       managedPolicies: [ManagedPolicy.fromAwsManagedPolicyName("AmazonEC2ContainerRegistryReadOnly")],
     });
 
+    // The running task's identity. It needs to read exactly two secrets and
+    // nothing else, so the grants are per-secret rather than a wildcard policy.
+    const instanceRole = new Role(this, "ApiInstanceRole", {
+      assumedBy: new ServicePrincipal("tasks.apprunner.amazonaws.com"),
+      description: "Nettle API runtime role - reads its own secrets, nothing more",
+    });
+    props.databaseSecret.grantRead(instanceRole);
+    appSecret.grantRead(instanceRole);
+
     const vpcConnector = new CfnVpcConnector(this, "ApiVpcConnector", {
-      subnets: props.vpc.isolatedSubnets.map((s) => s.subnetId),
+      // The egress subnets, not the isolated ones: the service needs a route
+      // to Stripe and the git hosts through the NAT gateway.
+      subnets: props.vpc.selectSubnets({ subnetType: SubnetType.PRIVATE_WITH_EGRESS }).subnetIds,
       securityGroups: [props.connectorSecurityGroup.securityGroupId],
       vpcConnectorName: "nettle-api-connector",
     });
@@ -45,20 +90,49 @@ export class NettleApiStack extends Stack {
       serviceName: "nettle-api",
       sourceConfiguration: {
         autoDeploymentsEnabled: true,
-        authenticationConfiguration: {
-          accessRoleArn: ecrAccessRole.roleArn,
-        },
+        authenticationConfiguration: { accessRoleArn: ecrAccessRole.roleArn },
         imageRepository: {
           imageIdentifier: `${repository.repositoryUri}:latest`,
           imageRepositoryType: "ECR",
           imageConfiguration: {
             port: "8080",
+            runtimeEnvironmentVariables: [
+              { name: "NODE_ENV", value: "production" },
+              { name: "PORT", value: "8080" },
+              // Assembled from the RDS secret's discrete fields rather than
+              // stored as a URL, so the password never exists as a separate
+              // copy that could drift from the one RDS rotates.
+              {
+                name: "DATABASE_URL",
+                value: [
+                  "postgresql://",
+                  props.databaseSecret.secretValueFromJson("username").unsafeUnwrap(),
+                  ":",
+                  props.databaseSecret.secretValueFromJson("password").unsafeUnwrap(),
+                  "@",
+                  props.databaseEndpoint,
+                  ":5432/nettle",
+                ].join(""),
+              },
+            ],
+            runtimeEnvironmentSecrets: [
+              { name: "STRIPE_SECRET_KEY", value: `${appSecret.secretArn}:STRIPE_SECRET_KEY::` },
+              { name: "STRIPE_WEBHOOK_SECRET", value: `${appSecret.secretArn}:STRIPE_WEBHOOK_SECRET::` },
+              { name: "STRIPE_PRICE_TIER1", value: `${appSecret.secretArn}:STRIPE_PRICE_TIER1::` },
+              { name: "STRIPE_PRICE_TIER2", value: `${appSecret.secretArn}:STRIPE_PRICE_TIER2::` },
+            ],
           },
         },
       },
       instanceConfiguration: {
-        cpu: "0.25 vCPU",
-        memory: "0.5 GB",
+        cpu: "1 vCPU",
+        // Raised from 0.25 vCPU / 0.5 GB. Semgrep is a Python process working
+        // over an extraction of up to 500 MB, and the previous allocation was
+        // below what a single large scan needs. This is sizing for the work
+        // that exists today; it is not a substitute for moving scanning off
+        // the request path, which remains outstanding.
+        memory: "2 GB",
+        instanceRoleArn: instanceRole.roleArn,
       },
       networkConfiguration: {
         egressConfiguration: {
@@ -81,5 +155,6 @@ export class NettleApiStack extends Stack {
 
     new CfnOutput(this, "RepositoryUri", { value: repository.repositoryUri });
     new CfnOutput(this, "ServiceUrl", { value: `https://${service.attrServiceUrl}` });
+    new CfnOutput(this, "ApplicationSecretArn", { value: appSecret.secretArn });
   }
 }

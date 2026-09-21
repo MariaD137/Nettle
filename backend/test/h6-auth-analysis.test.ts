@@ -259,7 +259,7 @@ test("H-6: Nuxt is detected rather than falling through to another framework", (
   assert.equal(analyzeAuth(code).framework, "nuxt");
 });
 
-test("H-6: a guarded Nuxt event handler is recognised as protected", () => {
+test("H-6: a guarded Nuxt event handler is recognised as protected", async () => {
   const code = `
     export default defineEventHandler(async (event) => {
       const session = await requireUserSession(event)
@@ -277,7 +277,7 @@ test("H-6: a guarded Nuxt event handler is recognised as protected", () => {
   );
 });
 
-test("H-6: an unguarded Nuxt event handler is still reported", () => {
+test("H-6: an unguarded Nuxt event handler is still reported", async () => {
   const code = `
     export default defineEventHandler(async (event) => {
       return await db.user.findMany()

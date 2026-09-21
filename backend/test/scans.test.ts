@@ -12,12 +12,12 @@ const CLEAN_APP = path.join(__dirname, "fixtures", "clean-app");
 let projectId: string;
 before(async () => {
   const user = await createUser("scans-tests@example.com", "correct horse battery staple");
-  projectId = createProject(user.id, "Scan Persistence Target").id;
+  projectId = (await createProject(user.id, "Scan Persistence Target")).id;
 });
 
-test("recordScan persists a real scan report and round-trips it", () => {
+test("recordScan persists a real scan report and round-trips it", async () => {
   const report = runScan(FLAWED_APP);
-  const stored = recordScan(projectId, report);
+  const stored = await recordScan(projectId, report);
 
   assert.equal(stored.projectId, projectId);
   assert.equal(stored.score, report.score);
@@ -25,19 +25,19 @@ test("recordScan persists a real scan report and round-trips it", () => {
   assert.deepEqual(stored.report.findings, report.findings);
 });
 
-test("getLatestScan returns the most recent scan for a project", () => {
-  recordScan(projectId, runScan(CLEAN_APP));
-  const latest = getLatestScan(projectId);
+test("getLatestScan returns the most recent scan for a project", async () => {
+  await recordScan(projectId, runScan(CLEAN_APP));
+  const latest = await getLatestScan(projectId);
   assert.ok(latest);
   assert.equal(latest!.projectId, projectId);
 });
 
 test("listScans returns scans newest first and only for the requested project", async () => {
   const user = await createUser("scans-isolation@example.com", "correct horse battery staple");
-  const otherProjectId = createProject(user.id, "Other Project").id;
-  recordScan(otherProjectId, runScan(FLAWED_APP));
+  const otherProjectId = (await createProject(user.id, "Other Project")).id;
+  await recordScan(otherProjectId, runScan(FLAWED_APP));
 
-  const scans = listScans(projectId);
+  const scans = await listScans(projectId);
   assert.ok(scans.length >= 2);
   assert.ok(scans.every((s) => s.projectId === projectId));
   for (let i = 1; i < scans.length; i++) {
@@ -47,6 +47,6 @@ test("listScans returns scans newest first and only for the requested project", 
 
 test("getLatestScan returns null for a project with no scans yet", async () => {
   const user = await createUser("scans-empty@example.com", "correct horse battery staple");
-  const emptyProjectId = createProject(user.id, "No Scans Yet").id;
-  assert.equal(getLatestScan(emptyProjectId), null);
+  const emptyProjectId = (await createProject(user.id, "No Scans Yet")).id;
+  assert.equal(await getLatestScan(emptyProjectId), null);
 });

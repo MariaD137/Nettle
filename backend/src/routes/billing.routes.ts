@@ -19,7 +19,7 @@ billingRouter.post("/api/billing/checkout-session", requireAuth, async (req, res
     return res.status(400).json({ error: 'plan must be "tier1" or "tier2"' });
   }
 
-  const user = getUserById(req.userId!);
+  const user = await getUserById(req.userId!);
   if (!user) return res.status(401).json({ error: "Invalid session" });
 
   try {
@@ -43,7 +43,7 @@ billingRouter.post("/api/billing/checkout-session", requireAuth, async (req, res
   }
 });
 
-billingWebhookRouter.post("/api/billing/webhook", raw({ type: "application/json" }), (req, res) => {
+billingWebhookRouter.post("/api/billing/webhook", raw({ type: "application/json" }), async (req, res) => {
   const signature = req.header("stripe-signature");
   const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
 
@@ -65,8 +65,8 @@ billingWebhookRouter.post("/api/billing/webhook", raw({ type: "application/json"
       const userId = session.metadata?.userId;
       const plan = session.metadata?.plan;
       if (userId && plan && typeof session.customer === "string") {
-        setStripeCustomerId(userId, session.customer);
-        setSubscriptionStatus(userId, plan, "active");
+        await setStripeCustomerId(userId, session.customer);
+        await setSubscriptionStatus(userId, plan, "active");
       }
       break;
     }
@@ -74,10 +74,10 @@ billingWebhookRouter.post("/api/billing/webhook", raw({ type: "application/json"
     case "customer.subscription.deleted": {
       const subscription = event.data.object as Stripe.Subscription;
       if (typeof subscription.customer === "string") {
-        const user = getUserByStripeCustomerId(subscription.customer);
+        const user = await getUserByStripeCustomerId(subscription.customer);
         if (user) {
           const status = event.type === "customer.subscription.deleted" ? "canceled" : subscription.status;
-          setSubscriptionStatus(user.id, user.plan, status);
+          await setSubscriptionStatus(user.id, user.plan, status);
         }
       }
       break;

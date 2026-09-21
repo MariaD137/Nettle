@@ -23,9 +23,9 @@ export const scansRouter = Router();
  * Returns true when the caller should stop. Anonymous, unauthenticated scans
  * have no account to meter and are preview-only, so they pass through.
  */
-function quotaExceeded(userId: string | undefined, res: Response): boolean {
+async function quotaExceeded(userId: string | undefined, res: Response): Promise<boolean> {
   if (!userId) return false;
-  const quota = getQuotaState(userId);
+  const quota = await getQuotaState(userId);
   if (!quota || !quota.exhausted) return false;
 
   res.status(402).json({
@@ -45,15 +45,15 @@ function quotaExceeded(userId: string | undefined, res: Response): boolean {
  * applies — so CI runs authenticated only by a project key still get the
  * full report the account pays for.
  */
-function planForScan(req: ExpressRequest, apiKeyProjectUserId?: string): string {
+async function planForScan(req: ExpressRequest, apiKeyProjectUserId?: string): Promise<string> {
   // entitledPlan, never user.plan/req.userPlan: a canceled or past_due
   // account keeps its plan recorded for reconciliation, and handing that
   // straight to applyScanAccess kept serving it the full paid report long
   // after it stopped paying.
-  const bearerUser = req.userId ? getUserById(req.userId) : null;
+  const bearerUser = req.userId ? await getUserById(req.userId) : null;
   if (bearerUser) return entitledPlan(bearerUser);
   if (apiKeyProjectUserId) {
-    const owner = getUserById(apiKeyProjectUserId);
+    const owner = await getUserById(apiKeyProjectUserId);
     if (owner) return entitledPlan(owner);
   }
   return "free";
@@ -64,7 +64,7 @@ const upload = multer({
   limits: { fileSize: 25 * 1024 * 1024 }, // 25MB — plenty for source code, not for asset-heavy repos
 });
 
-scansRouter.post("/api/scans", optionalAuth, upload.single("codebase"), (req: Request, res: Response) => {
+scansRouter.post("/api/scans", optionalAuth, upload.single("codebase"), async (req: Request, res: Response) => {
   if (!req.file) {
     return res.status(400).json({ error: "Upload a zip file under the 'codebase' field" });
   }
@@ -76,9 +76,9 @@ scansRouter.post("/api/scans", optionalAuth, upload.single("codebase"), (req: Re
   // Resolve the billing account before doing any work — an over-quota
   // caller shouldn't get a scan run on their behalf and then be refused.
   const upfrontKey = req.header("x-nettle-api-key");
-  const upfrontProject = upfrontKey ? findProjectByApiKey(upfrontKey) : null;
+  const upfrontProject = upfrontKey ? await findProjectByApiKey(upfrontKey) : null;
   const billedUserId = req.userId ?? upfrontProject?.userId;
-  if (quotaExceeded(billedUserId, res)) {
+  if (await quotaExceeded(billedUserId, res)) {
     fs.unlinkSync(req.file.path);
     return;
   }
@@ -98,13 +98,13 @@ scansRouter.post("/api/scans", optionalAuth, upload.single("codebase"), (req: Re
     // to the caller's plan, so upgrading later unlocks this scan in place.
     let ownerUserId: string | undefined;
     if (upfrontProject) {
-      recordScan(upfrontProject.id, report);
+      await recordScan(upfrontProject.id, report);
       ownerUserId = upfrontProject.userId;
     }
 
-    if (billedUserId) recordScanUsage(billedUserId, upfrontProject?.id ?? null, "upload");
+    if (billedUserId) await recordScanUsage(billedUserId, upfrontProject?.id ?? null, "upload");
 
-    res.json(applyScanAccess(report, planForScan(req, ownerUserId)));
+    res.json(applyScanAccess(report, await planForScan(req, ownerUserId)));
   } catch (err) {
     const msg = (err as Error).message;
     let statusCode = 422;
@@ -137,7 +137,7 @@ scansRouter.post("/api/scans", optionalAuth, upload.single("codebase"), (req: Re
 // array duplicated it and was never read.
 const REPO_URL_PATTERN = /^https:\/\/(github\.com|gitlab\.com|bitbucket\.org)\/[\w.\-]+\/[\w.\-]+(\.git)?$/;
 
-scansRouter.post("/api/scans/repo", requireAuth, requireSubscription, (req: Request, res: Response) => {
+scansRouter.post("/api/scans/repo", requireAuth, requireSubscription, async (req: Request, res: Response) => {
   const repoUrl = typeof req.body?.repoUrl === "string" ? req.body.repoUrl.trim() : "";
   const branch = typeof req.body?.branch === "string" ? req.body.branch.trim() : "";
   const apiKey = typeof req.body?.apiKey === "string" ? req.body.apiKey.trim() : "";
@@ -149,9 +149,9 @@ scansRouter.post("/api/scans/repo", requireAuth, requireSubscription, (req: Requ
     return res.status(400).json({ error: "Only public GitHub, GitLab, and Bitbucket HTTPS URLs are supported" });
   }
 
-  const repoProject = apiKey ? findProjectByApiKey(apiKey) : null;
+  const repoProject = apiKey ? await findProjectByApiKey(apiKey) : null;
   const billedUserId = req.userId ?? repoProject?.userId;
-  if (quotaExceeded(billedUserId, res)) return;
+  if (await quotaExceeded(billedUserId, res)) return;
 
   const cloneDir = fs.mkdtempSync(path.join(os.tmpdir(), "nettle-repo-"));
   try {
@@ -165,13 +165,13 @@ scansRouter.post("/api/scans/repo", requireAuth, requireSubscription, (req: Requ
 
     let ownerUserId: string | undefined;
     if (repoProject) {
-      recordScan(repoProject.id, report);
+      await recordScan(repoProject.id, report);
       ownerUserId = repoProject.userId;
     }
 
-    if (billedUserId) recordScanUsage(billedUserId, repoProject?.id ?? null, "repo");
+    if (billedUserId) await recordScanUsage(billedUserId, repoProject?.id ?? null, "repo");
 
-    res.json(applyScanAccess(report, planForScan(req, ownerUserId)));
+    res.json(applyScanAccess(report, await planForScan(req, ownerUserId)));
   } catch (err) {
     const msg = (err as Error).message;
     if (msg.includes("not found") || msg.includes("Could not read")) {

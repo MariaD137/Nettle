@@ -41,7 +41,7 @@ authRouter.post("/api/auth/signup", authLimiter, async (req, res) => {
 
   try {
     const user = await createUser(email, password);
-    const token = createSession(user.id);
+    const token = await createSession(user.id);
     res.status(201).json({ token, user });
   } catch (err) {
     if (err instanceof EmailAlreadyRegisteredError) {
@@ -59,32 +59,32 @@ authRouter.post("/api/auth/login", authLimiter, async (req, res) => {
   if (!user) {
     return res.status(401).json({ error: "Incorrect email or password" });
   }
-  const token = createSession(user.id);
+  const token = await createSession(user.id);
   res.json({ token, user });
 });
 
-authRouter.post("/api/auth/logout", requireAuth, (req, res) => {
+authRouter.post("/api/auth/logout", requireAuth, async (req, res) => {
   const header = req.header("authorization") || "";
   const token = header.slice("Bearer ".length);
-  destroySession(token);
+  await destroySession(token);
   res.status(204).end();
 });
 
-authRouter.get("/api/auth/me", requireAuth, (req, res) => {
-  const user = getUserById(req.userId!);
+authRouter.get("/api/auth/me", requireAuth, async (req, res) => {
+  const user = await getUserById(req.userId!);
   if (!user) return res.status(401).json({ error: "Invalid session" });
   res.json({ user });
 });
 
-authRouter.post("/api/auth/forgot-password", authLimiter, (req, res) => {
+authRouter.post("/api/auth/forgot-password", authLimiter, async (req, res) => {
   const email = typeof req.body?.email === "string" ? req.body.email.trim().toLowerCase() : "";
   if (!EMAIL_PATTERN.test(email)) {
     return res.status(400).json({ error: "Provide a valid email address" });
   }
 
-  const user = getUserByEmail(email);
+  const user = await getUserByEmail(email);
   if (user) {
-    const resetToken = createPasswordResetToken(user.id);
+    const resetToken = await createPasswordResetToken(user.id);
     // The token goes to the delivery boundary and nowhere else. It is never
     // logged and never returned in the response: doing either would hand
     // account takeover to anyone who can read logs or guess an address.
@@ -112,19 +112,19 @@ authRouter.post("/api/auth/reset-password", authLimiter, async (req, res) => {
     return res.status(400).json({ error: "Password must be at least 8 characters" });
   }
 
-  const resolved = resolvePasswordResetToken(token);
+  const resolved = await resolvePasswordResetToken(token);
   if (!resolved) {
     return res.status(400).json({ error: "Invalid or expired reset token" });
   }
 
   await updatePassword(resolved.userId, newPassword);
-  consumePasswordResetToken(token);
+  await consumePasswordResetToken(token);
   // Every existing session dies with the old password. A reset is the
   // recovery path for a compromised account, so leaving the attacker's
   // session alive would defeat the point of it. Any other outstanding reset
   // link is burned too, so it cannot be used to take the account straight back.
-  destroyAllSessions(resolved.userId);
-  invalidatePasswordResetTokens(resolved.userId);
+  await destroyAllSessions(resolved.userId);
+  await invalidatePasswordResetTokens(resolved.userId);
 
   res.json({ message: "Password has been reset — you can now log in" });
 });
@@ -137,7 +137,7 @@ authRouter.post("/api/auth/change-password", requireAuth, async (req, res) => {
     return res.status(400).json({ error: "New password must be at least 8 characters" });
   }
 
-  const user = getUserById(req.userId!);
+  const user = await getUserById(req.userId!);
   if (!user) return res.status(401).json({ error: "Invalid session" });
 
   const valid = await verifyCredentials(user.email, currentPassword);
@@ -151,8 +151,8 @@ authRouter.post("/api/auth/change-password", requireAuth, async (req, res) => {
   // stops working. Outstanding reset links are burned for the same reason.
   const header = req.header("authorization") || "";
   const currentToken = header.startsWith("Bearer ") ? header.slice("Bearer ".length) : "";
-  const revoked = currentToken ? destroyOtherSessions(req.userId!, currentToken) : destroyAllSessions(req.userId!);
-  invalidatePasswordResetTokens(req.userId!);
+  const revoked = currentToken ? await destroyOtherSessions(req.userId!, currentToken) : await destroyAllSessions(req.userId!);
+  await invalidatePasswordResetTokens(req.userId!);
 
   res.json({ message: "Password updated", revokedSessions: typeof revoked === "number" ? revoked : undefined });
 });
@@ -165,7 +165,7 @@ authRouter.patch("/api/auth/email", requireAuth, async (req, res) => {
     return res.status(400).json({ error: "Provide a valid email address" });
   }
 
-  const user = getUserById(req.userId!);
+  const user = await getUserById(req.userId!);
   if (!user) return res.status(401).json({ error: "Invalid session" });
 
   const valid = await verifyCredentials(user.email, password);
@@ -174,7 +174,7 @@ authRouter.patch("/api/auth/email", requireAuth, async (req, res) => {
   }
 
   try {
-    const updated = updateEmail(req.userId!, newEmail);
+    const updated = await updateEmail(req.userId!, newEmail);
     res.json({ user: updated });
   } catch (err) {
     if (err instanceof EmailAlreadyRegisteredError) {
@@ -184,28 +184,28 @@ authRouter.patch("/api/auth/email", requireAuth, async (req, res) => {
   }
 });
 
-authRouter.get("/api/auth/sessions", requireAuth, (req, res) => {
+authRouter.get("/api/auth/sessions", requireAuth, async (req, res) => {
   const header = req.header("authorization") || "";
   const currentToken = header.startsWith("Bearer ") ? header.slice("Bearer ".length) : undefined;
-  const sessions = listSessions(req.userId!, currentToken);
+  const sessions = await listSessions(req.userId!, currentToken);
   res.json({ sessions });
 });
 
-authRouter.delete("/api/auth/sessions/:tokenPrefix", requireAuth, (req, res) => {
-  const destroyed = destroySessionByPrefix(req.userId!, req.params.tokenPrefix);
+authRouter.delete("/api/auth/sessions/:tokenPrefix", requireAuth, async (req, res) => {
+  const destroyed = await destroySessionByPrefix(req.userId!, req.params.tokenPrefix);
   if (!destroyed) return res.status(404).json({ error: "Session not found" });
   res.status(204).end();
 });
 
-authRouter.post("/api/auth/sessions/revoke-all", requireAuth, (req, res) => {
-  destroyAllSessions(req.userId!);
-  const newToken = createSession(req.userId!);
+authRouter.post("/api/auth/sessions/revoke-all", requireAuth, async (req, res) => {
+  await destroyAllSessions(req.userId!);
+  const newToken = await createSession(req.userId!);
   res.json({ token: newToken, message: "All other sessions have been revoked" });
 });
 
 authRouter.delete("/api/auth/account", requireAuth, async (req, res) => {
   const password = typeof req.body?.password === "string" ? req.body.password : "";
-  const user = getUserById(req.userId!);
+  const user = await getUserById(req.userId!);
   if (!user) return res.status(401).json({ error: "Invalid session" });
 
   const valid = await verifyCredentials(user.email, password);
@@ -213,6 +213,6 @@ authRouter.delete("/api/auth/account", requireAuth, async (req, res) => {
     return res.status(401).json({ error: "Password is incorrect" });
   }
 
-  deleteUser(req.userId!);
+  await deleteUser(req.userId!);
   res.status(204).end();
 });

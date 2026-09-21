@@ -101,6 +101,9 @@ test("M-1: generate evidence prefers variable over value", () => {
 
   const evidence = generateEvidenceForFinding("secret", context);
 
+  // generateEvidenceForFinding returns string | undefined; assert presence
+  // before inspecting it so a silent undefined cannot pass as a pass.
+  assert.ok(evidence, "expected evidence for a finding with a variable and value");
   assert.ok(evidence.includes("mySecret"));
   // Value might be included as assignment, but shouldn't be full text
   assert.ok(!evidence.includes("very long secret"));

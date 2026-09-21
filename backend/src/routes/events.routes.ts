@@ -17,12 +17,12 @@ function isValidEvent(body: unknown): body is IncomingEvent {
   );
 }
 
-eventsRouter.post("/api/events", (req, res) => {
+eventsRouter.post("/api/events", async (req, res) => {
   const apiKey = req.header("x-nettle-api-key");
   if (!apiKey) {
     return res.status(401).json({ error: "Missing X-Nettle-Api-Key header" });
   }
-  const project = findProjectByApiKey(apiKey);
+  const project = await findProjectByApiKey(apiKey);
   if (!project) {
     return res.status(401).json({ error: "Invalid API key" });
   }
@@ -30,8 +30,8 @@ eventsRouter.post("/api/events", (req, res) => {
     return res.status(400).json({ error: "Expected { ip, method, path, statusCode, userAgent? }" });
   }
 
-  const stored = recordEvent(project.id, req.body);
-  const alerts = runDetection(project.id, stored);
+  const stored = await recordEvent(project.id, req.body);
+  const alerts = await runDetection(project.id, stored);
 
   res.status(202).json({ recorded: true, newAlerts: alerts });
 });

@@ -5,32 +5,34 @@ const SESSION_LIFETIME_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
 
 // The raw token is returned to the caller once, at creation, and never stored.
 // Everything persisted and every lookup goes through hashToken().
-export function createSession(userId: string): string {
+export async function createSession(userId: string): Promise<string> {
   const token = newSessionToken();
   const now = new Date();
-  db.prepare("INSERT INTO sessions (token_hash, user_id, created_at, expires_at) VALUES (?, ?, ?, ?)").run(
+  await db.run("INSERT INTO sessions (token_hash, user_id, created_at, expires_at) VALUES (?, ?, ?, ?)", [
     hashToken(token),
     userId,
     now.toISOString(),
-    new Date(now.getTime() + SESSION_LIFETIME_MS).toISOString()
-  );
+    new Date(now.getTime() + SESSION_LIFETIME_MS).toISOString(),
+  ]);
   return token;
 }
 
-export function resolveSession(token: string): { userId: string } | null {
-  const row = db.prepare("SELECT user_id, expires_at FROM sessions WHERE token_hash = ?").get(hashToken(token)) as
-    | { user_id: string; expires_at: string }
-    | undefined;
+export async function resolveSession(token: string): Promise<{ userId: string } | null> {
+  const tokenHash = hashToken(token);
+  const row = await db.get<{ user_id: string; expires_at: string }>(
+    "SELECT user_id, expires_at FROM sessions WHERE token_hash = ?",
+    [tokenHash]
+  );
   if (!row) return null;
   if (new Date(row.expires_at).getTime() < Date.now()) {
-    db.prepare("DELETE FROM sessions WHERE token_hash = ?").run(hashToken(token));
+    await db.run("DELETE FROM sessions WHERE token_hash = ?", [tokenHash]);
     return null;
   }
   return { userId: row.user_id };
 }
 
-export function destroySession(token: string): void {
-  db.prepare("DELETE FROM sessions WHERE token_hash = ?").run(hashToken(token));
+export async function destroySession(token: string): Promise<void> {
+  await db.run("DELETE FROM sessions WHERE token_hash = ?", [hashToken(token)]);
 }
 
 export interface SessionInfo {
@@ -40,8 +42,11 @@ export interface SessionInfo {
   current: boolean;
 }
 
-export function listSessions(userId: string, currentToken?: string): SessionInfo[] {
-  const rows = db.prepare("SELECT token_hash, created_at, expires_at FROM sessions WHERE user_id = ? ORDER BY created_at DESC").all(userId) as unknown as { token_hash: string; created_at: string; expires_at: string }[];
+export async function listSessions(userId: string, currentToken?: string): Promise<SessionInfo[]> {
+  const rows = await db.all<{ token_hash: string; created_at: string; expires_at: string }>(
+    "SELECT token_hash, created_at, expires_at FROM sessions WHERE user_id = ? ORDER BY created_at DESC",
+    [userId]
+  );
   const now = Date.now();
   const currentHash = currentToken ? hashToken(currentToken) : undefined;
   return rows
@@ -62,8 +67,8 @@ export function listSessions(userId: string, currentToken?: string): SessionInfo
  * credential change — a password change or reset must not leave an attacker's
  * existing session alive, which is the whole point of changing the password.
  */
-export function destroyAllSessions(userId: string): void {
-  db.prepare("DELETE FROM sessions WHERE user_id = ?").run(userId);
+export async function destroyAllSessions(userId: string): Promise<void> {
+  await db.run("DELETE FROM sessions WHERE user_id = ?", [userId]);
 }
 
 /**
@@ -74,24 +79,24 @@ export function destroyAllSessions(userId: string): void {
  * the device they are using. A reset (where there is no trusted current
  * session) uses destroyAllSessions instead.
  */
-export function destroyOtherSessions(userId: string, currentToken: string): number {
-  const result = db
-    .prepare("DELETE FROM sessions WHERE user_id = ? AND token_hash != ?")
-    .run(userId, hashToken(currentToken));
-  return Number(result.changes ?? 0);
+export async function destroyOtherSessions(userId: string, currentToken: string): Promise<number> {
+  const result = await db.run("DELETE FROM sessions WHERE user_id = ? AND token_hash != ?", [
+    userId,
+    hashToken(currentToken),
+  ]);
+  return result.changes;
 }
 
-export function destroySessionByPrefix(userId: string, tokenPrefix: string): boolean {
+export async function destroySessionByPrefix(userId: string, tokenPrefix: string): Promise<boolean> {
   // Scoped to the caller's own rows, so a guessed prefix cannot reach another
   // account's session.
   const prefix = tokenPrefix.replace("…", "");
   if (!/^[0-9a-f]{1,64}$/.test(prefix)) return false;
-  const rows = db.prepare("SELECT token_hash FROM sessions WHERE user_id = ? AND token_hash LIKE ?").all(userId, `${prefix}%`) as unknown as { token_hash: string }[];
-  if (rows.length === 0) return false;
-  for (const row of rows) {
-    db.prepare("DELETE FROM sessions WHERE token_hash = ?").run(row.token_hash);
-  }
-  return true;
+  const result = await db.run("DELETE FROM sessions WHERE user_id = ? AND token_hash LIKE ?", [
+    userId,
+    `${prefix}%`,
+  ]);
+  return result.changes > 0;
 }
 
 /**
@@ -99,7 +104,7 @@ export function destroySessionByPrefix(userId: string, tokenPrefix: string): boo
  * every lookup in resolveSession; this only stops rows accumulating for
  * sessions that are never presented again.
  */
-export function purgeExpiredSessions(now = new Date()): number {
-  const result = db.prepare("DELETE FROM sessions WHERE expires_at < ?").run(now.toISOString());
-  return Number(result.changes ?? 0);
+export async function purgeExpiredSessions(now = new Date()): Promise<number> {
+  const result = await db.run("DELETE FROM sessions WHERE expires_at < ?", [now.toISOString()]);
+  return result.changes;
 }

@@ -49,8 +49,8 @@ async function scanAs(base: string, token?: string) {
 
 async function userWith(email: string, plan: string, status: string) {
   const user = await createUser(email, "correct horse battery staple");
-  if (plan !== "free") setSubscriptionStatus(user.id, plan, status);
-  return { user: getUserById(user.id)!, token: createSession(user.id) };
+  if (plan !== "free") await setSubscriptionStatus(user.id, plan, status);
+  return { user: (await getUserById(user.id))!, token: await createSession(user.id) };
 }
 
 // --- the rule itself, across every state the billing model can be in ---

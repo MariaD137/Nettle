@@ -63,7 +63,7 @@ test("the embeddable badge opts out of same-origin resource policy", async (t) =
   t.after(() => server.close());
 
   const user = await createUser("badge-headers@example.com", "correct horse battery staple");
-  const project = createProject(user.id, "Badge Headers");
+  const project = await createProject(user.id, "Badge Headers");
 
   const svg = await fetch(`${base}/api/projects/${project.id}/badge.svg`);
   assert.equal(svg.status, 200);

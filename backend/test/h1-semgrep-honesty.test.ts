@@ -92,7 +92,7 @@ test("H-1: Check results include confidence", () => {
     "All results should have confidence as a number"
   );
   assert.ok(
-    results.every((r) => r.confidence >= 0 && r.confidence <= 100),
+    results.every((r) => r.confidence !== undefined && r.confidence >= 0 && r.confidence <= 100),
     "Confidence should be 0-100"
   );
 });

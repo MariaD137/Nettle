@@ -1,4 +1,5 @@
 import { test } from "node:test";
+import type { FindingCategory } from "../src/scanner/types";
 import assert from "node:assert/strict";
 import {
   getEducation,
@@ -20,7 +21,7 @@ function createFinding(overrides: Partial<CheckResult>): CheckResult {
     line: null,
     remediation: "Fix it",
     confidence: 100,
-    detectionMethod: ["manual"],
+    detectionMethod: "manual",
     whyItMatters: "It matters",
     ruleId: "test-rule",
     ...overrides,
@@ -29,7 +30,7 @@ function createFinding(overrides: Partial<CheckResult>): CheckResult {
 
 test("M-3: education content exists for hardcoded secrets", () => {
   const finding = createFinding({
-    category: "hardcoded-secret",
+    category: "Security",
     title: "Hardcoded API key",
   });
   const education = getEducation(finding);
@@ -42,7 +43,7 @@ test("M-3: education content exists for hardcoded secrets", () => {
 
 test("M-3: education content exists for SQL injection", () => {
   const finding = createFinding({
-    category: "sql-injection",
+    category: "Database",
     title: "SQL injection vulnerability",
   });
   const education = getEducation(finding);
@@ -54,7 +55,7 @@ test("M-3: education content exists for SQL injection", () => {
 
 test("M-3: education content exists for XSS", () => {
   const finding = createFinding({
-    category: "xss",
+    category: "Frontend Security",
     title: "Cross-site scripting",
   });
   const education = getEducation(finding);
@@ -66,7 +67,7 @@ test("M-3: education content exists for XSS", () => {
 
 test("M-3: education content exists for CORS misconfiguration", () => {
   const finding = createFinding({
-    category: "cors-misconfiguration",
+    category: "cors-misconfiguration" as unknown as FindingCategory /* intentionally not a FindingCategory: exercises the slug/fallback paths */,
     title: "Wildcard CORS",
   });
   const education = getEducation(finding);
@@ -78,7 +79,7 @@ test("M-3: education content exists for CORS misconfiguration", () => {
 
 test("M-3: education content exists for vulnerable dependencies", () => {
   const finding = createFinding({
-    category: "vulnerable-dependency",
+    category: "Dependencies",
     title: "Vulnerable lodash version",
   });
   const education = getEducation(finding);
@@ -90,7 +91,7 @@ test("M-3: education content exists for vulnerable dependencies", () => {
 
 test("M-3: education content exists for missing auth", () => {
   const finding = createFinding({
-    category: "no-authentication",
+    category: "Authentication",
     title: "No authentication check",
   });
   const education = getEducation(finding);
@@ -102,7 +103,7 @@ test("M-3: education content exists for missing auth", () => {
 
 test("M-3: education content exists for missing HTTPS", () => {
   const finding = createFinding({
-    category: "missing-https",
+    category: "missing-https" as unknown as FindingCategory /* intentionally not a FindingCategory: exercises the slug/fallback paths */,
     title: "HTTP endpoint detected",
   });
   const education = getEducation(finding);
@@ -114,7 +115,7 @@ test("M-3: education content exists for missing HTTPS", () => {
 
 test("M-3: education content exists for privacy policy", () => {
   const finding = createFinding({
-    category: "missing-privacy-policy",
+    category: "missing-privacy-policy" as unknown as FindingCategory /* intentionally not a FindingCategory: exercises the slug/fallback paths */,
     title: "No privacy policy found",
   });
   const education = getEducation(finding);
@@ -125,7 +126,7 @@ test("M-3: education content exists for privacy policy", () => {
 });
 
 test("M-3: beginner explanation is simpler", () => {
-  const finding = createFinding({ category: "hardcoded-secret" });
+  const finding = createFinding({ category: "Security", title: "Hardcoded API key" });
   const education = getEducation(finding);
 
   // Beginner should be shorter and use simpler language
@@ -134,7 +135,7 @@ test("M-3: beginner explanation is simpler", () => {
 });
 
 test("M-3: expert explanation is more technical", () => {
-  const finding = createFinding({ category: "hardcoded-secret" });
+  const finding = createFinding({ category: "Security", title: "Hardcoded API key" });
   const education = getEducation(finding);
 
   // Expert should include technical terms
@@ -146,7 +147,7 @@ test("M-3: expert explanation is more technical", () => {
 });
 
 test("M-3: developer explanation is practical", () => {
-  const finding = createFinding({ category: "sql-injection" });
+  const finding = createFinding({ category: "Database" });
   const education = getEducation(finding);
 
   // Developer should include code examples or tool names
@@ -156,7 +157,7 @@ test("M-3: developer explanation is practical", () => {
 });
 
 test("M-3: enrich finding with education", () => {
-  const finding = createFinding({ category: "hardcoded-secret" });
+  const finding = createFinding({ category: "Security", title: "Hardcoded API key" });
   const enriched = enrichWithEducation(finding, "beginner");
 
   assert.ok(enriched.education);
@@ -165,7 +166,7 @@ test("M-3: enrich finding with education", () => {
 });
 
 test("M-3: get explanation at specific level", () => {
-  const finding = createFinding({ category: "sql-injection" });
+  const finding = createFinding({ category: "Database" });
 
   const beginner = getExplanation(finding, "beginner");
   const developer = getExplanation(finding, "developer");
@@ -178,7 +179,7 @@ test("M-3: get explanation at specific level", () => {
 
 test("M-3: format finding as markdown", () => {
   const finding = createFinding({
-    category: "hardcoded-secret",
+    category: "Security",
     title: "API Key Hardcoded",
     severity: "critical",
     detail: "An API key was found in source code",
@@ -194,7 +195,7 @@ test("M-3: format finding as markdown", () => {
 });
 
 test("M-3: fallback for unknown category", () => {
-  const finding = createFinding({ category: "unknown-category" });
+  const finding = createFinding({ category: "unknown-category" as unknown as FindingCategory /* intentionally not a FindingCategory: exercises the slug/fallback paths */ });
   const education = getEducation(finding);
 
   // Should still have content
@@ -205,7 +206,7 @@ test("M-3: fallback for unknown category", () => {
 
 test("M-3: title-based keyword matching", () => {
   const finding = createFinding({
-    category: "custom-category",
+    category: "custom-category" as unknown as FindingCategory /* intentionally not a FindingCategory: exercises the slug/fallback paths */,
     title: "SQL injection in user input",
   });
   const education = getEducation(finding);
@@ -216,7 +217,7 @@ test("M-3: title-based keyword matching", () => {
 
 test("M-3: command injection education", () => {
   const finding = createFinding({
-    category: "command-injection",
+    category: "Security",
     title: "Command injection vulnerability",
   });
   const education = getEducation(finding);
@@ -228,7 +229,7 @@ test("M-3: command injection education", () => {
 
 test("M-3: CSRF education", () => {
   const finding = createFinding({
-    category: "csrf",
+    category: "csrf" as unknown as FindingCategory /* intentionally not a FindingCategory: exercises the slug/fallback paths */,
     title: "CSRF token missing",
   });
   const education = getEducation(finding);

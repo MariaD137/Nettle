@@ -56,21 +56,31 @@ function seedLegacyDatabase(): { dbPath: string; sessionToken: string; resetToke
 function openThroughApp(dbPath: string, sessionToken: string, resetToken: string): any {
   const script = `
     process.env.NETTLE_DB_PATH = ${JSON.stringify(dbPath)};
-    const { db } = require("./src/db");
-    const { resolveSession } = require("./src/auth/sessions");
-    const { resolvePasswordResetToken } = require("./src/auth/users");
-    console.log(JSON.stringify({
-      sessionStillValid: resolveSession(${JSON.stringify(sessionToken)}),
-      resetStillValid: resolvePasswordResetToken(${JSON.stringify(resetToken)}),
-      sessionRows: db.prepare("SELECT * FROM sessions").all(),
-      resetRows: db.prepare("SELECT * FROM password_resets").all(),
-      userCount: db.prepare("SELECT COUNT(*) AS n FROM users").get(),
-    }));
+    (async () => {
+      const { db } = require("./src/db");
+      const { resolveSession } = require("./src/auth/sessions");
+      const { resolvePasswordResetToken } = require("./src/auth/users");
+      console.log(JSON.stringify({
+        sessionStillValid: await resolveSession(${JSON.stringify(sessionToken)}),
+        resetStillValid: await resolvePasswordResetToken(${JSON.stringify(resetToken)}),
+        sessionRows: await db.all("SELECT * FROM sessions"),
+        resetRows: await db.all("SELECT * FROM password_resets"),
+        userCount: await db.get("SELECT COUNT(*) AS n FROM users"),
+      }));
+    })().catch((e) => { console.error(e); process.exit(1); });
   `;
+  // This migration is SQLite-only: PostgreSQL never had the raw-token schema,
+  // and the fixture above is a SQLite file. DATABASE_URL is stripped so the
+  // child opens that file rather than inheriting a PostgreSQL connection from
+  // a cross-engine test run.
+  const env = { ...process.env };
+  delete env.DATABASE_URL;
+
   const out = execFileSync(process.execPath, ["--import", "tsx", "-e", script], {
     cwd: path.join(__dirname, ".."),
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"],
+    env,
   });
   return JSON.parse(out.trim().split("\n").pop()!);
 }

@@ -1,0 +1,18 @@
+{
+  // Typechecks the test suite without touching the production build.
+  //
+  // tsconfig.json deliberately excludes test/ so `npm run build` emits only
+  // src/ into dist/ — including tests there would change the deployment
+  // artifact and ship fixtures into the image. But the tests are maintained
+  // TypeScript and were getting no type checking at all, so real type errors
+  // could sit in them indefinitely.
+  //
+  // noEmit: this config exists purely to check.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "rootDir": "."
+  },
+  "include": ["src", "test", "scripts"],
+  "exclude": ["node_modules", "dist"]
+}

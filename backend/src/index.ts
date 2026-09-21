@@ -9,6 +9,7 @@ import { authRouter } from "./routes/auth.routes";
 import { badgeRouter } from "./routes/badge.routes";
 import { billingRouter, billingWebhookRouter } from "./routes/billing.routes";
 import { initializeScanner } from "./scanner/initialization";
+import { initializeDatabase, assertProductionPersistence } from "./db";
 
 const app = express();
 const PORT = process.env.PORT || 8080;
@@ -73,9 +74,26 @@ app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
   res.status(500).json({ error: "Internal server error" });
 });
 
-// Initialize scanner at startup
-initializeScanner();
+/**
+ * Startup order matters.
+ *
+ * The persistence check runs first and throws rather than warning: booting a
+ * production instance on SQLite would look healthy right up until the next
+ * deployment discarded every account. Migrations run before the listener
+ * opens, so a broken migration fails the deployment instead of the first
+ * request that happens to touch the database.
+ */
+async function start(): Promise<void> {
+  assertProductionPersistence();
+  await initializeDatabase();
+  initializeScanner();
 
-app.listen(PORT, () => {
-  console.log(`Nettle backend listening on port ${PORT}`);
+  app.listen(PORT, () => {
+    console.log(`Nettle backend listening on port ${PORT}`);
+  });
+}
+
+start().catch((err) => {
+  console.error(`Nettle failed to start: ${(err as Error).message}`);
+  process.exit(1);
 });

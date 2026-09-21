@@ -39,8 +39,8 @@ export function entitledPlan(user: Pick<User, "plan" | "subscriptionStatus"> | n
  * The 402 body carries `subscriptionRequired` so the frontend can tell a
  * paywall bounce apart from any other error and route to /subscribe.
  */
-export function requireSubscription(req: Request, res: Response, next: NextFunction) {
-  const user = req.userId ? getUserById(req.userId) : null;
+export async function requireSubscription(req: Request, res: Response, next: NextFunction) {
+  const user = req.userId ? await getUserById(req.userId) : null;
   if (!hasActiveSubscription(user)) {
     return res.status(402).json({
       error: "An active Tier 1 or Tier 2 subscription is required",

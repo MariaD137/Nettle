@@ -18,9 +18,10 @@ const RECENT_ALERT_WINDOW_MS = 48 * 60 * 60 * 1000; // 48 hours
  * anything critical recently. Either one being bad makes the badge bad —
  * a clean scan from a month ago doesn't mean much if an alert fired an hour ago.
  */
-export function computeBadgeState(projectId: string): BadgeState {
-  const latestScan = getLatestScan(projectId);
-  const recentCriticalAlert = listAlerts(projectId).some(
+export async function computeBadgeState(projectId: string): Promise<BadgeState> {
+  const latestScan = await getLatestScan(projectId);
+  const alerts = await listAlerts(projectId);
+  const recentCriticalAlert = alerts.some(
     (a) => a.severity === "critical" && Date.now() - new Date(a.occurredAt).getTime() <= RECENT_ALERT_WINDOW_MS
   );
 

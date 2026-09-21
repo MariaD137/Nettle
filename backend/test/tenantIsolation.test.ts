@@ -43,7 +43,7 @@ function buildApp() {
 
 async function subscribedUser(base: string, email: string) {
   const user = await createUser(email, PASSWORD);
-  setSubscriptionStatus(user.id, "tier2", "active");
+  await setSubscriptionStatus(user.id, "tier2", "active");
   const res = await fetch(`${base}/api/auth/login`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -58,8 +58,8 @@ test("each account's dashboard lists only its own projects", async () => {
     const alice = await subscribedUser(base, "iso-alice@example.com");
     const bob = await subscribedUser(base, "iso-bob@example.com");
 
-    const alicesProject = createProject(alice.user.id, "Alice Secret Project");
-    createProject(bob.user.id, "Bob Project");
+    const alicesProject = await createProject(alice.user.id, "Alice Secret Project");
+    await createProject(bob.user.id, "Bob Project");
 
     const res = await fetch(`${base}/api/projects`, {
       headers: { Authorization: `Bearer ${bob.token}` },
@@ -84,8 +84,8 @@ test("the overview totals never count another account's data", async () => {
     const bob = await subscribedUser(base, "iso-overview-b@example.com");
 
     // Alice has a project with a bad scan; Bob has nothing at all.
-    const alicesProject = createProject(alice.user.id, "Alice Scanned");
-    recordScan(alicesProject.id, runScan(FIXTURE));
+    const alicesProject = await createProject(alice.user.id, "Alice Scanned");
+    await recordScan(alicesProject.id, runScan(FIXTURE));
 
     const res = await fetch(`${base}/api/overview`, {
       headers: { Authorization: `Bearer ${bob.token}` },
@@ -107,9 +107,9 @@ test("every project route refuses a signed-in stranger", async () => {
     const alice = await subscribedUser(base, "iso-routes-a@example.com");
     const bob = await subscribedUser(base, "iso-routes-b@example.com");
 
-    const project = createProject(alice.user.id, "Alice Private");
-    const scan = recordScan(project.id, runScan(FIXTURE));
-    const alert = createAlert(project.id, "critical", "test-rule", "private alert text");
+    const project = await createProject(alice.user.id, "Alice Private");
+    const scan = await recordScan(project.id, runScan(FIXTURE));
+    const alert = await createAlert(project.id, "critical", "test-rule", "private alert text");
 
     const routes: [string, string][] = [
       ["GET", `/api/projects/${project.id}`],
@@ -150,7 +150,7 @@ test("a refused write leaves the owner's project untouched", async () => {
   try {
     const alice = await subscribedUser(base, "iso-write-a@example.com");
     const bob = await subscribedUser(base, "iso-write-b@example.com");
-    const project = createProject(alice.user.id, "Original Name");
+    const project = await createProject(alice.user.id, "Original Name");
     const originalKey = project.apiKey;
 
     await fetch(`${base}/api/projects/${project.id}`, {
@@ -184,7 +184,7 @@ test("the public trust badge stays public — it is the one intentional leak", a
   const { server, base } = await listen(buildApp());
   try {
     const alice = await subscribedUser(base, "iso-badge@example.com");
-    const project = createProject(alice.user.id, "Alice Badged");
+    const project = await createProject(alice.user.id, "Alice Badged");
 
     // No token at all: this is an <img> on someone else's marketing site.
     const res = await fetch(`${base}/api/projects/${project.id}/badge.svg`);

@@ -34,15 +34,15 @@ function sqliShaped(path: string): boolean {
  * real anomaly detection (baselining normal traffic, ML-based scoring) is a
  * later investment once there's enough real traffic to learn from.
  */
-export function runDetection(projectId: string, event: StoredEvent): Alert[] {
+export async function runDetection(projectId: string, event: StoredEvent): Promise<Alert[]> {
   const alerts: Alert[] = [];
-  const window = recentEvents(projectId, 60);
+  const window = await recentEvents(projectId, 60);
   const fromSameIp = window.filter((e) => e.ip === event.ip);
 
   const recentFailedAuth = fromSameIp.filter((e) => e.statusCode === 401 || e.statusCode === 403);
-  if (recentFailedAuth.length >= 5 && !hasRecentAlert(projectId, "brute-force", ALERT_COOLDOWN_SECONDS)) {
+  if (recentFailedAuth.length >= 5 && !(await hasRecentAlert(projectId, "brute-force", ALERT_COOLDOWN_SECONDS))) {
     alerts.push(
-      createAlert(
+      await createAlert(
         projectId,
         "critical",
         "brute-force",
@@ -54,9 +54,9 @@ export function runDetection(projectId: string, event: StoredEvent): Alert[] {
   const lastTenSeconds = fromSameIp.filter(
     (e) => Date.now() - new Date(e.occurredAt).getTime() <= 10_000
   );
-  if (lastTenSeconds.length >= 50 && !hasRecentAlert(projectId, "high-request-rate", ALERT_COOLDOWN_SECONDS)) {
+  if (lastTenSeconds.length >= 50 && !(await hasRecentAlert(projectId, "high-request-rate", ALERT_COOLDOWN_SECONDS))) {
     alerts.push(
-      createAlert(
+      await createAlert(
         projectId,
         "medium",
         "high-request-rate",
@@ -65,9 +65,9 @@ export function runDetection(projectId: string, event: StoredEvent): Alert[] {
     );
   }
 
-  if (suspiciousPath(event.path) && !hasRecentAlert(projectId, "suspicious-path-" + event.ip, ALERT_COOLDOWN_SECONDS)) {
+  if (suspiciousPath(event.path) && !(await hasRecentAlert(projectId, "suspicious-path-" + event.ip, ALERT_COOLDOWN_SECONDS))) {
     alerts.push(
-      createAlert(
+      await createAlert(
         projectId,
         "critical",
         "suspicious-path-" + event.ip,
@@ -76,9 +76,9 @@ export function runDetection(projectId: string, event: StoredEvent): Alert[] {
     );
   }
 
-  if (sqliShaped(event.path) && !hasRecentAlert(projectId, "sqli-shaped-" + event.ip, ALERT_COOLDOWN_SECONDS)) {
+  if (sqliShaped(event.path) && !(await hasRecentAlert(projectId, "sqli-shaped-" + event.ip, ALERT_COOLDOWN_SECONDS))) {
     alerts.push(
-      createAlert(
+      await createAlert(
         projectId,
         "critical",
         "sqli-shaped-" + event.ip,

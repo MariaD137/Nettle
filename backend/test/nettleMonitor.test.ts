@@ -19,10 +19,14 @@ function listen(app: express.Express): Promise<{ server: Server; port: number }>
   });
 }
 
-async function poll<T>(fn: () => T, predicate: (v: T) => boolean, timeoutMs = 2000): Promise<T> {
+async function poll<T>(
+  fn: () => T | Promise<T>,
+  predicate: (v: T) => boolean,
+  timeoutMs = 2000
+): Promise<T> {
   const start = Date.now();
   for (;;) {
-    const value = fn();
+    const value = await fn();
     if (predicate(value)) return value;
     if (Date.now() - start > timeoutMs) return value;
     await new Promise((r) => setTimeout(r, 25));
@@ -31,7 +35,7 @@ async function poll<T>(fn: () => T, predicate: (v: T) => boolean, timeoutMs = 20
 
 test("a customer app using the middleware actually reports events that trigger a real alert", async () => {
   const user = await createUser("nettle-monitor-tests@example.com", "correct horse battery staple");
-  const project = createProject(user.id, "Middleware Test App");
+  const project = await createProject(user.id, "Middleware Test App");
 
   const ingestionApp = express();
   ingestionApp.use(express.json());

@@ -157,24 +157,89 @@ const EDUCATION_MAP: Record<string, EducationContent> = {
 };
 
 /**
+ * Terms that identify each education topic in a finding's title.
+ *
+ * These exist because deriving match terms from the map key
+ * (`key.replace(/-/g, " ")`) did not work against real findings: the scanner
+ * emits titles like "Hardcoded API key", "Cross-site scripting" and
+ * "Vulnerable lodash version", none of which literally contain
+ * "hardcoded secret", "xss" or "vulnerable dependency".
+ *
+ * The category lookup did not save it either. EDUCATION_MAP is keyed on topic
+ * slugs ("hardcoded-secret"), while `finding.category` is a FindingCategory
+ * ("Security", "Dependencies", …) — the two vocabularies never intersect, so
+ * the direct category match could not fire for any finding the scanner
+ * actually produces. Every real finding therefore fell through to the generic
+ * severity text, and the topic-specific content below was unreachable in
+ * production. The tests missed it because their fixtures used category values
+ * the scanner never emits.
+ */
+const EDUCATION_MATCH_TERMS: Record<string, string[]> = {
+  "no-authentication": ["no authentication", "missing authentication", "unprotected route", "no auth"],
+  "weak-authentication": ["weak authentication", "weak password", "weak auth"],
+  "hardcoded-secret": ["hardcoded", "hard-coded", "secret", "api key", "access key", "credential", "token found"],
+  "sql-injection": ["sql injection", "sqli"],
+  "command-injection": ["command injection", "shell injection", "exec"],
+  xss: ["xss", "cross-site scripting", "cross site scripting"],
+  csrf: ["csrf", "cross-site request forgery"],
+  "cors-misconfiguration": ["cors"],
+  "vulnerable-dependency": ["vulnerable", "known vulnerability", "outdated dependency", "advisory"],
+  "missing-security-headers": ["security header", "helmet", "content-security-policy", "hsts", "x-frame-options"],
+  "missing-https": ["https", "http endpoint", "tls", "insecure transport"],
+  "default-credentials": ["default credential", "default password"],
+  "missing-privacy-policy": ["privacy policy", "terms of service", "cookie policy"],
+  "best-practice": ["best practice"],
+};
+
+/**
+ * Coarse mapping from the scanner's real categories to a topic, used only when
+ * the title says nothing more specific. "Security" deliberately has no entry:
+ * it spans secrets, injection and XSS alike, so guessing from it would attach
+ * confidently wrong advice.
+ */
+const CATEGORY_DEFAULT_TOPIC: Record<string, string> = {
+  Authentication: "no-authentication",
+  // Injection is the dominant Database finding, and the guidance (parameterise
+  // your queries) is the right advice for the category generally.
+  Database: "sql-injection",
+  Dependencies: "vulnerable-dependency",
+  "Legal & Policy": "missing-privacy-policy",
+  Configuration: "missing-security-headers",
+  "Code Quality": "best-practice",
+};
+
+/**
  * Get multi-level education content for a finding.
- * Falls back to generic content if category not found.
+ *
+ * Most specific signal first: the title, then the category, then a generic
+ * fallback by severity.
  */
 export function getEducation(finding: CheckResult): EducationContent {
-  const category = finding.category?.toLowerCase() || "";
   const title = (finding.title || "").toLowerCase();
 
-  // Try direct category match
-  if (EDUCATION_MAP[category]) {
-    return EDUCATION_MAP[category];
-  }
-
-  // Try keyword matching on title
-  for (const [key, content] of Object.entries(EDUCATION_MAP)) {
-    if (title.includes(key.replace(/-/g, " "))) {
-      return content;
+  // Longest term first, so "cross-site request forgery" is not shadowed by a
+  // shorter term that happens to appear in the same title.
+  const matches: { key: string; length: number }[] = [];
+  for (const [key, terms] of Object.entries(EDUCATION_MATCH_TERMS)) {
+    for (const term of terms) {
+      if (title.includes(term)) matches.push({ key, length: term.length });
     }
   }
+  if (matches.length > 0) {
+    matches.sort((a, b) => b.length - a.length);
+    const content = EDUCATION_MAP[matches[0].key];
+    if (content) return content;
+  }
+
+  // A topic slug passed directly as the category still works, so anything
+  // constructing findings that way keeps its behaviour.
+  const rawCategory = finding.category ?? "";
+  if (EDUCATION_MAP[rawCategory.toLowerCase()]) {
+    return EDUCATION_MAP[rawCategory.toLowerCase()];
+  }
+
+  const topic = CATEGORY_DEFAULT_TOPIC[rawCategory];
+  if (topic && EDUCATION_MAP[topic]) return EDUCATION_MAP[topic];
 
   // Fallback: generic education based on severity
   return {
