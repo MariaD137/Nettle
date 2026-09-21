@@ -9,7 +9,7 @@ import { resolveScanRoot } from "../scanner/resolveScanRoot";
 import { findProjectByApiKey } from "../patrol/projects";
 import { recordScan } from "../patrol/scans";
 import { requireAuth, optionalAuth } from "../auth/middleware";
-import { requireSubscription } from "../billing/subscription";
+import { requireSubscription, entitledPlan } from "../billing/subscription";
 import { getUserById } from "../auth/users";
 import { applyScanAccess } from "../billing/scanAccess";
 import { getQuotaState, recordScanUsage } from "../billing/scanQuota";
@@ -46,10 +46,15 @@ function quotaExceeded(userId: string | undefined, res: Response): boolean {
  * full report the account pays for.
  */
 function planForScan(req: ExpressRequest, apiKeyProjectUserId?: string): string {
-  if (req.userPlan) return req.userPlan;
+  // entitledPlan, never user.plan/req.userPlan: a canceled or past_due
+  // account keeps its plan recorded for reconciliation, and handing that
+  // straight to applyScanAccess kept serving it the full paid report long
+  // after it stopped paying.
+  const bearerUser = req.userId ? getUserById(req.userId) : null;
+  if (bearerUser) return entitledPlan(bearerUser);
   if (apiKeyProjectUserId) {
     const owner = getUserById(apiKeyProjectUserId);
-    if (owner) return owner.plan;
+    if (owner) return entitledPlan(owner);
   }
   return "free";
 }

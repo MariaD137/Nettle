@@ -10,9 +10,11 @@ import {
   createPasswordResetToken,
   resolvePasswordResetToken,
   consumePasswordResetToken,
+  invalidatePasswordResetTokens,
   EmailAlreadyRegisteredError,
 } from "../auth/users";
-import { createSession, destroySession, listSessions, destroyAllSessions, destroySessionByPrefix } from "../auth/sessions";
+import { createSession, destroySession, listSessions, destroyAllSessions, destroyOtherSessions, destroySessionByPrefix } from "../auth/sessions";
+import { deliverPasswordResetLink } from "../notifications/passwordResetDelivery";
 import { requireAuth } from "../auth/middleware";
 import { rateLimit } from "../middleware/rateLimit";
 
@@ -83,9 +85,19 @@ authRouter.post("/api/auth/forgot-password", authLimiter, (req, res) => {
   const user = getUserByEmail(email);
   if (user) {
     const resetToken = createPasswordResetToken(user.id);
-    console.log(`[password-reset] token for ${email}: ${resetToken}`);
+    // The token goes to the delivery boundary and nowhere else. It is never
+    // logged and never returned in the response: doing either would hand
+    // account takeover to anyone who can read logs or guess an address.
+    try {
+      deliverPasswordResetLink(email, resetToken);
+    } catch (err) {
+      // A delivery failure must not change the response, or the difference
+      // becomes an account-enumeration oracle.
+      console.error(`[password-reset] delivery failed: ${(err as Error).message}`);
+    }
   }
 
+  // Identical response whether or not the address is registered.
   res.json({ message: "If that email is registered, a reset link has been sent" });
 });
 
@@ -107,6 +119,12 @@ authRouter.post("/api/auth/reset-password", authLimiter, async (req, res) => {
 
   await updatePassword(resolved.userId, newPassword);
   consumePasswordResetToken(token);
+  // Every existing session dies with the old password. A reset is the
+  // recovery path for a compromised account, so leaving the attacker's
+  // session alive would defeat the point of it. Any other outstanding reset
+  // link is burned too, so it cannot be used to take the account straight back.
+  destroyAllSessions(resolved.userId);
+  invalidatePasswordResetTokens(resolved.userId);
 
   res.json({ message: "Password has been reset — you can now log in" });
 });
@@ -128,7 +146,15 @@ authRouter.post("/api/auth/change-password", requireAuth, async (req, res) => {
   }
 
   await updatePassword(req.userId!, newPassword);
-  res.json({ message: "Password updated" });
+  // Other sessions are revoked, the caller's own is kept: the person changing
+  // their password stays signed in here, while any session an attacker holds
+  // stops working. Outstanding reset links are burned for the same reason.
+  const header = req.header("authorization") || "";
+  const currentToken = header.startsWith("Bearer ") ? header.slice("Bearer ".length) : "";
+  const revoked = currentToken ? destroyOtherSessions(req.userId!, currentToken) : destroyAllSessions(req.userId!);
+  invalidatePasswordResetTokens(req.userId!);
+
+  res.json({ message: "Password updated", revokedSessions: typeof revoked === "number" ? revoked : undefined });
 });
 
 authRouter.patch("/api/auth/email", requireAuth, async (req, res) => {

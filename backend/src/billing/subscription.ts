@@ -15,6 +15,23 @@ export function hasActiveSubscription(user: Pick<User, "plan" | "subscriptionSta
 }
 
 /**
+ * The plan a caller is actually entitled to right now.
+ *
+ * `users.plan` records which plan was last purchased and is deliberately left
+ * in place when a subscription ends, so the account can be resubscribed and
+ * reconciled against Stripe. It is therefore a record of intent, not a grant:
+ * on its own it says nothing about whether the account is paid up.
+ *
+ * Anything gating paid output must go through this, not through `user.plan`.
+ * Reading the raw plan is what let a canceled or past_due account keep
+ * receiving full scan reports indefinitely while the dashboard correctly
+ * returned 402.
+ */
+export function entitledPlan(user: Pick<User, "plan" | "subscriptionStatus"> | null): string {
+  return hasActiveSubscription(user) ? user!.plan : "free";
+}
+
+/**
  * Blocks every dashboard route behind an active subscription. Runs after
  * requireAuth, so an unauthenticated caller still gets a 401 rather than a
  * misleading "go pay" response.

@@ -21,7 +21,7 @@ db.exec(`
   );
 
   CREATE TABLE IF NOT EXISTS sessions (
-    token TEXT PRIMARY KEY,
+    token_hash TEXT PRIMARY KEY,
     user_id TEXT NOT NULL,
     created_at TEXT NOT NULL,
     expires_at TEXT NOT NULL,
@@ -69,7 +69,7 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_alerts_project_time ON alerts(project_id, occurred_at);
 
   CREATE TABLE IF NOT EXISTS password_resets (
-    token TEXT PRIMARY KEY,
+    token_hash TEXT PRIMARY KEY,
     user_id TEXT NOT NULL,
     expires_at TEXT NOT NULL,
     FOREIGN KEY (user_id) REFERENCES users(id)
@@ -160,6 +160,76 @@ if (!columnExists("users", "billing_anchor")) {
 if (!columnExists("scans", "status")) {
   db.exec("ALTER TABLE scans ADD COLUMN status TEXT NOT NULL DEFAULT 'COMPLETED'");
 }
+
+// --- Migration: store only hashes of session / password-reset tokens ---
+//
+// Both tables used to hold the raw bearer token as their primary key, so any
+// read of the database yielded directly replayable credentials. Existing rows
+// are rehashed in place rather than dropped, so nobody is logged out by the
+// deploy that introduces this. The raw tokens are read here only to derive
+// their hash; they are never logged and do not survive the rebuild.
+//
+// SQLite cannot rename or retype a PRIMARY KEY column in place, hence the
+// table rebuild. Both run inside a transaction so a crash mid-migration
+// cannot leave a half-converted table behind.
+function migrateTokenColumnToHash(table: string): void {
+  if (columnExists(table, "token_hash") || !columnExists(table, "token")) return;
+
+  const extraColumns = table === "sessions" ? ", created_at" : "";
+  const legacy = db
+    .prepare(`SELECT token, user_id, expires_at${extraColumns} FROM ${table}`)
+    .all() as unknown as { token: string; user_id: string; expires_at: string; created_at?: string }[];
+
+  db.exec("BEGIN");
+  try {
+    if (table === "sessions") {
+      db.exec(`CREATE TABLE sessions_hashed (
+        token_hash TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        expires_at TEXT NOT NULL,
+        FOREIGN KEY (user_id) REFERENCES users(id)
+      )`);
+      const insert = db.prepare(
+        "INSERT OR REPLACE INTO sessions_hashed (token_hash, user_id, created_at, expires_at) VALUES (?, ?, ?, ?)"
+      );
+      for (const row of legacy) {
+        insert.run(sha256Hex(row.token), row.user_id, row.created_at ?? new Date().toISOString(), row.expires_at);
+      }
+      db.exec("DROP TABLE sessions");
+      db.exec("ALTER TABLE sessions_hashed RENAME TO sessions");
+      db.exec("CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id)");
+    } else {
+      db.exec(`CREATE TABLE password_resets_hashed (
+        token_hash TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        expires_at TEXT NOT NULL,
+        FOREIGN KEY (user_id) REFERENCES users(id)
+      )`);
+      const insert = db.prepare(
+        "INSERT OR REPLACE INTO password_resets_hashed (token_hash, user_id, expires_at) VALUES (?, ?, ?)"
+      );
+      for (const row of legacy) {
+        insert.run(sha256Hex(row.token), row.user_id, row.expires_at);
+      }
+      db.exec("DROP TABLE password_resets");
+      db.exec("ALTER TABLE password_resets_hashed RENAME TO password_resets");
+    }
+    db.exec("COMMIT");
+  } catch (err) {
+    db.exec("ROLLBACK");
+    throw err;
+  }
+}
+
+// Local copy rather than importing auth/tokenHash, so the schema module stays
+// free of dependencies on the auth layer that sits above it.
+function sha256Hex(value: string): string {
+  return crypto.createHash("sha256").update(value, "utf8").digest("hex");
+}
+
+migrateTokenColumnToHash("sessions");
+migrateTokenColumnToHash("password_resets");
 
 export function newId(): string {
   return crypto.randomUUID();
