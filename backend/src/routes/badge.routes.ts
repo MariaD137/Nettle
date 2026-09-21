@@ -15,6 +15,10 @@ badgeRouter.get("/api/projects/:id/badge.svg", (req, res) => {
 
   const state = computeBadgeState(project.id);
   res.setHeader("Content-Type", "image/svg+xml");
+  // The badge's whole purpose is to be embedded with a plain <img> on a
+  // customer's own site, so it must opt out of the same-origin
+  // Cross-Origin-Resource-Policy helmet applies to every other response.
+  res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
   res.setHeader("Cache-Control", "no-cache, max-age=0"); // status can change any time an alert fires
   res.send(renderBadgeSVG(state));
 });
@@ -24,5 +28,6 @@ badgeRouter.get("/api/projects/:id/badge.json", (req, res) => {
   if (!project) return res.status(404).json({ error: "Project not found" });
 
   res.setHeader("Cache-Control", "no-cache, max-age=0");
+  res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
   res.json(computeBadgeState(project.id));
 });

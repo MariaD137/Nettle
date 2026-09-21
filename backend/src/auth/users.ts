@@ -169,5 +169,11 @@ export function deleteUser(userId: string): void {
   }
   db.prepare("DELETE FROM projects WHERE user_id = ?").run(userId);
   db.prepare("DELETE FROM notification_preferences WHERE user_id = ?").run(userId);
+  // scan_usage rows were previously left behind, pointing at a user id that no
+  // longer exists. SQLite does not enforce the declared foreign keys (the
+  // PRAGMA is off by default), so nothing caught it. They are metered-usage
+  // records for an account that is gone, and getQuotaState only ever reads
+  // them per live user, so there is nothing to reconcile them against.
+  db.prepare("DELETE FROM scan_usage WHERE user_id = ?").run(userId);
   db.prepare("DELETE FROM users WHERE id = ?").run(userId);
 }

@@ -1,3 +1,6 @@
 node_modules/
 dist/
 *.log
+
+# TypeScript incremental build cache — machine-specific, never committed
+*.tsbuildinfo

@@ -12,10 +12,19 @@ export function walk(dir: string, exts: string[], out: string[] = [], maxDepth =
     if (SKIP_DIRS.has(entry.name)) continue;
     const full = path.join(dir, entry.name);
 
-    // Defense in depth: reject symlinks if any exist (should be caught at extraction)
-    if (entry.isSymbolicLink()) {
-      throw new Error(`Symlink detected during traversal: ${full}`);
-    }
+    // Symlinks are skipped, never followed.
+    //
+    // Not following them is the security property that matters: following one
+    // turns the scanner into an arbitrary-file-read oracle, reporting whatever
+    // the link targets back to whoever supplied it.
+    //
+    // Skipping rather than throwing, because this walks git clones too
+    // (/api/scans/repo), and symlinks are ordinary in real repositories —
+    // monorepo package links, vendored docs, dotfiles. Throwing meant one
+    // benign symlink failed the entire scan with a 422. Uploaded archives are
+    // still rejected outright at extraction time (see safeExtraction.ts);
+    // this is the second layer, and for a clone it is the only one.
+    if (entry.isSymbolicLink()) continue;
 
     if (entry.isDirectory()) {
       walk(full, exts, out, maxDepth, currentDepth + 1);

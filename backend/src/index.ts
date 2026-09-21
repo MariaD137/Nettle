@@ -1,4 +1,5 @@
 import cors from "cors";
+import helmet from "helmet";
 import express, { type NextFunction, type Request, type Response } from "express";
 import { healthRouter } from "./routes/health.routes";
 import { scansRouter } from "./routes/scans.routes";
@@ -17,6 +18,35 @@ const PORT = process.env.PORT || 8080;
 // now since every route that returns account-specific data already requires
 // a bearer token, not a cookie, so there's no CSRF surface from a permissive
 // origin policy the way there would be with cookie-based auth.
+// Nettle's own scanner flags apps that ship without these (see
+// src/scanner/securityHeaders.ts), and the API previously set none of them.
+//
+// Tuned for a JSON API rather than left on defaults:
+//  - CSP is locked to default-src 'none'. The API returns JSON and one SVG;
+//    it never loads scripts, styles or frames, so nothing legitimate needs a
+//    broader policy. frame-ancestors 'none' plus X-Frame-Options covers
+//    clickjacking for the error pages Express renders.
+//  - crossOriginResourcePolicy stays at helmet's same-origin default here and
+//    is relaxed per-route on the badge, which exists to be embedded from
+//    customer sites (see badge.routes.ts). Leaving the default in place
+//    globally would have silently broken every embedded badge.
+//  - HSTS is on: App Runner terminates TLS in front of this service.
+app.use(
+  helmet({
+    contentSecurityPolicy: {
+      useDefaults: false,
+      directives: {
+        "default-src": ["'none'"],
+        "frame-ancestors": ["'none'"],
+        "base-uri": ["'none'"],
+        "form-action": ["'none'"],
+      },
+    },
+    hsts: { maxAge: 31_536_000, includeSubDomains: true, preload: false },
+    referrerPolicy: { policy: "no-referrer" },
+  })
+);
+
 app.use(cors());
 
 // Must be mounted BEFORE express.json(): Stripe signs the exact raw request

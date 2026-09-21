@@ -1,5 +1,5 @@
 import { Router, type Request, type Response } from "express";
-import { execFileSync, execFile } from "child_process";
+import { execFileSync } from "child_process";
 import fs from "fs";
 import os from "os";
 import path from "path";
@@ -113,6 +113,11 @@ scansRouter.post("/api/scans", optionalAuth, upload.single("codebase"), (req: Re
     if (msg.includes("symlink")) {
       statusCode = 400;
       errorMsg = "Archive contains symlinks, which are not allowed";
+    } else if (msg.includes("absolute path") || msg.includes("path traversal")) {
+      // Caller error, not a server failure: the archive is malformed in a way
+      // we deliberately refuse, so say so rather than returning a generic 422.
+      statusCode = 400;
+      errorMsg = "Archive contains entries that would write outside the upload, which is not allowed";
     } else if (msg.includes("timeout")) {
       statusCode = 413;
       errorMsg = "Archive appears to be a decompression bomb or is too complex";
@@ -128,7 +133,8 @@ scansRouter.post("/api/scans", optionalAuth, upload.single("codebase"), (req: Re
   }
 });
 
-const ALLOWED_HOSTS = ["github.com", "gitlab.com", "bitbucket.org"];
+// The host allowlist lives in the pattern itself; a separate ALLOWED_HOSTS
+// array duplicated it and was never read.
 const REPO_URL_PATTERN = /^https:\/\/(github\.com|gitlab\.com|bitbucket\.org)\/[\w.\-]+\/[\w.\-]+(\.git)?$/;
 
 scansRouter.post("/api/scans/repo", requireAuth, requireSubscription, (req: Request, res: Response) => {

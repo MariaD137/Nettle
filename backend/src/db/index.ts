@@ -7,7 +7,26 @@ import crypto from "crypto";
 // there's actual concurrent multi-tenant write load to justify the ops cost.
 const DB_PATH = process.env.NETTLE_DB_PATH || path.join(process.cwd(), "nettle.db");
 
-export const db = new DatabaseSync(DB_PATH);
+function openDatabase(dbPath: string): DatabaseSync {
+  try {
+    return new DatabaseSync(dbPath);
+  } catch (err) {
+    // This runs at import time, so a failure here takes the whole process
+    // down before it serves a request. SQLite reports it as a bare
+    // ERR_SQLITE_ERROR, which says nothing about the actual cause — in the
+    // container it was that the default path lands in the root-owned /app
+    // while the process runs as a non-root user. Say which path failed and
+    // which knob fixes it.
+    const detail = (err as Error).message;
+    throw new Error(
+      `Could not open the Nettle database at "${dbPath}": ${detail}\n` +
+        "The directory must exist and be writable by the user running the process. " +
+        "Set NETTLE_DB_PATH to a writable location (the container image uses /data)."
+    );
+  }
+}
+
+export const db = openDatabase(DB_PATH);
 
 db.exec(`
   CREATE TABLE IF NOT EXISTS users (

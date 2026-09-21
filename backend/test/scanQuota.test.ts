@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { createUser, setSubscriptionStatus, getUserById } from "../src/auth/users";
+import { createUser, setSubscriptionStatus, getUserById, deleteUser } from "../src/auth/users";
+import { db } from "../src/db";
 import {
   SCAN_QUOTAS,
   currentPeriod,
@@ -148,4 +149,21 @@ test("the paywall copy quotes the allowance the API actually enforces", () => {
     !/unlimited\s+(launch-readiness\s+)?scans/i.test(copy),
     "paywall copy must not promise unlimited scans while a quota is enforced"
   );
+});
+
+test("deleting a user leaves no orphaned scan_usage rows", async () => {
+  const user = await createUser("orphan-usage@example.com", "correct horse battery staple");
+  setSubscriptionStatus(user.id, "tier1", "active");
+  recordScanUsage(user.id, null, "upload");
+  recordScanUsage(user.id, null, "repo");
+
+  const before = db.prepare("SELECT COUNT(*) AS n FROM scan_usage WHERE user_id = ?").get(user.id) as { n: number };
+  assert.equal(before.n, 2);
+
+  deleteUser(user.id);
+
+  // SQLite does not enforce the declared foreign keys, so nothing else would
+  // have caught these rows pointing at a user that no longer exists.
+  const after = db.prepare("SELECT COUNT(*) AS n FROM scan_usage WHERE user_id = ?").get(user.id) as { n: number };
+  assert.equal(after.n, 0);
 });

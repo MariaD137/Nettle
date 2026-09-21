@@ -17,10 +17,6 @@ jobs:
   backend-quality:
     name: Backend — Lint, Test & Build
     runs-on: ubuntu-latest
-    if: |
-      github.event_name == 'push' ||
-      contains(join(github.event.pull_request.labels.*.name, ','), '') ||
-      true
     defaults:
       run:
         working-directory: backend
@@ -45,6 +41,12 @@ jobs:
 
       - name: Lint (typecheck)
         run: npm run lint
+
+      # Gated at high so it blocks on what is actually exploitable rather than
+      # going permanently red on advisories with no fix available. Dependabot
+      # (.github/dependabot.yml) handles the lower-severity drip.
+      - name: Audit dependencies
+        run: npm audit --audit-level=high
 
       - name: Test
         run: npm test
@@ -72,6 +74,9 @@ jobs:
 
       - name: Lint (typecheck)
         run: npm run lint
+
+      - name: Audit dependencies
+        run: npm audit --audit-level=high
 
       - name: Test
         run: npm test
