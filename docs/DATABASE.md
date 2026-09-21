@@ -136,6 +136,23 @@ those rows in place, before the versioned migrations run, so introducing
 hashing does not sign anyone out. SQLite only — PostgreSQL never had that
 shape. Raw tokens are read solely to derive their hash and are never logged.
 
+## Rate limiting
+
+`rate_limit_buckets` (migration `002_rate_limits.sql`) backs the rate limiter
+in `backend/src/middleware/rateLimit.ts`. It exists in this database rather
+than a new Redis/DynamoDB resource because App Runner can run more than one
+instance, and every instance already shares this same database — that is
+enough to make the counters correct fleet-wide without adding a new AWS
+resource for it. See the module's own comments for the atomic UPSERT this
+relies on and why it fails open on a backing-store error.
+
+The table is cleaned up by an in-process periodic sweep
+(`startRateLimitCleanup`, called at boot in `index.ts`), not a scheduled AWS
+job: its size is bounded by (distinct rate-limited scopes) × (distinct recent
+callers), which stays small. This is a different situation from `events`
+(Phase 12 retention, not yet implemented), whose volume scales with customer
+traffic and needs a real scheduled job.
+
 ## Backups
 
 - Automated backups, 14-day retention in production (1 day otherwise).

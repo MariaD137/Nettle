@@ -14,6 +14,7 @@ import { getUserById } from "../auth/users";
 import { applyScanAccess } from "../billing/scanAccess";
 import { getQuotaState, recordScanUsage } from "../billing/scanQuota";
 import { safeExtractZip } from "../scanner/safeExtraction";
+import { rateLimit } from "../middleware/rateLimit";
 import type { Request as ExpressRequest } from "express";
 
 export const scansRouter = Router();
@@ -64,7 +65,66 @@ const upload = multer({
   limits: { fileSize: 25 * 1024 * 1024 }, // 25MB — plenty for source code, not for asset-heavy repos
 });
 
-scansRouter.post("/api/scans", optionalAuth, upload.single("codebase"), async (req: Request, res: Response) => {
+/**
+ * Identity for the /api/scans burst limiter: prefer an authenticated identity
+ * over the raw IP wherever one is available.
+ *
+ * Why this matters here specifically: a per-IP-only limiter would let one
+ * customer's traffic count against a completely unrelated customer sharing
+ * the same corporate gateway or CI network — an office NAT, a shared
+ * GitHub-hosted runner pool, a VPN exit node. Keying by account (when known)
+ * instead means each paying customer gets their own bucket regardless of who
+ * else happens to share their egress IP that day.
+ *
+ * This does the same API-key -> project -> owner resolution the route
+ * handler itself does; the DB call is duplicated once per request rather
+ * than threading a resolved value through middleware, matching the existing
+ * pattern in this file (planForScan does the equivalent lookup again).
+ */
+async function scanUploadIdentity(req: Request): Promise<string> {
+  if (req.userId) return `user:${req.userId}`;
+  const apiKey = req.header("x-nettle-api-key");
+  if (apiKey) {
+    const project = await findProjectByApiKey(apiKey);
+    if (project) return `user:${project.userId}`;
+  }
+  return `ip:${req.ip ?? "unknown"}`;
+}
+
+/**
+ * Anonymous, unauthenticated uploads bypass the monthly scan quota entirely
+ * (quotaExceeded() only meters known accounts), so this is the main thing
+ * standing between the public upload endpoint and someone scripting
+ * repeated Semgrep runs against it. Authenticated/API-key callers are
+ * already metered monthly by billing/scanQuota — this is a second, much
+ * shorter-window limit on top, guarding against a burst within one billing
+ * period rather than total volume, since 30-60 scans arriving in the same
+ * minute would still exhaust the container's CPU regardless of what the
+ * monthly allowance says.
+ */
+const scanUploadLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  maxRequests: 20,
+  message: "Too many scans submitted — try again in a few minutes",
+  scope: "scans:upload",
+  keyFn: scanUploadIdentity,
+});
+
+/**
+ * /api/scans/repo always runs behind requireAuth, so req.userId is always
+ * set by the time this executes — no IP fallback needed, and none wanted:
+ * this is a paid, authenticated-only endpoint, so account-keying is strictly
+ * correct here.
+ */
+const scanRepoLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  maxRequests: 10,
+  message: "Too many repository scans submitted — try again in a few minutes",
+  scope: "scans:repo",
+  keyFn: (req) => (req.userId ? `user:${req.userId}` : null),
+});
+
+scansRouter.post("/api/scans", optionalAuth, scanUploadLimiter, upload.single("codebase"), async (req: Request, res: Response) => {
   if (!req.file) {
     return res.status(400).json({ error: "Upload a zip file under the 'codebase' field" });
   }
@@ -137,7 +197,7 @@ scansRouter.post("/api/scans", optionalAuth, upload.single("codebase"), async (r
 // array duplicated it and was never read.
 const REPO_URL_PATTERN = /^https:\/\/(github\.com|gitlab\.com|bitbucket\.org)\/[\w.\-]+\/[\w.\-]+(\.git)?$/;
 
-scansRouter.post("/api/scans/repo", requireAuth, requireSubscription, async (req: Request, res: Response) => {
+scansRouter.post("/api/scans/repo", requireAuth, scanRepoLimiter, requireSubscription, async (req: Request, res: Response) => {
   const repoUrl = typeof req.body?.repoUrl === "string" ? req.body.repoUrl.trim() : "";
   const branch = typeof req.body?.branch === "string" ? req.body.branch.trim() : "";
   const apiKey = typeof req.body?.apiKey === "string" ? req.body.apiKey.trim() : "";

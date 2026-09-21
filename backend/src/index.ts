@@ -10,9 +10,41 @@ import { badgeRouter } from "./routes/badge.routes";
 import { billingRouter, billingWebhookRouter } from "./routes/billing.routes";
 import { initializeScanner } from "./scanner/initialization";
 import { initializeDatabase, assertProductionPersistence } from "./db";
+import { startRateLimitCleanup } from "./middleware/rateLimit";
 
 const app = express();
 const PORT = process.env.PORT || 8080;
+
+/**
+ * Exactly one hop sits between the internet and this process: App Runner's
+ * own edge, which terminates TLS and forwards the request. Confirmed against
+ * the actual infrastructure, not assumed — infra/lib/api-stack.ts sets no
+ * ingressConfiguration, so App Runner uses its default public endpoint, and
+ * no CloudFront/ALB/other proxy is layered in front of it anywhere in
+ * infra/lib/.
+ *
+ * `trust proxy: 1` tells Express to trust exactly that one nearest hop. With
+ * one proxy in the chain, that makes `req.ip` the address our one trusted hop
+ * itself observed on the TCP connection — which is the real client, because
+ * App Runner is the thing that actually accepted that connection. A client
+ * cannot spoof this by sending its own X-Forwarded-For header: Express with
+ * trust proxy=1 reads only the single entry closest to us (the one App
+ * Runner appended from its own observation) and ignores anything further
+ * left in the header that the client supplied before ever reaching App
+ * Runner.
+ *
+ * `trust proxy: true` would be wrong here and is deliberately NOT used: it
+ * trusts the entire X-Forwarded-For chain, including a value an attacker
+ * prepends themselves — with `true`, a request carrying
+ * `X-Forwarded-For: 9.9.9.9` would make Express report the client as
+ * 9.9.9.9 regardless of what address actually connected, defeating every
+ * IP-keyed rate limit and the brute-force/abuse detection in patrol/detection.ts.
+ *
+ * If a CDN or load balancer is ever added in front of App Runner, this must
+ * become 2 (or however many hops are added) — leaving it at 1 in that case
+ * would let anything behind the new hop spoof its origin again.
+ */
+app.set("trust proxy", 1);
 
 // The dashboard is a separate origin from the API (see frontend/) — CORS is
 // a real production need here, not just a dev convenience. Wide open for
@@ -87,6 +119,7 @@ async function start(): Promise<void> {
   assertProductionPersistence();
   await initializeDatabase();
   initializeScanner();
+  startRateLimitCleanup();
 
   app.listen(PORT, () => {
     console.log(`Nettle backend listening on port ${PORT}`);

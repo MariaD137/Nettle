@@ -22,13 +22,73 @@ export const authRouter = Router();
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-const authLimiter = rateLimit({
+// Each auth route gets its own scope, so a caller who exhausts the signup
+// limit is not also blocked from logging in, and vice versa. Keyed by IP
+// (the default keyFn) — that's the right identity for login/signup abuse:
+// credential stuffing and mass account creation are IP-cheap for an
+// attacker to spread across many source addresses, but IP-keying is still
+// the correct first line of defense and matches how these endpoints were
+// throttled before.
+const signupLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   maxRequests: 15,
-  message: "Too many authentication attempts — try again in a few minutes",
+  message: "Too many signup attempts — try again in a few minutes",
+  scope: "auth:signup",
 });
 
-authRouter.post("/api/auth/signup", authLimiter, async (req, res) => {
+const loginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  maxRequests: 15,
+  message: "Too many login attempts — try again in a few minutes",
+  scope: "auth:login",
+});
+
+const forgotPasswordLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  maxRequests: 15,
+  message: "Too many password reset requests — try again in a few minutes",
+  scope: "auth:forgot-password",
+});
+
+/**
+ * A second, per-email limiter layered on top of the IP-based one above.
+ *
+ * IP-keying alone does not stop a distinct abuse pattern here: bombarding
+ * ONE target address with reset emails from many different IPs (a botnet, a
+ * rotating proxy pool). Once real email delivery is wired up (see
+ * notifications/passwordResetDelivery.ts), that pattern spams a real inbox
+ * and burns real send quota, no matter how the IP-based counter is spread
+ * across attacker sources. Deliberately tighter and longer-windowed than the
+ * per-IP limit, since five requests for the same address in an hour is
+ * already unusual for a legitimate user (who has no reason to ask twice in
+ * quick succession — the first email is still valid for an hour).
+ *
+ * Not applied to login: a per-account login limiter is a known anti-pattern
+ * — it lets an attacker who merely knows a victim's email address lock that
+ * victim out by deliberately tripping it, which is worse than the brute-force
+ * risk it would guard against (session tokens/passwords are hashed and
+ * scrypt-slowed regardless).
+ */
+const forgotPasswordPerEmailLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  maxRequests: 5,
+  message: "Too many password reset requests for this address — try again later",
+  scope: "auth:forgot-password:email",
+  keyFn: (req) => {
+    const email = typeof req.body?.email === "string" ? req.body.email.trim().toLowerCase() : "";
+    return email || null;
+  },
+});
+
+const resetPasswordLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  maxRequests: 15,
+  message: "Too many reset attempts — try again in a few minutes",
+  scope: "auth:reset-password",
+});
+
+
+authRouter.post("/api/auth/signup", signupLimiter, async (req, res) => {
   const email = typeof req.body?.email === "string" ? req.body.email.trim().toLowerCase() : "";
   const password = typeof req.body?.password === "string" ? req.body.password : "";
 
@@ -51,7 +111,7 @@ authRouter.post("/api/auth/signup", authLimiter, async (req, res) => {
   }
 });
 
-authRouter.post("/api/auth/login", authLimiter, async (req, res) => {
+authRouter.post("/api/auth/login", loginLimiter, async (req, res) => {
   const email = typeof req.body?.email === "string" ? req.body.email.trim().toLowerCase() : "";
   const password = typeof req.body?.password === "string" ? req.body.password : "";
 
@@ -76,7 +136,7 @@ authRouter.get("/api/auth/me", requireAuth, async (req, res) => {
   res.json({ user });
 });
 
-authRouter.post("/api/auth/forgot-password", authLimiter, async (req, res) => {
+authRouter.post("/api/auth/forgot-password", forgotPasswordLimiter, forgotPasswordPerEmailLimiter, async (req, res) => {
   const email = typeof req.body?.email === "string" ? req.body.email.trim().toLowerCase() : "";
   if (!EMAIL_PATTERN.test(email)) {
     return res.status(400).json({ error: "Provide a valid email address" });
@@ -101,7 +161,7 @@ authRouter.post("/api/auth/forgot-password", authLimiter, async (req, res) => {
   res.json({ message: "If that email is registered, a reset link has been sent" });
 });
 
-authRouter.post("/api/auth/reset-password", authLimiter, async (req, res) => {
+authRouter.post("/api/auth/reset-password", resetPasswordLimiter, async (req, res) => {
   const token = typeof req.body?.token === "string" ? req.body.token : "";
   const newPassword = typeof req.body?.password === "string" ? req.body.password : "";
 
