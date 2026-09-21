@@ -2,6 +2,7 @@
 import { App } from "aws-cdk-lib";
 import { NettleNetworkStack } from "../lib/network-stack";
 import { NettleDatabaseStack } from "../lib/database-stack";
+import { NettleEcrStack } from "../lib/ecr-stack";
 import { NettleApiStack } from "../lib/api-stack";
 import { NettleCiStack } from "../lib/ci-stack";
 
@@ -24,16 +25,25 @@ const database = new NettleDatabaseStack(app, "Nettle-Database", {
   production: true,
 });
 
+// Its own stack, deployed and populated with a real image BEFORE Nettle-Api
+// exists — see ecr-stack.ts for why this ordering is required, not optional.
+const ecr = new NettleEcrStack(app, "Nettle-Ecr", { env });
+
 const api = new NettleApiStack(app, "Nettle-Api", {
   env,
   vpc: network.vpc,
   connectorSecurityGroup: network.connectorSecurityGroup,
   databaseSecret: database.secret,
   databaseEndpoint: database.instance.dbInstanceEndpointAddress,
+  repository: ecr.repository,
 });
 
 new NettleCiStack(app, "Nettle-CI", {
   env,
   githubRepo: "MariaD137/Nettle",
-  ecrRepositoryArn: api.repositoryArn,
+  // Depends on the ECR stack directly, not on Nettle-Api — CI needs push
+  // access to the repo regardless of whether the App Runner service stack
+  // has been deployed yet, and this keeps that permission from being
+  // entangled with the service's own deploy order.
+  ecrRepositoryArn: ecr.repository.repositoryArn,
 });

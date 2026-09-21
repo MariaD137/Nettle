@@ -1,5 +1,5 @@
 import { CfnOutput, RemovalPolicy, Stack, type StackProps } from "aws-cdk-lib";
-import { Repository, TagMutability } from "aws-cdk-lib/aws-ecr";
+import type { IRepository } from "aws-cdk-lib/aws-ecr";
 import { CfnVpcConnector, CfnService } from "aws-cdk-lib/aws-apprunner";
 import { Role, ServicePrincipal, ManagedPolicy } from "aws-cdk-lib/aws-iam";
 import { SubnetType, type Vpc, type SecurityGroup } from "aws-cdk-lib/aws-ec2";
@@ -12,6 +12,14 @@ export interface NettleApiStackProps extends StackProps {
   /** Secrets Manager secret created with the RDS instance. */
   databaseSecret: ISecret;
   databaseEndpoint: string;
+  /**
+   * The ECR repository the container image lives in, created in its own
+   * stack (see ecr-stack.ts) rather than here — see that file for why: this
+   * stack's App Runner service needs an image to already exist in the repo
+   * at creation time, so the repo cannot be created in the same deploy
+   * attempt as the service that reads from it.
+   */
+  repository: IRepository;
 }
 
 /**
@@ -36,12 +44,7 @@ export class NettleApiStack extends Stack {
   constructor(scope: Construct, id: string, props: NettleApiStackProps) {
     super(scope, id, props);
 
-    const repository = new Repository(this, "ScanApiRepo", {
-      repositoryName: "nettle-api",
-      imageTagMutability: TagMutability.MUTABLE, // App Runner auto-deploys by watching :latest
-      removalPolicy: RemovalPolicy.DESTROY,
-      emptyOnDelete: true,
-    });
+    const repository = props.repository;
 
     /**
      * Application secrets, as opposed to the database credentials RDS
@@ -153,7 +156,6 @@ export class NettleApiStack extends Stack {
     this.serviceUrl = service.attrServiceUrl;
     this.repositoryArn = repository.repositoryArn;
 
-    new CfnOutput(this, "RepositoryUri", { value: repository.repositoryUri });
     new CfnOutput(this, "ServiceUrl", { value: `https://${service.attrServiceUrl}` });
     new CfnOutput(this, "ApplicationSecretArn", { value: appSecret.secretArn });
   }
