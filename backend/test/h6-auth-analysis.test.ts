@@ -240,3 +240,117 @@ test("H-6: Router objects are analyzed", () => {
   const result = analyzeAuth(code);
   assert.equal(result.routesAnalyzed, 2);
 });
+
+// --- Nuxt and unknown frameworks (regression for the FrameworkType fix) ---
+//
+// FrameworkType has always listed "nuxt" and "unknown", but the auth-pattern
+// lookup only had entries for six frameworks. Nuxt therefore fell through to
+// the Express patterns, which idiomatic Nuxt code never matches, so every
+// guarded Nuxt route was reported as unprotected. detectFramework never
+// returned "nuxt" either.
+
+test("H-6: Nuxt is detected rather than falling through to another framework", () => {
+  const code = `
+    export default defineEventHandler(async (event) => {
+      return { items: [] }
+    })
+  `;
+
+  assert.equal(analyzeAuth(code).framework, "nuxt");
+});
+
+test("H-6: a guarded Nuxt event handler is recognised as protected", () => {
+  const code = `
+    export default defineEventHandler(async (event) => {
+      const session = await requireUserSession(event)
+      return { user: session.user }
+    })
+  `;
+
+  const result = analyzeAuth(code);
+  assert.equal(result.framework, "nuxt");
+  assert.equal(result.routesAnalyzed, 1);
+  assert.equal(
+    result.unprotectedRoutes.length,
+    0,
+    "requireUserSession is a real Nuxt auth check and must not be reported as unprotected"
+  );
+});
+
+test("H-6: an unguarded Nuxt event handler is still reported", () => {
+  const code = `
+    export default defineEventHandler(async (event) => {
+      return await db.user.findMany()
+    })
+  `;
+
+  const result = analyzeAuth(code);
+  assert.equal(result.framework, "nuxt");
+  assert.equal(result.unprotectedRoutes.length, 1);
+});
+
+test("H-6: Nuxt routes do not fabricate a URL path", () => {
+  const code = `export default defineEventHandler(async (event) => db.all())`;
+
+  const [route] = analyzeAuth(code).unprotectedRoutes;
+  // Nuxt routing is file-based; the URL is not present in the source text.
+  assert.equal(route.path, "(file-based route)");
+});
+
+test("H-6: Nuxt gets its own remediation, not the Express one", () => {
+  const route: RouteInfo = {
+    path: "(file-based route)",
+    method: "ALL",
+    isProtected: false,
+    detectionMethod: "no auth pattern",
+  };
+
+  const remedy = generateAuthRemediation(route, "nuxt");
+  assert.match(remedy, /defineEventHandler/);
+  assert.ok(!remedy.includes("app.get("), "must not hand back Express advice for a Nuxt app");
+});
+
+test("H-6: an unknown framework uses the generic patterns, not Express-only ones", () => {
+  // `current_user` is a generic auth indicator that the Express set does not
+  // contain — under the old fallback this route was reported as unprotected.
+  const code = `
+    app.get('/api/profile', (req, res) => {
+      if (!current_user(req)) return res.status(401).end();
+      res.json({});
+    });
+  `;
+
+  const result = analyzeAuth(code, "unknown");
+  assert.equal(result.framework, "unknown");
+  assert.equal(result.unprotectedRoutes.length, 0);
+});
+
+test("H-6: unknown-framework results are reported with reduced confidence", () => {
+  const code = `
+    app.get('/a', (req, res) => res.json([]));
+    app.post('/b', (req, res) => res.json([]));
+  `;
+
+  const known = analyzeAuth(code, "express");
+  const unknown = analyzeAuth(code, "unknown");
+
+  assert.equal(known.routesAnalyzed, unknown.routesAnalyzed);
+  assert.ok(
+    unknown.confidence < known.confidence,
+    "a best-effort result for an unidentified framework must not claim the same confidence"
+  );
+});
+
+test("H-6: every FrameworkType has a remediation string", () => {
+  const frameworks = [
+    "express", "django", "flask", "fastapi", "rails", "nextjs", "nuxt", "unknown",
+  ] as const;
+  const route: RouteInfo = {
+    path: "/x", method: "GET", isProtected: false, detectionMethod: "no auth pattern",
+  };
+
+  for (const framework of frameworks) {
+    const remedy = generateAuthRemediation(route, framework);
+    assert.ok(remedy && remedy.length > 0, `${framework} has no remediation`);
+  }
+});

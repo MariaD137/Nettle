@@ -27,10 +27,20 @@ export function initializeScanner(): ScannerMetadata {
 
   // Verify Semgrep is available and capture version
   try {
-    const versionOutput = execFileSync("semgrep", ["--version"], {
-      encoding: "utf8",
-      timeout: 5_000,
-    });
+    // --disable-version-check/--metrics=off matter as much here as in the scan
+    // itself: a bare `semgrep --version` contacts semgrep.dev for an update
+    // check, which takes ~25s on a network-restricted host and hangs outright
+    // in an egress-isolated container. Without them this probe times out at
+    // every startup and the scanner permanently reports Semgrep as missing
+    // while the scan path itself works fine.
+    const versionOutput = execFileSync(
+      "semgrep",
+      ["--version", "--disable-version-check", "--metrics=off"],
+      {
+        encoding: "utf8",
+        timeout: 15_000,
+      }
+    );
     // Output is like "1.65.0\n"
     const version = versionOutput.trim().split("\n")[0];
     metadata.semgrepAvailable = true;

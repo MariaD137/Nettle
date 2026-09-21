@@ -2,6 +2,12 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { scanWithSemgrepCheckResults } from "../src/scanner/semgrepScanner";
 import { initializeScanner, isSemgrepAvailable } from "../src/scanner/initialization";
+import path from "node:path";
+
+// A fixed fixture, not "/tmp": scanning the machine's shared temp directory
+// made these tests depend on whatever else happened to be on the host, and
+// on a busy runner it is also a large, slow target.
+const CLEAN_FIXTURE = path.join(__dirname, "fixtures", "clean-app");
 
 test("H-1: Semgrep initialization records version", () => {
   const metadata = initializeScanner();
@@ -22,7 +28,7 @@ test("H-1: isSemgrepAvailable tracks initialization", () => {
 test("H-1: Semgrep missing returns NOT_VERIFIED for AST checks", () => {
   // If Semgrep is not available in this environment, scanWithSemgrepCheckResults
   // should return NOT_VERIFIED for each of the 6 AST checks
-  const dummyPath = "/tmp";
+  const dummyPath = CLEAN_FIXTURE;
   let results;
 
   try {
@@ -50,7 +56,7 @@ test("H-1: Semgrep missing returns NOT_VERIFIED for AST checks", () => {
 });
 
 test("H-1: Check results include detection method", () => {
-  const dummyPath = "/tmp";
+  const dummyPath = CLEAN_FIXTURE;
   let results;
 
   try {
@@ -71,7 +77,7 @@ test("H-1: Check results include detection method", () => {
 });
 
 test("H-1: Check results include confidence", () => {
-  const dummyPath = "/tmp";
+  const dummyPath = CLEAN_FIXTURE;
   let results;
 
   try {
@@ -92,7 +98,7 @@ test("H-1: Check results include confidence", () => {
 });
 
 test("H-1: AST check titles are descriptive", () => {
-  const dummyPath = "/tmp";
+  const dummyPath = CLEAN_FIXTURE;
   let results;
 
   try {

@@ -87,7 +87,12 @@ export function generateEvidenceForFinding(
     variable?: string;
     value?: string;
   }
-): string {
+): string | undefined {
+  // `undefined` is the meaningful "no evidence available" signal here, matching
+  // createEvidence/extractLineEvidence above and the optional `evidence?` field
+  // on Finding. The declared `string` was simply wrong: both the no-context and
+  // the empty-evidence paths below already returned undefined at runtime, and
+  // M-1's own tests assert that.
   if (!context) return undefined;
 
   let evidence = "";
@@ -100,7 +105,10 @@ export function generateEvidenceForFinding(
   } else if (context.value) {
     evidence = redactSecrets(context.value);
   } else if (context.line) {
-    evidence = extractLineEvidence(context.line);
+    // extractLineEvidence yields undefined for a line it cannot make usable
+    // (blank, comment-only). Collapse that to "" so the return below reports
+    // it the same way as any other absent evidence.
+    evidence = extractLineEvidence(context.line) ?? "";
   }
 
   return evidence || undefined;

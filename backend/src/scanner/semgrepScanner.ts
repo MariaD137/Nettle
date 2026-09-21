@@ -1,9 +1,51 @@
 import { execFileSync } from "child_process";
+import fs from "fs";
+import os from "os";
 import path from "path";
 import type { Finding, Pass, CheckResult } from "./types";
 import { createNotVerified, generateCheckId } from "./threeStateModel";
 
 const RULES_PATH = path.join(__dirname, "semgrep-rules", "nettle-js-rules.yaml");
+
+const SEMGREP_ARGS = [
+  "--config",
+  RULES_PATH,
+  "--no-git-ignore",
+  "--disable-version-check",
+  "--metrics=off",
+  "--json",
+  "--quiet",
+];
+
+/**
+ * Runs Semgrep over `targetRoot` and returns its raw JSON.
+ *
+ * Semgrep resolves `.semgrepignore` relative to the *working directory*, not
+ * the scan target (verified against the pinned 1.65.0). Uploaded archives are
+ * untrusted, so running with our own cwd is what stops an attacker shipping a
+ * `.semgrepignore` that hides their code from analysis. An earlier version
+ * passed `--x-ignore-semgrepignore-files` for this, but that flag does not
+ * exist in 1.65.0 — Semgrep exited 2 on every invocation and every AST check
+ * silently degraded to NOT_VERIFIED.
+ *
+ * The cwd is a fresh empty directory rather than os.tmpdir() itself, so a
+ * stray `.semgrepignore` left in the temp dir cannot influence a scan. It is
+ * never the target directory, so the caller's own files are never read as
+ * configuration and never modified.
+ */
+function runSemgrep(targetRoot: string): string {
+  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "nettle-semgrep-cwd-"));
+  try {
+    return execFileSync("semgrep", [...SEMGREP_ARGS, targetRoot], {
+      cwd,
+      encoding: "utf8",
+      timeout: 30_000,
+      maxBuffer: 20 * 1024 * 1024,
+    });
+  } finally {
+    fs.rmSync(cwd, { recursive: true, force: true });
+  }
+}
 
 interface SemgrepResult {
   check_id: string;
@@ -57,21 +99,7 @@ const SEMGREP_AST_CHECKS = [
 export function scanWithSemgrep(targetRoot: string): { findings: Finding[]; passed: Pass[] } {
   let output: SemgrepOutput;
   try {
-    const raw = execFileSync(
-      "semgrep",
-      [
-        "--config",
-        RULES_PATH,
-        "--no-git-ignore",
-        "--x-ignore-semgrepignore-files",
-        "--disable-version-check",
-        "--metrics=off",
-        "--json",
-        "--quiet",
-        targetRoot,
-      ],
-      { encoding: "utf8", timeout: 30_000, maxBuffer: 20 * 1024 * 1024 }
-    );
+    const raw = runSemgrep(targetRoot);
     output = JSON.parse(raw);
   } catch (err) {
     // Return NOT_VERIFIED for each of the 6 AST checks that couldn't run
@@ -119,21 +147,7 @@ export function scanWithSemgrepCheckResults(targetRoot: string): CheckResult[] {
   let semgrepAvailable = true;
 
   try {
-    const raw = execFileSync(
-      "semgrep",
-      [
-        "--config",
-        RULES_PATH,
-        "--no-git-ignore",
-        "--x-ignore-semgrepignore-files",
-        "--disable-version-check",
-        "--metrics=off",
-        "--json",
-        "--quiet",
-        targetRoot,
-      ],
-      { encoding: "utf8", timeout: 30_000, maxBuffer: 20 * 1024 * 1024 }
-    );
+    const raw = runSemgrep(targetRoot);
     output = JSON.parse(raw);
   } catch (err) {
     semgrepAvailable = false;
