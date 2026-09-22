@@ -256,9 +256,19 @@ export function run() {
       try {
         console.log(chalk.dim(`\nScanning ${scanPath} ...\n`));
 
-        // Zip the directory, excluding common non-source directories
+        // Zip the directory, excluding common non-source directories.
+        //
+        // -y stores symlinks as symlinks. Without it, zip's default is to
+        // dereference them and store the TARGET file's real content — so a
+        // single symlink inside a scanned directory (planted by a malicious
+        // third-party repo, or just pointing outside the project by
+        // accident — e.g. `config -> ~/.ssh/id_rsa`) would silently upload
+        // that target's actual contents to the Nettle API as part of the
+        // "codebase". scan-repo is explicitly for scanning untrusted public
+        // repos, and `scan` on a locally cloned copy of one hits the same
+        // risk, so this isn't a hypothetical.
         execFileSync("zip", [
-          "-r", "-q",
+          "-r", "-q", "-y",
           zipFile,
           ".",
           "-x",
