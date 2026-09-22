@@ -32,12 +32,6 @@ const REQUEST_SIZE_PATTERNS = [
   /payload.*limit/i,
 ];
 
-const HTTPS_PATTERNS = [
-  /http:\/\/(?!localhost|127\.0\.0\.1|0\.0\.0\.0)/g,
-  /https?\s*[:=]\s*false/gi,
-  /rejectUnauthorized\s*:\s*false/g,
-];
-
 const FILE_UPLOAD_PATTERNS = {
   any: /multer|formidable|busboy|multipart|upload/i,
   sizeLimit: /fileSize|maxFileSize|fileSizeLimit|limits\s*:\s*\{[^}]*fileSize/i,
@@ -227,47 +221,9 @@ export function scanApiSecurity(files: string[], targetRoot: string): { findings
     }
   }
 
-  // Path traversal detection
-  const pathTraversalPatterns = [
-    /path\.join\s*\([^)]*req\.(params|query|body)/,
-    /readFile(Sync)?\s*\([^)]*req\./,
-    /createReadStream\s*\([^)]*req\./,
-    /\.\.\/.*req\./,
-    /req\.(params|query|body)\b[^)]*\bpath\b/,
-  ];
-  let pathTraversalFound = false;
-  for (const file of jsFiles) {
-    let text: string;
-    try {
-      text = fs.readFileSync(file, "utf8");
-    } catch {
-      continue;
-    }
-    const rel = path.relative(targetRoot, file);
-    for (const pat of pathTraversalPatterns) {
-      if (pat.test(text)) {
-        pathTraversalFound = true;
-        const lines = text.split("\n");
-        let lineNum: number | null = null;
-        for (let i = 0; i < lines.length; i++) {
-          if (pat.test(lines[i])) { lineNum = i + 1; break; }
-        }
-        findings.push({
-          severity: "critical",
-          category: "Security",
-          title: "Potential path traversal vulnerability",
-          detail: "User input is passed directly to file system operations without sanitization. An attacker could use ../ sequences to access files outside the intended directory.",
-          file: rel,
-          line: lineNum,
-          remediation: "Sanitize file paths by resolving them and verifying they stay within the intended directory: const safe = path.resolve(baseDir, userInput); if (!safe.startsWith(baseDir)) throw new Error('Invalid path');",
-        });
-        break;
-      }
-    }
-  }
-  if (!pathTraversalFound) {
-    passed.push({ category: "Security", title: "No path traversal patterns detected" });
-  }
+  // Path traversal detection now lives in
+  // controls/checks/pathTraversalControl.ts (INPUT-001), wired into the
+  // control library -- see scanner/index.ts.
 
   // Unsafe deserialization detection
   const deserializationPatterns = [
@@ -307,35 +263,9 @@ export function scanApiSecurity(files: string[], targetRoot: string): { findings
     passed.push({ category: "Security", title: "No unsafe deserialization patterns detected" });
   }
 
-  for (const file of jsFiles) {
-    let text: string;
-    try {
-      text = fs.readFileSync(file, "utf8");
-    } catch {
-      continue;
-    }
-    const rel = path.relative(targetRoot, file);
-    for (const pattern of HTTPS_PATTERNS) {
-      const matches = text.match(pattern);
-      if (matches && matches.length > 0) {
-        const isRejectUnauthorized = /rejectUnauthorized/.test(matches[0]);
-        findings.push({
-          severity: isRejectUnauthorized ? "critical" : "medium",
-          category: "Security",
-          title: isRejectUnauthorized ? "TLS certificate verification disabled" : "Non-HTTPS URL in server code",
-          detail: isRejectUnauthorized
-            ? "Disabling certificate verification makes the connection vulnerable to man-in-the-middle attacks."
-            : `Found ${matches.length} non-localhost HTTP URL(s). Data sent over HTTP is visible to anyone on the network path.`,
-          file: rel,
-        line: null,
-          remediation: isRejectUnauthorized
-            ? "Remove rejectUnauthorized: false. If you need to trust a custom CA, configure the CA certificate explicitly."
-            : "Change HTTP URLs to HTTPS. If connecting to a local service, use localhost or 127.0.0.1.",
-        });
-        break;
-      }
-    }
-  }
+  // HTTPS/TLS enforcement now lives in
+  // controls/checks/transportSecurityControl.ts (NET-001), wired into the
+  // control library -- see scanner/index.ts.
 
   return { findings, passed };
 }
