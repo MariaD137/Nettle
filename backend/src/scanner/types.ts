@@ -36,6 +36,11 @@ export interface CheckResult {
   confidence?: number; // 0-100
   detectionMethod?: "regex" | "ast" | "heuristic" | "manual" | "unknown";
   whyItMatters?: string;
+  /** References a Control in the control library (scanner/controls) by its
+   *  controlKey, e.g. "AUTH-001". Optional: most existing scanner modules
+   *  predate the control library and don't set it yet — see hydrate.ts for
+   *  what that means for a result without one. */
+  controlKey?: string;
 }
 
 /**

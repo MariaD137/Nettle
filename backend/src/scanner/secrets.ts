@@ -1,6 +1,7 @@
 import fs from "fs";
 import path from "path";
-import type { Finding, Pass } from "./types";
+import type { CheckResult, Finding, Pass } from "./types";
+import { generateCheckId } from "./threeStateModel";
 
 interface SecretPattern {
   name: string;
@@ -131,33 +132,60 @@ const SECRET_PATTERNS: SecretPattern[] = [
   },
 ];
 
+interface SecretMatch {
+  pattern: SecretPattern;
+  count: number;
+  firstLine: number | null;
+}
+
+/** Shared detection core: every pattern match against one file's text, with no I/O. */
+function detectSecrets(text: string): SecretMatch[] {
+  const lines = text.split("\n");
+  const results: SecretMatch[] = [];
+
+  for (const pattern of SECRET_PATTERNS) {
+    pattern.regex.lastIndex = 0;
+    const matches = text.match(pattern.regex);
+    if (!matches) continue;
+
+    let firstLine: number | null = null;
+    for (let i = 0; i < lines.length; i++) {
+      const fresh = new RegExp(pattern.regex.source, pattern.regex.flags);
+      if (fresh.test(lines[i])) { firstLine = i + 1; break; }
+    }
+    results.push({ pattern, count: matches.length, firstLine });
+  }
+
+  return results;
+}
+
 export function scanSecrets(files: string[], targetRoot: string): { findings: Finding[]; passed: Pass[] } {
   const findings: Finding[] = [];
   let secretsFound = 0;
 
   for (const file of files) {
-    const text = fs.readFileSync(file, "utf8");
-    const lines = text.split("\n");
-    for (const pattern of SECRET_PATTERNS) {
-      pattern.regex.lastIndex = 0;
-      const matches = text.match(pattern.regex);
-      if (matches) {
-        secretsFound += matches.length;
-        let firstLine: number | null = null;
-        for (let i = 0; i < lines.length; i++) {
-          const fresh = new RegExp(pattern.regex.source, pattern.regex.flags);
-          if (fresh.test(lines[i])) { firstLine = i + 1; break; }
-        }
-        findings.push({
-          severity: "critical",
-          category: "Security",
-          title: `${pattern.name} found in source`,
-          detail: `Matched ${matches.length} time(s). Secrets committed to source are readable by anyone with repo access and get indexed by any tool/AI assistant that reads the codebase.`,
-          file: path.relative(targetRoot, file),
-          line: firstLine,
-          remediation: pattern.remediation,
-        });
-      }
+    let text: string;
+    try {
+      text = fs.readFileSync(file, "utf8");
+    } catch {
+      // An unreadable file contributes neither a finding nor a pass for it —
+      // matches this function's pre-existing (unstated) behavior for every
+      // file that as READABLE. scanSecretsControl below reports this
+      // explicitly as NOT_VERIFIED instead of silently continuing.
+      continue;
+    }
+
+    for (const match of detectSecrets(text)) {
+      secretsFound += match.count;
+      findings.push({
+        severity: "critical",
+        category: "Security",
+        title: `${match.pattern.name} found in source`,
+        detail: `Matched ${match.count} time(s). Secrets committed to source are readable by anyone with repo access and get indexed by any tool/AI assistant that reads the codebase.`,
+        file: path.relative(targetRoot, file),
+        line: match.firstLine,
+        remediation: match.pattern.remediation,
+      });
     }
   }
 
@@ -165,4 +193,75 @@ export function scanSecrets(files: string[], targetRoot: string): { findings: Fi
     secretsFound === 0 ? [{ category: "Security", title: "No hardcoded secrets detected in scanned files" }] : [];
 
   return { findings, passed };
+}
+
+/**
+ * SECRET-001, wired to the control library. Same detection as scanSecrets
+ * above (detectSecrets is shared, not duplicated) but reports an unreadable
+ * file as NOT_VERIFIED rather than silently skipping it — scanSecrets
+ * previously had no try/catch at all here, so one unreadable file (a
+ * permissions issue, a binary file with an extension this scanner treats as
+ * text, …) would throw and abort the entire scan, not just this check.
+ */
+export function scanSecretsControl(files: string[], targetRoot: string): CheckResult[] {
+  const results: CheckResult[] = [];
+  let anyFailure = false;
+  let anyFileRead = false;
+
+  for (const file of files) {
+    const relFile = path.relative(targetRoot, file);
+    let text: string;
+    try {
+      text = fs.readFileSync(file, "utf8");
+    } catch (err) {
+      results.push({
+        checkId: generateCheckId("Security", "SECRET-001:unreadable", relFile),
+        status: "NOT_VERIFIED",
+        category: "Security",
+        title: "File could not be read for secret detection",
+        detail: `${(err as Error).message}`,
+        file: relFile,
+        confidence: 0,
+        detectionMethod: "regex",
+        controlKey: "SECRET-001",
+      });
+      continue;
+    }
+
+    anyFileRead = true;
+    for (const match of detectSecrets(text)) {
+      anyFailure = true;
+      results.push({
+        checkId: generateCheckId("Security", `SECRET-001:${match.pattern.name}`, relFile),
+        status: "FAIL",
+        category: "Security",
+        title: `${match.pattern.name} found in source`,
+        detail: `Matched ${match.count} time(s). Secrets committed to source are readable by anyone with repo access and get indexed by any tool/AI assistant that reads the codebase.`,
+        severity: "critical",
+        file: relFile,
+        line: match.firstLine,
+        confidence: 95,
+        detectionMethod: "regex",
+        remediation: match.pattern.remediation,
+        controlKey: "SECRET-001",
+      });
+    }
+  }
+
+  // A PASS asserts "checked, and found nothing" — only justified if at
+  // least one file was actually read. If every file was unreadable, there's
+  // nothing to report but the NOT_VERIFIED entries already pushed above.
+  if (!anyFailure && anyFileRead) {
+    results.push({
+      checkId: generateCheckId("Security", "SECRET-001:pass"),
+      status: "PASS",
+      category: "Security",
+      title: "No hardcoded secrets detected in scanned files",
+      confidence: 95,
+      detectionMethod: "regex",
+      controlKey: "SECRET-001",
+    });
+  }
+
+  return results;
 }

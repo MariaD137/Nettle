@@ -1,4 +1,4 @@
-import type { Finding, ScanReport, ScanAccess, Severity } from "../scanner/types";
+import type { CheckResult, Finding, ScanReport, ScanAccess, Severity } from "../scanner/types";
 
 // Plans that unlock the complete report. Everything else — including
 // logged-out one-off scans — gets the preview.
@@ -47,6 +47,32 @@ function previewAccess(total: number, visible: number): ScanAccess {
 }
 
 /**
+ * Preview-safe version of checkResults, mirroring limitFindings below.
+ *
+ * checkResults (the newer, three-state representation — see
+ * scanner/controls/) carries the same paid detail a FAIL Finding does,
+ * remediation included, once a check has been migrated onto the control
+ * library. Trimming only `findings` and leaving `checkResults` untouched
+ * would ship every FAIL's full remediation to a free-tier response for any
+ * check that HAS been migrated — a real paywall bypass, not a hypothetical
+ * one, for every control this session's control-library work adds. PASS and
+ * NOT_VERIFIED entries carry no paid detail (no remediation field is ever
+ * set on either) and describe the report's shape, so they stay in full,
+ * same as passed[] does for findings.
+ */
+function limitCheckResults(checkResults: CheckResult[] | undefined): CheckResult[] | undefined {
+  if (!checkResults) return checkResults;
+
+  const fails = checkResults
+    .filter((r) => r.status === "FAIL")
+    .sort((a, b) => SEVERITY_RANK[a.severity ?? "info"] - SEVERITY_RANK[b.severity ?? "info"])
+    .slice(0, PREVIEW_FINDING_LIMIT);
+  const nonFails = checkResults.filter((r) => r.status !== "FAIL");
+
+  return [...nonFails, ...fails];
+}
+
+/**
  * Trims a report down to what the given plan is entitled to see.
  *
  * The stored report is always the complete one — redaction happens here, at
@@ -73,6 +99,7 @@ export function applyScanAccess(report: ScanReport, plan: string | null | undefi
   return {
     ...report,
     findings: visible,
+    checkResults: limitCheckResults(report.checkResults),
     access: previewAccess(total, visible.length),
   };
 }

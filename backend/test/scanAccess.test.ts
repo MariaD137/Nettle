@@ -82,3 +82,24 @@ test("limitFindings caps free plans and passes paid plans through", () => {
   assert.equal(limitFindings(report.findings, "tier2").length, report.findings.length);
   assert.equal(limitFindings(report.findings, "free").length, PREVIEW_FINDING_LIMIT);
 });
+
+test("a free-plan preview does not leak full checkResults detail — the paywall covers both representations", () => {
+  assert.ok(report.checkResults && report.checkResults.length > 0, "fixture must produce checkResults to make this assertion meaningful");
+  const totalFails = report.checkResults!.filter((r) => r.status === "FAIL").length;
+  assert.ok(totalFails > PREVIEW_FINDING_LIMIT, "fixture must have more FAIL checkResults than the preview limit");
+
+  const result = applyScanAccess(report, "free");
+  const visibleFails = result.checkResults!.filter((r) => r.status === "FAIL");
+  assert.equal(visibleFails.length, PREVIEW_FINDING_LIMIT);
+
+  // PASS/NOT_VERIFIED entries carry no remediation detail, so they aren't
+  // paid content — they survive in full, describing the report's shape.
+  const nonFailCount = report.checkResults!.filter((r) => r.status !== "FAIL").length;
+  const visibleNonFailCount = result.checkResults!.filter((r) => r.status !== "FAIL").length;
+  assert.equal(visibleNonFailCount, nonFailCount);
+});
+
+test("a paid plan's checkResults are not trimmed", () => {
+  const result = applyScanAccess(report, "tier1");
+  assert.equal(result.checkResults!.length, report.checkResults!.length);
+});

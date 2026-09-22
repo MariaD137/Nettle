@@ -33,6 +33,37 @@ export function findingToCheckResult(finding: Finding): CheckResult {
 }
 
 /**
+ * Convert a FAIL CheckResult back to a legacy Finding, for scanner modules
+ * migrated onto the control library whose output still needs to reach code
+ * that consumes the legacy Finding[]/Pass[] shape (scoring, the frontend,
+ * the badge). Only meaningful for status "FAIL" — PASS has no Finding
+ * equivalent (use checkResultToPass) and NOT_VERIFIED has no legacy
+ * equivalent at all, which is the point: it's dropped from the legacy
+ * arrays rather than forced into PASS or FAIL.
+ */
+export function checkResultToFinding(result: CheckResult): Finding {
+  return {
+    severity: result.severity ?? "medium",
+    category: result.category,
+    title: result.title,
+    detail: result.detail ?? "",
+    file: result.file ?? null,
+    line: result.line ?? null,
+    remediation: result.remediation ?? null,
+  };
+}
+
+/**
+ * Convert a PASS CheckResult back to a legacy Pass. See checkResultToFinding.
+ */
+export function checkResultToPass(result: CheckResult): Pass {
+  return {
+    category: result.category,
+    title: result.title,
+  };
+}
+
+/**
  * Convert a legacy Pass to a CheckResult with PASS status.
  */
 export function passToCheckResult(pass: Pass): CheckResult {

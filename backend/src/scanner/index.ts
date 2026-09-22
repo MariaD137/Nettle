@@ -1,10 +1,9 @@
 import path from "path";
 import { walk } from "./walk";
-import { scanSecrets } from "./secrets";
+import { scanSecretsControl } from "./secrets";
 import { scanDependencies } from "./dependencies";
 import { scanLegalPolicy } from "./legalPolicy";
 import { scanAIDisclosure } from "./aiDisclosure";
-import { scanAuthHeuristic } from "./authHeuristic";
 import { scanWithSemgrep } from "./semgrepScanner";
 import { scanOSVVulnerabilities } from "./osvVulnerabilities";
 import { scanSecurityHeaders } from "./securityHeaders";
@@ -15,9 +14,12 @@ import { scanApiSecurity } from "./apiSecurity";
 import { scanFrontendSecurity } from "./frontendSecurity";
 import { scanAiSecurity } from "./aiSecurity";
 import { scanSessionJwt } from "./sessionJwt";
-import { SCANNER_VERSION, type ScanReport } from "./types";
+import { scanAuthControl } from "./controls/checks/authControl";
+import "./controls"; // registers the control library (AUTH-001, SECRET-001, ...)
+import { SCANNER_VERSION, type CheckResult, type Finding, type Pass, type ScanReport } from "./types";
 import { getSemgrepVersion } from "./initialization";
 import { SCORING_CONFIG, calculateScore, calculateConfidence } from "./scoringConfig";
+import { checkResultToFinding, checkResultToPass, findingToCheckResult, passToCheckResult } from "./threeStateModel";
 
 const SCANNED_EXTENSIONS = [".js", ".ts", ".jsx", ".tsx", ".env", ".json"];
 
@@ -25,12 +27,21 @@ export function runScan(targetPath: string): ScanReport {
   const targetRoot = path.resolve(targetPath);
   const files = walk(targetRoot, SCANNED_EXTENSIONS);
 
-  const results = [
-    scanSecrets(files, targetRoot),
+  // Checks migrated onto the control library (see scanner/controls/) produce
+  // CheckResult directly, including NOT_VERIFIED where the old
+  // Finding/Pass-only modules could only silently contribute nothing.
+  const controlledResults: CheckResult[] = [
+    ...scanAuthControl(files, targetRoot),
+    ...scanSecretsControl(files, targetRoot),
+  ];
+
+  // Every other scanner module still speaks the legacy Finding/Pass shape.
+  // Not yet migrated onto a Control definition — see the gap report for
+  // what that migration involves per module.
+  const legacyResults = [
     scanDependencies(targetRoot),
     scanLegalPolicy(targetRoot),
     scanAIDisclosure(files),
-    scanAuthHeuristic(files, targetRoot),
     scanWithSemgrep(targetRoot),
     scanOSVVulnerabilities(targetRoot),
     scanSecurityHeaders(files, targetRoot),
@@ -43,16 +54,41 @@ export function runScan(targetPath: string): ScanReport {
     scanSessionJwt(files, targetRoot),
   ];
 
-  const findings = results.flatMap((r) => r.findings);
-  const passed = results.flatMap((r) => r.passed);
+  const legacyFindings: Finding[] = legacyResults.flatMap((r) => r.findings);
+  const legacyPassed: Pass[] = legacyResults.flatMap((r) => r.passed);
+
+  // The legacy findings/passed arrays stay the aggregate everything else in
+  // the codebase (scoring, the frontend, the badge) already reads — so the
+  // controlled checks' FAIL/PASS results are folded back in. NOT_VERIFIED
+  // has no legacy equivalent and is intentionally dropped from this array,
+  // not forced into PASS or FAIL: it only exists in checkResults below.
+  const findings: Finding[] = [
+    ...legacyFindings,
+    ...controlledResults.filter((r) => r.status === "FAIL").map(checkResultToFinding),
+  ];
+  const passed: Pass[] = [
+    ...legacyPassed,
+    ...controlledResults.filter((r) => r.status === "PASS").map(checkResultToPass),
+  ];
+
+  // checkResults is the unified, three-state view of the whole scan: the
+  // controlled checks' native output, plus every legacy finding/pass
+  // converted to a CheckResult (as FAIL/PASS — a module that hasn't been
+  // migrated yet has no way to report NOT_VERIFIED for itself).
+  const checkResults: CheckResult[] = [
+    ...controlledResults,
+    ...legacyFindings.map(findingToCheckResult),
+    ...legacyPassed.map(passToCheckResult),
+  ];
 
   // Calculate score using versioned config (excludes NOT_VERIFIED from penalty)
   const score = calculateScore(findings, SCORING_CONFIG);
 
-  // Calculate confidence: what percentage of checks completed?
-  // For now, based on legacy model (we'll enhance when migrating to CheckResult)
-  // Confidence = 100% until we migrate to checkResults with NOT_VERIFIED
-  const scoreConfidence = 100;
+  // Real confidence, driven by checkResults: no longer hardcoded to 100.
+  // Drops whenever a controlled check reports NOT_VERIFIED (unrecognized
+  // framework, an unreadable file) — previously that signal existed in the
+  // three-state model's own tests but was never wired into an actual scan.
+  const scoreConfidence = calculateConfidence(checkResults);
 
   return {
     scannedAt: new Date().toISOString(),
@@ -63,6 +99,7 @@ export function runScan(targetPath: string): ScanReport {
     scoreConfidence,
     findings,
     passed,
+    checkResults,
     summary: {
       critical: findings.filter((f) => f.severity === "critical").length,
       high: findings.filter((f) => f.severity === "high").length,

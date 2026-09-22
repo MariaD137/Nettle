@@ -38,7 +38,7 @@ test("flags undisclosed AI-generated content", () => {
 });
 
 test("flags routes with no visible auth check", () => {
-  assert.ok(flawedReport.findings.some((f) => f.title.includes("no authentication check")));
+  assert.ok(flawedReport.findings.some((f) => f.title.includes("no recognized authentication check")));
 });
 
 test("Semgrep catches the SQL-injection-shaped query", () => {
