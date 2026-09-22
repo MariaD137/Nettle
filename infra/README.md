@@ -147,9 +147,9 @@ will start; the container's own persistence guard
 without `DATABASE_URL`, which this stack injects automatically, so if it
 comes up at all, the database connection is real.
 
-**5. Populate the Stripe secret** (the stack creates the secret as an empty
-shell — see `lib/api-stack.ts` for why a placeholder value would be worse
-than none):
+**5. Populate the Stripe secret** (the stack creates it with placeholder
+`"unset"` values under the real key names — see `lib/api-stack.ts` for why
+it needs real JSON structure from creation, not a truly empty secret):
 
 ```bash
 aws secretsmanager put-secret-value \

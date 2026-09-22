@@ -1,4 +1,4 @@
-import { CfnOutput, RemovalPolicy, Stack, type StackProps } from "aws-cdk-lib";
+import { CfnOutput, RemovalPolicy, SecretValue, Stack, type StackProps } from "aws-cdk-lib";
 import type { IRepository } from "aws-cdk-lib/aws-ecr";
 import { CfnVpcConnector, CfnService } from "aws-cdk-lib/aws-apprunner";
 import { Role, ServicePrincipal, ManagedPolicy } from "aws-cdk-lib/aws-iam";
@@ -31,11 +31,18 @@ export interface NettleApiStackProps extends StackProps {
  *                                 at start-up and never rendered into the
  *                                 template, the repository or a log line
  *
- * No secret VALUE appears in this file. The application secret below is
- * created empty: CDK provisions the container, an operator populates it once,
- * out of band. Generating a placeholder Stripe key would be worse than an
- * empty one, because the service would start and fail confusingly at the first
- * charge rather than at boot.
+ * No real secret VALUE appears in this file. The application secret below is
+ * created with placeholder ("unset") values in the expected JSON shape: CDK
+ * provisions the container, an operator populates it with real values once,
+ * out of band. It is deliberately NOT created truly empty (no
+ * generateSecretString/secretObjectValue at all) — that was this stack's
+ * original design, on the reasoning that the service should fail at the
+ * first Stripe charge rather than start with a fake key. In practice a
+ * secret created that way holds a bare random string, not JSON, and
+ * runtimeEnvironmentSecrets below resolves each variable via App Runner's
+ * `<arn>:<jsonKey>::` syntax, which requires real JSON — so the service
+ * failed to start at all, silently, with no application-level logs ever
+ * produced, which is strictly worse than "fails at the first charge."
  */
 export class NettleApiStack extends Stack {
   public readonly serviceUrl: string;
@@ -48,8 +55,8 @@ export class NettleApiStack extends Stack {
 
     /**
      * Application secrets, as opposed to the database credentials RDS
-     * generates. Created as an empty shell with the expected keys documented
-     * so an operator knows exactly what to fill in:
+     * generates. Created with placeholder values under the expected keys so
+     * an operator knows exactly what to fill in:
      *
      *   STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET,
      *   STRIPE_PRICE_TIER1, STRIPE_PRICE_TIER2
@@ -58,6 +65,19 @@ export class NettleApiStack extends Stack {
      *   aws secretsmanager put-secret-value \
      *     --secret-id nettle/application \
      *     --secret-string '{"STRIPE_SECRET_KEY":"...", ...}'
+     *
+     * secretObjectValue below gives the secret real JSON structure at
+     * creation, with placeholder (non-functional) values — not just
+     * "empty". Without it, CDK's Secret construct defaults to
+     * `generateSecretString: {}`, which produces a bare random string, not
+     * JSON. runtimeEnvironmentSecrets below references each key with App
+     * Runner's `<arn>:<jsonKey>::` syntax, which requires the secret to
+     * actually contain that JSON key — against a non-JSON secret, App
+     * Runner fails to resolve the reference during its own secret-resolution
+     * step, before the container is ever started. That failure produces no
+     * application-level logs at all (nothing ever ran), surfaces only as an
+     * opaque CREATE_FAILED/NotStabilized on the service resource, and is
+     * exactly the failure this comment exists to prevent recurring.
      */
     const appSecret = new Secret(this, "ApplicationSecret", {
       secretName: "nettle/application",
@@ -65,6 +85,12 @@ export class NettleApiStack extends Stack {
         "Nettle application secrets. Keys: STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET, " +
         "STRIPE_PRICE_TIER1, STRIPE_PRICE_TIER2. Populate out of band; never in source control.",
       removalPolicy: RemovalPolicy.RETAIN,
+      secretObjectValue: {
+        STRIPE_SECRET_KEY: SecretValue.unsafePlainText("unset"),
+        STRIPE_WEBHOOK_SECRET: SecretValue.unsafePlainText("unset"),
+        STRIPE_PRICE_TIER1: SecretValue.unsafePlainText("unset"),
+        STRIPE_PRICE_TIER2: SecretValue.unsafePlainText("unset"),
+      },
     });
 
     const ecrAccessRole = new Role(this, "ApiEcrAccessRole", {
