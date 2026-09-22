@@ -21,9 +21,11 @@ import { scanCryptoControl } from "./controls/checks/cryptoControl";
 import { scanAiPromptInjectionControl } from "./controls/checks/aiPromptInjectionControl";
 import { scanPathTraversalControl } from "./controls/checks/pathTraversalControl";
 import { scanTransportSecurityControl } from "./controls/checks/transportSecurityControl";
+import { scanJwtExpiryControl } from "./controls/checks/jwtExpiryControl";
+import { scanCorsControl } from "./controls/checks/corsControl";
 import { detectFrameworks } from "./frameworkDetection";
 import { mapFrameworkToTechnology } from "./controls/technologyMap";
-import "./controls"; // registers the control library (AUTH-001, AUTH-002, SECRET-001, API-001, DB-001, BROWSER-001, CRYPTO-001, AI-001, INPUT-001, NET-001, ...)
+import "./controls"; // registers the control library (AUTH-001, AUTH-002, AUTH-003, SECRET-001, API-001, API-002, DB-001, BROWSER-001, CRYPTO-001, AI-001, INPUT-001, NET-001, ...)
 import { SCANNER_VERSION, type CheckResult, type Finding, type Pass, type ScanReport } from "./types";
 import { getSemgrepVersion } from "./initialization";
 import { SCORING_CONFIG, calculateScore, calculateConfidence } from "./scoringConfig";
@@ -49,6 +51,8 @@ export function runScan(targetPath: string): ScanReport {
     ...scanAiPromptInjectionControl(files, targetRoot),
     ...scanPathTraversalControl(files, targetRoot),
     ...scanTransportSecurityControl(files, targetRoot),
+    ...scanJwtExpiryControl(files, targetRoot),
+    ...scanCorsControl(files, targetRoot),
   ];
 
   // Every other scanner module still speaks the legacy Finding/Pass shape.

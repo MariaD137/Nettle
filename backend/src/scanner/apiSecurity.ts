@@ -2,12 +2,6 @@ import fs from "fs";
 import path from "path";
 import type { Finding, Pass } from "./types";
 
-const CORS_PATTERNS = {
-  any: /cors/i,
-  wildcard: /origin\s*:\s*['"]?\*['"]?|credentials\s*:\s*true.*origin\s*:\s*true/i,
-  configured: /origin\s*:\s*['"\[]/,
-};
-
 const CSRF_PATTERNS = [
   /csrf/i,
   /csurf/,
@@ -80,21 +74,8 @@ export function scanApiSecurity(files: string[], targetRoot: string): { findings
     })
     .join("\n");
 
-  if (CORS_PATTERNS.any.test(allSource)) {
-    if (CORS_PATTERNS.wildcard.test(allSource)) {
-      findings.push({
-        severity: "high",
-        category: "API Security",
-        title: "CORS allows all origins (wildcard)",
-        detail: "A wildcard CORS policy allows any website to make cross-origin requests to this API. Combined with credentials, this enables cross-site request attacks.",
-        file: null,
-        line: null,
-        remediation: "Restrict CORS to your actual frontend domain: cors({ origin: 'https://yourapp.com', credentials: true }).",
-      });
-    } else {
-      passed.push({ category: "API Security", title: "CORS is configured with specific origins" });
-    }
-  }
+  // CORS wildcard detection now lives in controls/checks/corsControl.ts
+  // (API-002), wired into the control library -- see scanner/index.ts.
 
   const usesCookies = COOKIE_SECURITY_PATTERNS.setCookie.test(allSource);
   if (usesCookies) {

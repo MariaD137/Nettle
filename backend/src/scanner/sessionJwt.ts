@@ -10,12 +10,9 @@ const JWT_USAGE_PATTERNS = [
   /require\(\s*['"]jsonwebtoken['"]\s*\)/,
 ];
 
-const JWT_EXPIRY_PATTERNS = [
-  /expiresIn\s*:/,
-  /expiresIn\s*,/,
-  /exp\s*:/,
-  /maxAge\s*:/,
-];
+// JWT expiration detection now lives in
+// controls/checks/jwtExpiryControl.ts (AUTH-003), wired into the control
+// library -- see scanner/index.ts.
 
 // "none"-algorithm detection now lives in
 // controls/checks/jwtAlgorithmControl.ts (AUTH-002), wired into the control
@@ -54,7 +51,6 @@ export function scanSessionJwt(files: string[], targetRoot: string): { findings:
 
   const jsFiles = files.filter((f) => /\.(js|ts|jsx|tsx)$/.test(f));
   let usesJwt = false;
-  let hasExpiry = false;
   let hasStrongAlgo = false;
   let usesSession = false;
   let hasSessionStore = false;
@@ -70,7 +66,6 @@ export function scanSessionJwt(files: string[], targetRoot: string): { findings:
       continue;
     }
     if (JWT_USAGE_PATTERNS.some((p) => p.test(text))) usesJwt = true;
-    if (JWT_EXPIRY_PATTERNS.some((p) => p.test(text))) hasExpiry = true;
     if (JWT_ALGO_PATTERNS.strong.test(text)) hasStrongAlgo = true;
 
     if (SESSION_PATTERNS.expressSession.test(text)) usesSession = true;
@@ -83,20 +78,6 @@ export function scanSessionJwt(files: string[], targetRoot: string): { findings:
   if (!usesJwt && !usesSession) return { findings, passed };
 
   if (usesJwt) {
-    if (!hasExpiry) {
-      findings.push({
-        severity: "high",
-        category: "Session Management",
-        title: "JWT tokens issued without expiration",
-        detail: "Tokens without an expiry never become invalid. A leaked token grants permanent access until the signing key is rotated.",
-        file: null,
-        line: null,
-        remediation: "Set a short expiration on JWTs: jwt.sign(payload, secret, { expiresIn: '15m' }). Use refresh tokens for longer sessions.",
-      });
-    } else {
-      passed.push({ category: "Session Management", title: "JWT tokens have expiration configured" });
-    }
-
     if (hasStrongAlgo) {
       passed.push({ category: "Session Management", title: "JWT uses asymmetric signing algorithm (RS256/ES256)" });
     }

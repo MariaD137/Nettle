@@ -14,6 +14,8 @@ import "./library/cryptography";
 import "./library/aiSecurity";
 import "./library/pathTraversal";
 import "./library/transportSecurity";
+import "./library/jwtExpiry";
+import "./library/cors";
 
 export { getControl, listControls, listControlsByCategory } from "./registry";
 export { hydrateCheckResult, hydrateCheckResults, type HydratedFinding } from "./hydrate";
