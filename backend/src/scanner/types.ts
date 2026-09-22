@@ -98,6 +98,15 @@ export interface ScanReport {
   passed: Pass[];
   // New unified result format
   checkResults?: CheckResult[];
+  /** Primary detected web framework, in the control library's technology-key
+   *  vocabulary (see controls/technologyMap.ts) — e.g. "express", "django".
+   *  null when no supported framework was identified; hydration falls back
+   *  to each control's generic fix in that case. Only web/backend framework
+   *  detection feeds this today, not database drivers or a browser-vs-server
+   *  distinction per file, so some controls (DB-001, SECRET-001's "browser"
+   *  fix) will rarely match a specific technology through this field alone —
+   *  see the gap report for what fuller technology detection would need. */
+  detectedTechnology?: string | null;
   summary: {
     critical: number;
     high: number;

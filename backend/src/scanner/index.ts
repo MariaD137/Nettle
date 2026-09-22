@@ -17,6 +17,8 @@ import { scanSessionJwt } from "./sessionJwt";
 import { scanAuthControl } from "./controls/checks/authControl";
 import { scanApiRateLimitControl } from "./controls/checks/rateLimitControl";
 import { scanSqlInjectionControl } from "./controls/checks/sqlInjectionControl";
+import { detectFrameworks } from "./frameworkDetection";
+import { mapFrameworkToTechnology } from "./controls/technologyMap";
 import "./controls"; // registers the control library (AUTH-001, SECRET-001, API-001, DB-001, ...)
 import { SCANNER_VERSION, type CheckResult, type Finding, type Pass, type ScanReport } from "./types";
 import { getSemgrepVersion } from "./initialization";
@@ -94,6 +96,8 @@ export function runScan(targetPath: string): ScanReport {
   // three-state model's own tests but was never wired into an actual scan.
   const scoreConfidence = calculateConfidence(checkResults);
 
+  const detectedTechnology = mapFrameworkToTechnology(detectFrameworks(targetRoot).primaryFramework) ?? null;
+
   return {
     scannedAt: new Date().toISOString(),
     target: path.basename(targetRoot),
@@ -104,6 +108,7 @@ export function runScan(targetPath: string): ScanReport {
     findings,
     passed,
     checkResults,
+    detectedTechnology,
     summary: {
       critical: findings.filter((f) => f.severity === "critical").length,
       high: findings.filter((f) => f.severity === "high").length,

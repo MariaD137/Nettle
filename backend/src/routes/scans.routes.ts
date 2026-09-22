@@ -12,12 +12,38 @@ import { requireAuth, optionalAuth } from "../auth/middleware";
 import { requireSubscription, entitledPlan } from "../billing/subscription";
 import { getUserById } from "../auth/users";
 import { applyScanAccess } from "../billing/scanAccess";
+import { hydrateCheckResults } from "../scanner/controls";
+import type { ScanReport } from "../scanner/types";
 import { getQuotaState, recordScanUsage } from "../billing/scanQuota";
 import { safeExtractZip } from "../scanner/safeExtraction";
 import { rateLimit } from "../middleware/rateLimit";
 import type { Request as ExpressRequest } from "express";
 
 export const scansRouter = Router();
+
+/**
+ * Trims the report to what the plan is entitled to see (applyScanAccess),
+ * then hydrates the checkResults that survive with a full recommendation —
+ * quickFix/developerFix/architectureFix/verification/references — by
+ * looking up each result's controlKey in the control library, technology-
+ * matched against the report's own detectedTechnology.
+ *
+ * Hydration happens here, at the response boundary, the same as scan-access
+ * trimming: the stored report stays the raw scan output, so a control
+ * library update (new/changed recommendation text) is reflected on the next
+ * read of an old scan without needing to rescan.
+ *
+ * A result with no controlKey (every check not yet migrated onto the
+ * control library — see the scanner/controls/ gap report) comes back with
+ * recommendation: null, not a fabricated one.
+ */
+function respondWithScan(res: Response, report: ScanReport, plan: string): void {
+  const trimmed = applyScanAccess(report, plan);
+  const hydrated = trimmed.checkResults
+    ? hydrateCheckResults(trimmed.checkResults, { detectedTechnology: trimmed.detectedTechnology ?? undefined })
+    : trimmed.checkResults;
+  res.json({ ...trimmed, checkResults: hydrated });
+}
 
 /**
  * Refuses the scan when the billing account has used its monthly allowance.
@@ -164,7 +190,7 @@ scansRouter.post("/api/scans", optionalAuth, scanUploadLimiter, upload.single("c
 
     if (billedUserId) await recordScanUsage(billedUserId, upfrontProject?.id ?? null, "upload");
 
-    res.json(applyScanAccess(report, await planForScan(req, ownerUserId)));
+    respondWithScan(res, report, await planForScan(req, ownerUserId));
   } catch (err) {
     const msg = (err as Error).message;
     let statusCode = 422;
@@ -231,7 +257,7 @@ scansRouter.post("/api/scans/repo", requireAuth, scanRepoLimiter, requireSubscri
 
     if (billedUserId) await recordScanUsage(billedUserId, repoProject?.id ?? null, "repo");
 
-    res.json(applyScanAccess(report, await planForScan(req, ownerUserId)));
+    respondWithScan(res, report, await planForScan(req, ownerUserId));
   } catch (err) {
     const msg = (err as Error).message;
     if (msg.includes("not found") || msg.includes("Could not read")) {
