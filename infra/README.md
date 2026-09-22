@@ -62,6 +62,23 @@ breaks that chicken-and-egg — see `lib/ecr-stack.ts`.
 
 ## First-time setup
 
+**The fast path:** once prerequisites (below) are met, `infra/scripts/deploy-cloudshell.sh`
+runs steps 1-4 below end to end — network, database, ECR, an `linux/amd64`
+image build and push, and the API service — with the same safety checks a
+human operator would apply by hand (safe recovery from a stack stuck in
+`ROLLBACK_COMPLETE`, refusing to push an image that isn't `amd64`). It does
+not touch Stripe secrets or GitHub wiring (steps 5, 7, 8 below) — those need
+a human. Run it from AWS CloudShell (or any shell already configured against
+the target account):
+
+```bash
+bash infra/scripts/deploy-cloudshell.sh
+```
+
+Safe to re-run — every step is idempotent. The manual walkthrough below
+documents exactly what it does, for the first deploy or when diagnosing a
+failure by hand.
+
 **0. Prerequisites**
 
 - An AWS account, with a payment method attached (this deploys billable
