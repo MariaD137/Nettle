@@ -155,7 +155,7 @@ traffic and needs a real scheduled job.
 
 ## Backups
 
-- Automated backups, 14-day retention in production (1 day otherwise).
+- Automated backups, 7-day retention in production by default (1 day otherwise), configurable via NettleDatabaseStackProps.backupRetentionDays. 7 was chosen after RDS rejected 14 days on a Free Tier AWS account ("exceeds the maximum available to free tier customers") on first deploy — raise it once the account is past Free Tier eligibility, if wanted.
 - Deletion protection on in production; `RemovalPolicy.RETAIN`, so tearing down
   the stack does not take the data with it.
 - Storage encrypted at rest; storage autoscales 20 GB → 100 GB.

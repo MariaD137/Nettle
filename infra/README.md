@@ -11,7 +11,7 @@ Five stacks, each scoped to one concern:
   database sits in the isolated tier, with no route to the internet in
   either direction, regardless of what happens to the API's egress.
 - **Nettle-Database** — PostgreSQL 16 on RDS (`db.t4g.micro`), private,
-  encrypted at rest, 14-day backups, deletion protection on. This is where
+  encrypted at rest, 7-day backups (default; configurable via backupRetentionDays — capped lower on AWS Free Tier accounts), deletion protection on. This is where
   all application state actually lives — users, sessions, projects, scans,
   billing anchors, rate-limit counters. See `../docs/DATABASE.md` for why
   RDS rather than SQLite-on-App-Runner (short version: App Runner has no

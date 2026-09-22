@@ -15,6 +15,16 @@ export interface NettleDatabaseStackProps extends StackProps {
   connectorSecurityGroup: SG;
   /** Production gets deletion protection and longer backups. */
   production?: boolean;
+  /**
+   * Automated-backup retention, in days. Defaults to 7 — not 14 or 35 — because
+   * RDS itself rejects anything past a lower cap for accounts still under AWS
+   * Free Tier eligibility ("Resource handler returned message: The specified
+   * backup retention period exceeds the maximum available to free tier
+   * customers"), which is a real error this stack hit on its first deploy.
+   * Raise this once the account is past Free Tier eligibility, if a longer
+   * retention window is wanted.
+   */
+  backupRetentionDays?: number;
 }
 
 /**
@@ -43,6 +53,7 @@ export class NettleDatabaseStack extends Stack {
     super(scope, id, props);
 
     const production = props.production ?? true;
+    const backupRetentionDays = props.backupRetentionDays ?? 7;
 
     const dbSecurityGroup = new SecurityGroup(this, "DatabaseSecurityGroup", {
       vpc: props.vpc,
@@ -84,7 +95,7 @@ export class NettleDatabaseStack extends Stack {
       storageType: StorageType.GP3,
       storageEncrypted: true, // encryption at rest, AWS-managed key
 
-      backupRetention: Duration.days(production ? 14 : 1),
+      backupRetention: Duration.days(production ? backupRetentionDays : 1),
       deleteAutomatedBackups: !production,
       deletionProtection: production,
       removalPolicy: production ? RemovalPolicy.RETAIN : RemovalPolicy.DESTROY,
