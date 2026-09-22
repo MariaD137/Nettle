@@ -399,6 +399,76 @@ button.destructive {
   line-height: 1.6;
 }
 
+/* Scan comparison / rescan-diff */
+.diff-pill {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  white-space: nowrap;
+}
+.diff-new, .diff-regressed {
+  background: color-mix(in srgb, var(--sev-critical) 15%, transparent);
+  color: var(--sev-critical);
+}
+.diff-fixed {
+  background: color-mix(in srgb, var(--sev-good) 15%, transparent);
+  color: var(--sev-good);
+}
+.diff-changed {
+  background: color-mix(in srgb, var(--sev-warning) 15%, transparent);
+  color: var(--sev-warning);
+}
+.diff-notverified, .diff-stillopen {
+  background: var(--surface-2);
+  color: var(--muted);
+}
+.comparison-panel {
+  margin: 16px 0;
+  padding: 14px;
+  border-radius: 6px;
+  background: var(--surface-2);
+}
+.comparison-summary {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-top: 8px;
+  font-size: 13px;
+}
+.comparison-section {
+  margin-top: 14px;
+}
+.comparison-section h3 {
+  margin: 0 0 6px;
+  font-size: 13px;
+}
+.regression-callout {
+  margin-top: 6px;
+  padding: 10px 12px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--sev-critical) 10%, transparent);
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+.version-note {
+  margin-top: 10px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: var(--surface);
+  font-size: 12px;
+  color: var(--muted);
+}
+.baseline-marker {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--accent);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
 /* Passed checks */
 .passed-check {
   display: flex;

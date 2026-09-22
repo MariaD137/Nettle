@@ -3,7 +3,7 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import {
   api, ApiError,
   type Alert, type AlertCounts, type AlertStatus, type BadgeState,
-  type CheckResult, type Finding, type FindingStatus, type Project, type ReleaseImpact, type ScanComparison,
+  type CheckResult, type ComparisonFinding, type DiffStatus, type Finding, type FindingStatus, type Project, type ReleaseImpact, type ScanComparison,
   type ScanReport, type StoredFindingStatus, type StoredScan,
 } from "../api";
 import BadgePill from "../components/BadgePill";
@@ -63,7 +63,7 @@ export default function ProjectPage() {
     <>
       {tab === "overview" && <OverviewTab project={project} latestScan={latestScan} />}
       {tab === "scan" && <ScanTab project={project} onScanned={(b) => { setBadge(b); refresh(); }} />}
-      {tab === "fixcenter" && <FixCenterTab latestScan={latestScan} onRescan={() => setTab("scan")} />}
+      {tab === "fixcenter" && <FixCenterTab latestScan={latestScan} projectId={project.id} onRescan={() => setTab("scan")} />}
       {tab === "findings" && <FindingsTab projectId={project.id} latestScan={latestScan} />}
       {tab === "alerts" && <AlertsTab projectId={project.id} onUpdate={(c) => setAlertCounts(c)} />}
       {tab === "history" && <HistoryTab projectId={project.id} />}
@@ -407,7 +407,37 @@ const SEVERITY_GROUPS: { key: string; title: string }[] = [
   { key: "low", title: "Low" },
 ];
 
-function FixCenterTab({ latestScan, onRescan }: { latestScan: StoredScan | null; onRescan: () => void }) {
+const DIFF_LABELS: Record<DiffStatus, string> = {
+  FIXED: "Fixed",
+  STILL_OPEN: "Still open",
+  NEW: "New",
+  REGRESSED: "Regressed",
+  CHANGED: "Changed",
+  NOT_VERIFIED: "Not verified",
+};
+
+function DiffPill({ status }: { status: DiffStatus }) {
+  return <span className={`diff-pill diff-${status.toLowerCase().replace(/_/g, "")}`}>{DIFF_LABELS[status]}</span>;
+}
+
+function FixCenterTab({ latestScan, projectId, onRescan }: { latestScan: StoredScan | null; projectId: string; onRescan: () => void }) {
+  // Best-effort: lets each currently-open finding be badged New/Regressed/
+  // Changed relative to the previous scan, and surfaces a "recently verified
+  // fixed" section — but the Fix Center is fully usable without it (a first
+  // scan, or a comparison the account isn't entitled to, just means no badges).
+  const [comparison, setComparison] = useState<ScanComparison | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    api.getScans(projectId)
+      .then(({ scans }) => {
+        if (cancelled || scans.length < 2) return;
+        return api.compareScans(projectId).then((c) => { if (!cancelled) setComparison(c); });
+      })
+      .catch(() => { /* no comparison available — Fix Center still works without it */ });
+    return () => { cancelled = true; };
+  }, [projectId, latestScan?.id]);
+
   if (!latestScan) {
     return (
       <div className="card">
@@ -420,6 +450,14 @@ function FixCenterTab({ latestScan, onRescan }: { latestScan: StoredScan | null;
   const results = latestScan.report.checkResults ?? [];
   const fails = results.filter((r) => r.status === "FAIL");
   const notVerified = results.filter((r) => r.status === "NOT_VERIFIED");
+
+  const diffByCheckId = new Map<string, DiffStatus>();
+  if (comparison) {
+    for (const item of [...comparison.new, ...comparison.regressed, ...comparison.changed]) {
+      if (item.current) diffByCheckId.set(item.current.checkId, item.status);
+    }
+  }
+
   const groups = SEVERITY_GROUPS.map((g) => ({
     ...g,
     items: fails.filter((f) => (f.severity ?? "info") === g.key),
@@ -441,7 +479,7 @@ function FixCenterTab({ latestScan, onRescan }: { latestScan: StoredScan | null;
         <div key={g.key}>
           <h2 style={{ marginTop: 20 }}>{g.title} ({g.items.length})</h2>
           {g.items.map((item) => (
-            <FixItem key={item.checkId} item={item} />
+            <FixItem key={item.checkId} item={item} diffStatus={diffByCheckId.get(item.checkId)} />
           ))}
         </div>
       ))}
@@ -464,11 +502,24 @@ function FixCenterTab({ latestScan, onRescan }: { latestScan: StoredScan | null;
           ))}
         </div>
       )}
+
+      {comparison && comparison.fixed.length > 0 && (
+        <div style={{ marginTop: 24 }}>
+          <h2>Recently verified fixed ({comparison.fixed.length})</h2>
+          <p className="muted">
+            Nettle rescanned and confirmed these findings from the previous scan are no longer detected — the
+            recommendation that was used to fix each one is kept below for reference.
+          </p>
+          {comparison.fixed.map((item) => (
+            <FixItem key={item.fingerprint} item={item.finding} diffStatus="FIXED" />
+          ))}
+        </div>
+      )}
     </div>
   );
 }
 
-function FixItem({ item }: { item: CheckResult }) {
+function FixItem({ item, diffStatus }: { item: CheckResult; diffStatus?: DiffStatus }) {
   const [expanded, setExpanded] = useState(false);
   const rec = item.recommendation;
 
@@ -477,6 +528,7 @@ function FixItem({ item }: { item: CheckResult }) {
       <div className="finding-top">
         <span className="finding-title">{item.title}</span>
         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          {diffStatus && <DiffPill status={diffStatus} />}
           {item.releaseImpact && (
             <span className={`impact-pill impact-${item.releaseImpact.toLowerCase().replace(/_/g, "-")}`}>
               {RELEASE_IMPACT_LABELS[item.releaseImpact]}
@@ -696,11 +748,95 @@ function AlertsTab({ projectId, onUpdate }: { projectId: string; onUpdate: (coun
   );
 }
 
+/**
+ * One finding's row inside a comparison bucket. REGRESSED gets its own
+ * explanatory callout — a returning finding is one of Nettle's core
+ * continuous-value signals, not just another list item — and CHANGED/
+ * NOT_VERIFIED show the engine's stated reason rather than a bare label.
+ */
+function ComparisonFindingRow({ item }: { item: ComparisonFinding }) {
+  return (
+    <div style={{ padding: "8px 0", borderBottom: "1px solid var(--line)" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
+        <span style={{ fontSize: 13 }}>{item.finding.title}</span>
+        <DiffPill status={item.status} />
+      </div>
+      {item.finding.file && (
+        <p className="muted" style={{ fontSize: 12, margin: "2px 0 0" }}>
+          {item.finding.file}{item.finding.line ? `:${item.finding.line}` : ""}
+        </p>
+      )}
+      {item.status === "REGRESSED" && (
+        <div className="regression-callout">
+          <strong>Regression detected.</strong> This finding was verified fixed in an earlier scan and has returned.
+          {item.finding.recommendation && <> {item.finding.recommendation.quickFix}</>}
+        </div>
+      )}
+      {(item.status === "CHANGED" || item.status === "NOT_VERIFIED") && item.reason && (
+        <p className="muted" style={{ fontSize: 12, margin: "4px 0 0" }}>{item.reason}</p>
+      )}
+      {item.status === "FIXED" && item.finding.recommendation && (
+        <p className="muted" style={{ fontSize: 12, margin: "4px 0 0" }}>
+          Verified fixed — no longer detected as of the current scan.
+        </p>
+      )}
+    </div>
+  );
+}
+
+const COMPARISON_SECTIONS: { key: keyof Pick<ScanComparison, "regressed" | "new" | "changed" | "stillOpen" | "fixed" | "notVerified">; title: string }[] = [
+  { key: "regressed", title: "Regressed" },
+  { key: "new", title: "New" },
+  { key: "changed", title: "Changed" },
+  { key: "stillOpen", title: "Still open" },
+  { key: "fixed", title: "Fixed" },
+  { key: "notVerified", title: "Not verified" },
+];
+
+function ComparisonPanel({ comparison }: { comparison: ScanComparison }) {
+  return (
+    <div className="comparison-panel">
+      <strong>Comparison:</strong>{" "}
+      {new Date(comparison.baselineScannedAt).toLocaleDateString()} → {new Date(comparison.currentScannedAt).toLocaleDateString()}{" "}
+      <span className={comparison.scoreDelta > 0 ? "score-up" : comparison.scoreDelta < 0 ? "score-down" : "muted"}>
+        {comparison.scoreDelta > 0 ? "+" : ""}{comparison.scoreDelta} points
+      </span>
+      <p className="muted" style={{ margin: "4px 0 0", fontSize: 12 }}>
+        A higher score doesn't by itself prove a fix — the findings below are the authoritative record.
+      </p>
+
+      <div className="comparison-summary">
+        <span className="count-clear">{comparison.summary.fixed} fixed</span>
+        <span className="count-critical">{comparison.summary.new} new</span>
+        <span className="count-critical">{comparison.summary.regressed} regressed</span>
+        <span className="count-medium">{comparison.summary.changed} changed</span>
+        <span className="muted">{comparison.summary.stillOpen} still open</span>
+        <span className="muted">{comparison.summary.notVerified} not verified</span>
+      </div>
+
+      {comparison.versionNote && <div className="version-note">{comparison.versionNote}</div>}
+
+      {COMPARISON_SECTIONS.map(({ key, title }) => {
+        const items = comparison[key] as ComparisonFinding[];
+        if (items.length === 0) return null;
+        return (
+          <div key={key} className="comparison-section">
+            <h3>{title} ({items.length})</h3>
+            {items.map((item) => <ComparisonFindingRow key={item.fingerprint} item={item} />)}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function HistoryTab({ projectId }: { projectId: string }) {
   const [scans, setScans] = useState<StoredScan[] | null>(null);
   const [expanded, setExpanded] = useState<string | null>(null);
   const [comparison, setComparison] = useState<ScanComparison | null>(null);
   const [comparing, setComparing] = useState(false);
+  const [comparisonError, setComparisonError] = useState<string | null>(null);
+  const [baselineId, setBaselineId] = useState<string | null>(null);
   const [exportError, setExportError] = useState<string | null>(null);
 
   async function handleExport(scanId: string) {
@@ -719,11 +855,16 @@ function HistoryTab({ projectId }: { projectId: string }) {
   async function compare() {
     if (!scans || scans.length < 2) return;
     setComparing(true);
+    setComparisonError(null);
     try {
-      const result = await api.compareScans(projectId);
+      // Baseline defaults (from left unset) to the previous scan, matching
+      // the backend's own default — picking "Use as baseline" below compares
+      // against a specific earlier scan instead.
+      const result = await api.compareScans(projectId, baselineId ?? undefined);
       setComparison(result);
-    } catch {
+    } catch (err) {
       setComparison(null);
+      setComparisonError(err instanceof ApiError ? err.message : "Comparison failed");
     } finally {
       setComparing(false);
     }
@@ -735,40 +876,20 @@ function HistoryTab({ projectId }: { projectId: string }) {
         <h2 style={{ margin: 0 }}>Scan history</h2>
         {scans && scans.length >= 2 && (
           <button className="small secondary" onClick={compare} disabled={comparing}>
-            {comparing ? "Comparing…" : "Compare latest"}
+            {comparing ? "Comparing…" : "Compare with latest"}
           </button>
         )}
       </div>
-
-      {comparison && (
-        <div style={{ margin: "16px 0", padding: 12, borderRadius: 6, background: "var(--surface-alt, #f5f5f5)" }}>
-          <strong>Comparison:</strong>{" "}
-          <span className={comparison.scoreDelta > 0 ? "score-up" : comparison.scoreDelta < 0 ? "score-down" : ""}>
-            {comparison.scoreDelta > 0 ? "+" : ""}{comparison.scoreDelta} points
-          </span>
-          <div style={{ display: "flex", gap: 16, marginTop: 8 }}>
-            <span className="count-clear">{comparison.fixed} fixed</span>
-            <span className="count-critical">{comparison.new} new</span>
-            <span className="muted">{comparison.remaining} unchanged</span>
-          </div>
-          {comparison.fixedFindings.length > 0 && (
-            <div style={{ marginTop: 8 }}>
-              <strong>Fixed:</strong>
-              {comparison.fixedFindings.map((f, i) => (
-                <div key={i} className="muted">- {f.title}</div>
-              ))}
-            </div>
-          )}
-          {comparison.newFindings.length > 0 && (
-            <div style={{ marginTop: 8 }}>
-              <strong>New issues:</strong>
-              {comparison.newFindings.map((f, i) => (
-                <div key={i} className="muted">- {f.title} ({f.severity})</div>
-              ))}
-            </div>
-          )}
-        </div>
+      {scans && scans.length >= 2 && (
+        <p className="muted" style={{ fontSize: 12, marginTop: 4 }}>
+          {baselineId
+            ? `Baseline set to ${new Date(scans.find((s) => s.id === baselineId)?.scannedAt ?? "").toLocaleDateString()}. Pick "Use as baseline" on another scan to change it.`
+            : 'Compares against the scan immediately before the latest by default — pick "Use as baseline" on any scan below to compare against a specific one, e.g. to verify a fix that took several rescans.'}
+        </p>
       )}
+
+      {comparisonError && <div className="error-banner">{comparisonError}</div>}
+      {comparison && <ComparisonPanel comparison={comparison} />}
 
       {exportError && <div className="error-banner">{exportError}</div>}
       {scans === null && <p className="muted">Loading…</p>}
@@ -791,11 +912,20 @@ function HistoryTab({ projectId }: { projectId: string }) {
                     {diff > 0 ? "+" : ""}{diff}
                   </span>
                 )}
+                {baselineId === s.id && <span className="baseline-marker">Baseline</span>}
               </div>
               <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
                 <span className="muted">
                   {s.criticalCount} critical · {s.cautionCount} caution
                 </span>
+                {scans.length >= 2 && (
+                  <button
+                    className="small secondary"
+                    onClick={(e) => { e.stopPropagation(); setBaselineId(s.id); }}
+                  >
+                    Use as baseline
+                  </button>
+                )}
                 <button
                   className="small secondary"
                   onClick={(e) => { e.stopPropagation(); handleExport(s.id); }}

@@ -188,16 +188,48 @@ export interface SessionInfo {
   current: boolean;
 }
 
+export type DiffStatus = "FIXED" | "STILL_OPEN" | "NEW" | "REGRESSED" | "CHANGED" | "NOT_VERIFIED";
+
+/**
+ * One finding's classification between two scans. `finding` is whichever of
+ * baseline/current is most relevant to show (current when present, else
+ * baseline) and is hydrated the same way a live Fix Center item is — a
+ * FIXED or REGRESSED entry keeps its original recommendation, not just
+ * currently-failing ones (see backend routes/projects.routes.ts).
+ */
+export interface ComparisonFinding {
+  fingerprint: string;
+  status: DiffStatus;
+  finding: CheckResult;
+  baseline?: CheckResult;
+  current?: CheckResult;
+  /** Populated for NOT_VERIFIED (why comparison was unsafe) and CHANGED (what changed). */
+  reason?: string;
+}
+
 export interface ScanComparison {
-  from: { id: string; score: number; scannedAt: string };
-  to: { id: string; score: number; scannedAt: string };
+  baselineScanId: string;
+  currentScanId: string;
+  baselineScannedAt: string;
+  currentScannedAt: string;
+  baselineScore: number;
+  currentScore: number;
   scoreDelta: number;
-  fixed: number;
-  new: number;
-  remaining: number;
-  fixedFindings: Finding[];
-  newFindings: Finding[];
-  fullReport: boolean;
+  versionNote: string | null;
+  summary: {
+    fixed: number;
+    stillOpen: number;
+    new: number;
+    regressed: number;
+    changed: number;
+    notVerified: number;
+  };
+  fixed: ComparisonFinding[];
+  stillOpen: ComparisonFinding[];
+  new: ComparisonFinding[];
+  regressed: ComparisonFinding[];
+  changed: ComparisonFinding[];
+  notVerified: ComparisonFinding[];
 }
 
 class ApiError extends Error {

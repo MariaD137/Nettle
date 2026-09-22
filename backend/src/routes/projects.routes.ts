@@ -1,14 +1,15 @@
 import { Router } from "express";
 import { createProject, getProject, listProjectsByUser, updateProject, deleteProject, archiveProject, restoreProject, rotateApiKey, countProjectsByUser } from "../patrol/projects";
-import { listAlerts, getAlert, updateAlertStatus, countAlertsByStatus } from "../patrol/alerts";
+import { listAlerts, getAlert, updateAlertStatus, countAlertsByStatus, createAlert, hasRecentAlert } from "../patrol/alerts";
 import { listScans, getLatestScan, type StoredScan } from "../patrol/scans";
 import { computeBadgeState } from "../patrol/badge";
 import { hashFinding, upsertFindingStatus, listFindingStatuses } from "../patrol/findingStatuses";
 import { requireAuth } from "../auth/middleware";
 import { requireSubscription } from "../billing/subscription";
 import { getQuotaState } from "../billing/scanQuota";
-import { hydrateCheckResults } from "../scanner/controls";
-import type { AlertStatus, FindingStatus } from "../patrol/types";
+import { hydrateCheckResult, hydrateCheckResults } from "../scanner/controls";
+import { compareScans, ScanComparisonError, type ComparisonFinding } from "../scanner/scanComparison";
+import type { AlertStatus, AlertSeverity, FindingStatus } from "../patrol/types";
 
 export const projectsRouter = Router();
 
@@ -162,36 +163,69 @@ projectsRouter.get("/api/projects/:id/scans", ...paywalled, async (req, res) => 
   res.json({ project: { id: project.id, name: project.name }, scans });
 });
 
+/**
+ * Attaches the same technology-aware recommendation the Fix Center shows for
+ * a live/stored scan (see hydrateStoredScan above) to every finding in a
+ * comparison bucket — a FIXED or REGRESSED item keeps its original recommendation
+ * available rather than only being useful while it was currently failing (§24).
+ */
+function hydrateComparisonList(list: ComparisonFinding[], detectedTechnology: string | undefined): ComparisonFinding[] {
+  return list.map((item) => ({
+    ...item,
+    finding: hydrateCheckResult(item.finding, { detectedTechnology }),
+    baseline: item.baseline ? hydrateCheckResult(item.baseline, { detectedTechnology }) : undefined,
+    current: item.current ? hydrateCheckResult(item.current, { detectedTechnology }) : undefined,
+  }));
+}
+
 projectsRouter.get("/api/projects/:id/scans/compare", ...paywalled, async (req, res) => {
   const project = await ownedProjectOr404(req, res);
   if (!project) return;
+  // listScans is already project-scoped (§21): a from/to id belonging to
+  // another project simply won't be found in this array, so compareScans
+  // throws SCAN_NOT_FOUND below rather than ever comparing across tenants.
   const scans = await listScans(project.id);
   if (scans.length < 2) {
     return res.status(400).json({ error: "Need at least 2 scans to compare" });
   }
-  const fromIdx = typeof req.query.from === "string" ? scans.findIndex((s) => s.id === req.query.from) : 1;
-  const toIdx = typeof req.query.to === "string" ? scans.findIndex((s) => s.id === req.query.to) : 0;
-  if (fromIdx < 0 || toIdx < 0) {
-    return res.status(404).json({ error: "Scan not found" });
-  }
-  const older = scans[fromIdx].report;
-  const newer = scans[toIdx].report;
+  // scans is newest-first; index 1/0 preserves this endpoint's previous
+  // default of "baseline = second-most-recent, current = most recent".
+  const baselineId = typeof req.query.from === "string" ? req.query.from : scans[1].id;
+  const currentId = typeof req.query.to === "string" ? req.query.to : scans[0].id;
 
-  const olderSet = new Set(older.findings.map((f) => `${f.category}::${f.title}::${f.file}`));
-  const newerSet = new Set(newer.findings.map((f) => `${f.category}::${f.title}::${f.file}`));
-  const fixed = older.findings.filter((f) => !newerSet.has(`${f.category}::${f.title}::${f.file}`));
-  const newFindings = newer.findings.filter((f) => !olderSet.has(`${f.category}::${f.title}::${f.file}`));
-  const remaining = newer.findings.filter((f) => olderSet.has(`${f.category}::${f.title}::${f.file}`));
+  let comparison;
+  try {
+    comparison = compareScans(scans, baselineId, currentId);
+  } catch (err) {
+    if (err instanceof ScanComparisonError) {
+      return res.status(err.code === "SCAN_NOT_FOUND" ? 404 : 400).json({ error: err.message });
+    }
+    throw err;
+  }
+
+  const currentScan = scans.find((s) => s.id === comparison.currentScanId);
+  const detectedTechnology = currentScan?.report.detectedTechnology ?? undefined;
+
+  // Extend the existing alerts mechanism rather than build a separate audit
+  // log (§25): a regression is exactly the kind of event the Alerts tab
+  // already exists to surface. Deduped per fingerprint over an hour so
+  // reloading this comparison repeatedly doesn't spam the alert log.
+  for (const r of comparison.regressed) {
+    const rule = `finding_regressed:${r.fingerprint}`;
+    if (!(await hasRecentAlert(project.id, rule, 3600))) {
+      const severity: AlertSeverity = (r.finding.severity as AlertSeverity) ?? "medium";
+      await createAlert(project.id, severity, rule, `A previously fixed finding has returned: ${r.finding.title}`);
+    }
+  }
 
   res.json({
-    from: { id: scans[fromIdx].id, score: scans[fromIdx].score, scannedAt: scans[fromIdx].scannedAt },
-    to: { id: scans[toIdx].id, score: scans[toIdx].score, scannedAt: scans[toIdx].scannedAt },
-    scoreDelta: scans[toIdx].score - scans[fromIdx].score,
-    fixed: fixed.length,
-    new: newFindings.length,
-    remaining: remaining.length,
-    fixedFindings: fixed,
-    newFindings,
+    ...comparison,
+    fixed: hydrateComparisonList(comparison.fixed, detectedTechnology),
+    stillOpen: hydrateComparisonList(comparison.stillOpen, detectedTechnology),
+    new: hydrateComparisonList(comparison.new, detectedTechnology),
+    regressed: hydrateComparisonList(comparison.regressed, detectedTechnology),
+    changed: hydrateComparisonList(comparison.changed, detectedTechnology),
+    notVerified: hydrateComparisonList(comparison.notVerified, detectedTechnology),
   });
 });
 

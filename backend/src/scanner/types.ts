@@ -89,6 +89,18 @@ export interface ScanReport {
   target: string;
   scannerVersion: string;
   semgrepVersion?: string; // Version of Semgrep used (if available)
+  /** Deterministic hash of every registered control's controlKey@version at
+   *  scan time (see controls/registry.ts's getControlLibraryVersion). Two
+   *  scans with the same value were evaluated against identical control
+   *  definitions; scanComparison.ts uses a mismatch here as one signal that
+   *  a fixed/regressed conclusion for a specific control may be unsafe. */
+  controlLibraryVersion?: string;
+  /** controlKey -> version snapshot at scan time, for the finer-grained,
+   *  per-control check scanComparison.ts actually performs (the aggregate
+   *  controlLibraryVersion above changing doesn't mean every control did). */
+  controlVersions?: Record<string, string>;
+  /** SCORING_CONFIG.version at scan time — see scanner/scoringConfig.ts. */
+  scoringVersion?: string;
   score: number;
   scoreConfidence?: number; // 0-100: how complete is the scan
   status?: ScanStatus; // default COMPLETED for backward compatibility

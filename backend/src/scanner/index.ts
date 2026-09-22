@@ -26,6 +26,7 @@ import { scanCorsControl } from "./controls/checks/corsControl";
 import { detectFrameworks } from "./frameworkDetection";
 import { mapFrameworkToTechnology } from "./controls/technologyMap";
 import "./controls"; // registers the control library (AUTH-001, AUTH-002, AUTH-003, SECRET-001, API-001, API-002, DB-001, BROWSER-001, CRYPTO-001, AI-001, INPUT-001, NET-001, ...)
+import { getControlLibraryVersion, getControlVersionsSnapshot } from "./controls";
 import { SCANNER_VERSION, type CheckResult, type Finding, type Pass, type ScanReport } from "./types";
 import { getSemgrepVersion } from "./initialization";
 import { SCORING_CONFIG, calculateScore, calculateConfidence } from "./scoringConfig";
@@ -115,6 +116,9 @@ export function runScan(targetPath: string): ScanReport {
     target: path.basename(targetRoot),
     scannerVersion: SCANNER_VERSION,
     semgrepVersion: getSemgrepVersion(),
+    controlLibraryVersion: getControlLibraryVersion(),
+    controlVersions: getControlVersionsSnapshot(),
+    scoringVersion: SCORING_CONFIG.version,
     score,
     scoreConfidence,
     findings,
