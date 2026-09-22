@@ -2,16 +2,9 @@ import fs from "fs";
 import path from "path";
 import type { Finding, Pass } from "./types";
 
-const SQL_CONCAT_PATTERNS = [
-  /`\s*SELECT\b[^`]*\$\{/gi,
-  /`\s*INSERT\b[^`]*\$\{/gi,
-  /`\s*UPDATE\b[^`]*\$\{/gi,
-  /`\s*DELETE\b[^`]*\$\{/gi,
-  /['"]SELECT\b.*['"]\s*\+\s*/gi,
-  /['"]INSERT\b.*['"]\s*\+\s*/gi,
-  /['"]UPDATE\b.*['"]\s*\+\s*/gi,
-  /['"]DELETE\b.*['"]\s*\+\s*/gi,
-];
+// SQL-concatenation detection now lives in
+// controls/checks/sqlInjectionControl.ts (DB-001), wired into the control
+// library — see scanner/index.ts.
 
 const PARAMETERIZED_PATTERNS = [
   /\.prepare\s*\(/,
@@ -44,14 +37,18 @@ export function scanDatabaseSecurity(files: string[], targetRoot: string): { fin
   const passed: Pass[] = [];
 
   const jsFiles = files.filter((f) => /\.(js|ts|jsx|tsx)$/.test(f));
-  let hasSqlConcat = false;
   let hasParameterized = false;
   let hasOrm = false;
   let usesDb = false;
   let hasDbUrlExposed = false;
 
   for (const file of jsFiles) {
-    const text = fs.readFileSync(file, "utf8");
+    let text: string;
+    try {
+      text = fs.readFileSync(file, "utf8");
+    } catch {
+      continue;
+    }
     const rel = path.relative(targetRoot, file);
 
     if (/\b(sqlite|postgres|mysql|mongo|database|sequelize|prisma|knex|typeorm|drizzle)\b/i.test(text)) {
@@ -60,23 +57,6 @@ export function scanDatabaseSecurity(files: string[], targetRoot: string): { fin
 
     if (PARAMETERIZED_PATTERNS.some((p) => p.test(text))) hasParameterized = true;
     if (ORM_PATTERNS.some((p) => p.test(text))) hasOrm = true;
-
-    for (const pattern of SQL_CONCAT_PATTERNS) {
-      const matches = text.match(pattern);
-      if (matches) {
-        hasSqlConcat = true;
-        findings.push({
-          severity: "critical",
-          category: "Database",
-          title: "SQL query built with string concatenation or interpolation",
-          detail: `Found ${matches.length} SQL statement(s) that embed variables directly into the query string. This is the #1 cause of SQL injection vulnerabilities.`,
-          file: rel,
-        line: null,
-          remediation: "Use parameterized queries with placeholders: db.prepare('SELECT * FROM users WHERE id = ?').get(userId).",
-        });
-        break;
-      }
-    }
 
     const dbUrlMatches = text.match(DB_URL_EXPOSED);
     if (dbUrlMatches) {
@@ -93,9 +73,6 @@ export function scanDatabaseSecurity(files: string[], targetRoot: string): { fin
     }
   }
 
-  if (usesDb && !hasSqlConcat) {
-    passed.push({ category: "Database", title: "No SQL injection patterns (string concatenation in queries) detected" });
-  }
   if (hasParameterized || hasOrm) {
     passed.push({ category: "Database", title: hasOrm ? "ORM or query builder detected (provides SQL injection protection)" : "Parameterized queries detected" });
   }

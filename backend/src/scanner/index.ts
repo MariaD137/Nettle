@@ -15,7 +15,9 @@ import { scanFrontendSecurity } from "./frontendSecurity";
 import { scanAiSecurity } from "./aiSecurity";
 import { scanSessionJwt } from "./sessionJwt";
 import { scanAuthControl } from "./controls/checks/authControl";
-import "./controls"; // registers the control library (AUTH-001, SECRET-001, ...)
+import { scanApiRateLimitControl } from "./controls/checks/rateLimitControl";
+import { scanSqlInjectionControl } from "./controls/checks/sqlInjectionControl";
+import "./controls"; // registers the control library (AUTH-001, SECRET-001, API-001, DB-001, ...)
 import { SCANNER_VERSION, type CheckResult, type Finding, type Pass, type ScanReport } from "./types";
 import { getSemgrepVersion } from "./initialization";
 import { SCORING_CONFIG, calculateScore, calculateConfidence } from "./scoringConfig";
@@ -33,6 +35,8 @@ export function runScan(targetPath: string): ScanReport {
   const controlledResults: CheckResult[] = [
     ...scanAuthControl(files, targetRoot),
     ...scanSecretsControl(files, targetRoot),
+    ...scanApiRateLimitControl(files, targetRoot),
+    ...scanSqlInjectionControl(files, targetRoot),
   ];
 
   // Every other scanner module still speaks the legacy Finding/Pass shape.

@@ -2,15 +2,6 @@ import fs from "fs";
 import path from "path";
 import type { Finding, Pass } from "./types";
 
-const RATE_LIMIT_PATTERNS = [
-  /rate[_-]?limit/i,
-  /express-rate-limit/,
-  /rateLimit/,
-  /throttle/i,
-  /req.*per.*second/i,
-  /too many requests/i,
-];
-
 const CORS_PATTERNS = {
   any: /cors/i,
   wildcard: /origin\s*:\s*['"]?\*['"]?|credentials\s*:\s*true.*origin\s*:\s*true/i,
@@ -82,26 +73,18 @@ export function scanApiSecurity(files: string[], targetRoot: string): { findings
   const findings: Finding[] = [];
   const passed: Pass[] = [];
 
+  // Rate-limit detection now lives in controls/checks/rateLimitControl.ts
+  // (API-001), wired into the control library — see scanner/index.ts.
   const jsFiles = files.filter((f) => /\.(js|ts|jsx|tsx)$/.test(f));
-  const allSource = jsFiles.map((f) => fs.readFileSync(f, "utf8")).join("\n");
-
-  const hasRateLimit = RATE_LIMIT_PATTERNS.some((p) => p.test(allSource));
-  if (hasRateLimit) {
-    passed.push({ category: "API Security", title: "Rate limiting is configured" });
-  } else {
-    const hasRoutes = /app\.(get|post|put|delete|patch)\s*\(/.test(allSource);
-    if (hasRoutes) {
-      findings.push({
-        severity: "high",
-        category: "API Security",
-        title: "No rate limiting detected",
-        detail: "Without rate limiting, the API is vulnerable to brute-force attacks, credential stuffing, denial of service, and resource exhaustion.",
-        file: null,
-        line: null,
-        remediation: "Add rate limiting middleware: npm install express-rate-limit, then app.use(rateLimit({ windowMs: 15*60*1000, max: 100 })).",
-      });
-    }
-  }
+  const allSource = jsFiles
+    .map((f) => {
+      try {
+        return fs.readFileSync(f, "utf8");
+      } catch {
+        return "";
+      }
+    })
+    .join("\n");
 
   if (CORS_PATTERNS.any.test(allSource)) {
     if (CORS_PATTERNS.wildcard.test(allSource)) {
@@ -254,7 +237,12 @@ export function scanApiSecurity(files: string[], targetRoot: string): { findings
   ];
   let pathTraversalFound = false;
   for (const file of jsFiles) {
-    const text = fs.readFileSync(file, "utf8");
+    let text: string;
+    try {
+      text = fs.readFileSync(file, "utf8");
+    } catch {
+      continue;
+    }
     const rel = path.relative(targetRoot, file);
     for (const pat of pathTraversalPatterns) {
       if (pat.test(text)) {
@@ -292,7 +280,12 @@ export function scanApiSecurity(files: string[], targetRoot: string): { findings
   ];
   let deserializationFound = false;
   for (const file of jsFiles) {
-    const text = fs.readFileSync(file, "utf8");
+    let text: string;
+    try {
+      text = fs.readFileSync(file, "utf8");
+    } catch {
+      continue;
+    }
     const rel = path.relative(targetRoot, file);
     for (const pat of deserializationPatterns) {
       if (pat.test(text)) {
@@ -315,7 +308,12 @@ export function scanApiSecurity(files: string[], targetRoot: string): { findings
   }
 
   for (const file of jsFiles) {
-    const text = fs.readFileSync(file, "utf8");
+    let text: string;
+    try {
+      text = fs.readFileSync(file, "utf8");
+    } catch {
+      continue;
+    }
     const rel = path.relative(targetRoot, file);
     for (const pattern of HTTPS_PATTERNS) {
       const matches = text.match(pattern);

@@ -6,6 +6,8 @@
  */
 import "./library/auth";
 import "./library/secrets";
+import "./library/api";
+import "./library/database";
 
 export { getControl, listControls, listControlsByCategory } from "./registry";
 export { hydrateCheckResult, hydrateCheckResults, type HydratedFinding } from "./hydrate";
