@@ -10,6 +10,8 @@ import "./library/api";
 import "./library/database";
 import "./library/browserSecurity";
 import "./library/jwtAlgorithm";
+import "./library/cryptography";
+import "./library/aiSecurity";
 
 export { getControl, listControls, listControlsByCategory } from "./registry";
 export { hydrateCheckResult, hydrateCheckResults, type HydratedFinding } from "./hydrate";

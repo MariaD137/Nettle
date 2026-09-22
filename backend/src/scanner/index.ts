@@ -7,7 +7,6 @@ import { scanAIDisclosure } from "./aiDisclosure";
 import { scanWithSemgrep } from "./semgrepScanner";
 import { scanOSVVulnerabilities } from "./osvVulnerabilities";
 import { scanCodeQuality } from "./codeQuality";
-import { scanCrypto } from "./cryptoSecurity";
 import { scanDatabaseSecurity } from "./databaseSecurity";
 import { scanApiSecurity } from "./apiSecurity";
 import { scanFrontendSecurity } from "./frontendSecurity";
@@ -18,9 +17,11 @@ import { scanApiRateLimitControl } from "./controls/checks/rateLimitControl";
 import { scanSqlInjectionControl } from "./controls/checks/sqlInjectionControl";
 import { scanSecurityHeadersControl } from "./controls/checks/securityHeadersControl";
 import { scanJwtAlgorithmControl } from "./controls/checks/jwtAlgorithmControl";
+import { scanCryptoControl } from "./controls/checks/cryptoControl";
+import { scanAiPromptInjectionControl } from "./controls/checks/aiPromptInjectionControl";
 import { detectFrameworks } from "./frameworkDetection";
 import { mapFrameworkToTechnology } from "./controls/technologyMap";
-import "./controls"; // registers the control library (AUTH-001, AUTH-002, SECRET-001, API-001, DB-001, BROWSER-001, ...)
+import "./controls"; // registers the control library (AUTH-001, AUTH-002, SECRET-001, API-001, DB-001, BROWSER-001, CRYPTO-001, AI-001, ...)
 import { SCANNER_VERSION, type CheckResult, type Finding, type Pass, type ScanReport } from "./types";
 import { getSemgrepVersion } from "./initialization";
 import { SCORING_CONFIG, calculateScore, calculateConfidence } from "./scoringConfig";
@@ -42,6 +43,8 @@ export function runScan(targetPath: string): ScanReport {
     ...scanSqlInjectionControl(files, targetRoot),
     ...scanSecurityHeadersControl(files, targetRoot),
     ...scanJwtAlgorithmControl(files, targetRoot),
+    ...scanCryptoControl(files, targetRoot),
+    ...scanAiPromptInjectionControl(files, targetRoot),
   ];
 
   // Every other scanner module still speaks the legacy Finding/Pass shape.
@@ -54,7 +57,6 @@ export function runScan(targetPath: string): ScanReport {
     scanWithSemgrep(targetRoot),
     scanOSVVulnerabilities(targetRoot),
     scanCodeQuality(files, targetRoot),
-    scanCrypto(files, targetRoot),
     scanDatabaseSecurity(files, targetRoot),
     scanApiSecurity(files, targetRoot),
     scanFrontendSecurity(files, targetRoot),

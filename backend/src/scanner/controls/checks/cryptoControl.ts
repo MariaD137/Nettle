@@ -1,11 +1,12 @@
 import fs from "fs";
 import path from "path";
-import type { Finding, Pass } from "./types";
+import type { CheckResult, Severity } from "../../types";
+import { generateCheckId } from "../../threeStateModel";
 
 interface CryptoCheck {
   name: string;
   regex: RegExp;
-  severity: Finding["severity"];
+  severity: Severity;
   detail: string;
   remediation: string;
 }
@@ -72,50 +73,105 @@ const WEAK_CRYPTO: CryptoCheck[] = [
 const GOOD_PATTERNS = {
   argon2: /(argon2|argon2id)/i,
   bcrypt: /bcrypt/i,
-  aesGcm: /aes-256-gcm|aes-128-gcm/i,
   secureRandom: /crypto\.randomBytes|crypto\.randomUUID|randomBytes|getRandomValues/,
 };
 
-export function scanCrypto(files: string[], targetRoot: string): { findings: Finding[]; passed: Pass[] } {
-  const findings: Finding[] = [];
-  const passed: Pass[] = [];
-
+/**
+ * CRYPTO-001, wired to the control library. Moved from
+ * scanner/cryptoSecurity.ts (now deleted -- every check it made is
+ * promoted here, none left as legacy), same detection logic and
+ * title/detail/remediation text, restructured to emit CheckResult with a
+ * controlKey and to survive an unreadable file.
+ */
+export function scanCryptoControl(files: string[], targetRoot: string): CheckResult[] {
+  const results: CheckResult[] = [];
   const jsFiles = files.filter((f) => /\.(js|ts|jsx|tsx)$/.test(f));
+
   let hasStrongHashing = false;
-  let hasStrongEncryption = false;
   let hasSecureRandom = false;
   let usesCrypto = false;
+  let anyFailure = false;
+  let anyFileRead = false;
 
   for (const file of jsFiles) {
-    const text = fs.readFileSync(file, "utf8");
-    const rel = path.relative(targetRoot, file);
+    const relFile = path.relative(targetRoot, file);
+    let text: string;
+    try {
+      text = fs.readFileSync(file, "utf8");
+    } catch (err) {
+      results.push({
+        checkId: generateCheckId("Cryptography", "CRYPTO-001:unreadable", relFile),
+        status: "NOT_VERIFIED",
+        category: "Cryptography",
+        title: "File could not be read for cryptography analysis",
+        detail: `${(err as Error).message}`,
+        file: relFile,
+        confidence: 0,
+        detectionMethod: "regex",
+        controlKey: "CRYPTO-001",
+      });
+      continue;
+    }
 
+    anyFileRead = true;
     if (GOOD_PATTERNS.argon2.test(text) || GOOD_PATTERNS.bcrypt.test(text)) hasStrongHashing = true;
-    if (GOOD_PATTERNS.aesGcm.test(text)) hasStrongEncryption = true;
     if (GOOD_PATTERNS.secureRandom.test(text)) hasSecureRandom = true;
     if (/crypto\.|require\(['"]crypto['"]\)|from ['"]crypto['"]/.test(text)) usesCrypto = true;
 
     for (const check of WEAK_CRYPTO) {
       const matches = text.match(check.regex);
-      if (matches) {
-        findings.push({
-          severity: check.severity,
-          category: "Cryptography",
-          title: check.name,
-          detail: check.detail,
-          file: rel,
-        line: null,
-          remediation: check.remediation,
-        });
-      }
+      if (!matches) continue;
+
+      anyFailure = true;
+      results.push({
+        checkId: generateCheckId("Cryptography", `CRYPTO-001:${check.name}`, relFile),
+        status: "FAIL",
+        category: "Cryptography",
+        title: check.name,
+        detail: check.detail,
+        severity: check.severity,
+        file: relFile,
+        confidence: 80,
+        detectionMethod: "regex",
+        remediation: check.remediation,
+        controlKey: "CRYPTO-001",
+      });
     }
   }
 
-  if (hasStrongHashing) passed.push({ category: "Cryptography", title: "Strong password hashing detected (Argon2id or bcrypt)" });
-  if (hasSecureRandom) passed.push({ category: "Cryptography", title: "Cryptographically secure random generation used" });
-  if (usesCrypto && findings.length === 0) {
-    passed.push({ category: "Cryptography", title: "No weak or deprecated cryptographic algorithms detected" });
+  if (hasStrongHashing) {
+    results.push({
+      checkId: generateCheckId("Cryptography", "CRYPTO-001:strong-hashing"),
+      status: "PASS",
+      category: "Cryptography",
+      title: "Strong password hashing detected (Argon2id or bcrypt)",
+      confidence: 80,
+      detectionMethod: "regex",
+      controlKey: "CRYPTO-001",
+    });
+  }
+  if (hasSecureRandom) {
+    results.push({
+      checkId: generateCheckId("Cryptography", "CRYPTO-001:secure-random"),
+      status: "PASS",
+      category: "Cryptography",
+      title: "Cryptographically secure random generation used",
+      confidence: 80,
+      detectionMethod: "regex",
+      controlKey: "CRYPTO-001",
+    });
+  }
+  if (usesCrypto && anyFileRead && !anyFailure) {
+    results.push({
+      checkId: generateCheckId("Cryptography", "CRYPTO-001:no-weak"),
+      status: "PASS",
+      category: "Cryptography",
+      title: "No weak or deprecated cryptographic algorithms detected",
+      confidence: 80,
+      detectionMethod: "regex",
+      controlKey: "CRYPTO-001",
+    });
   }
 
-  return { findings, passed };
+  return results;
 }

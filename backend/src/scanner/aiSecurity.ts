@@ -75,7 +75,12 @@ export function scanAiSecurity(files: string[], targetRoot: string): { findings:
   let hasAiKeyExposed = false;
 
   for (const file of jsFiles) {
-    const text = fs.readFileSync(file, "utf8");
+    let text: string;
+    try {
+      text = fs.readFileSync(file, "utf8");
+    } catch {
+      continue;
+    }
     const rel = path.relative(targetRoot, file);
 
     if (AI_SDK_PATTERNS.some((p) => p.test(text))) usesAi = true;
@@ -99,19 +104,9 @@ export function scanAiSecurity(files: string[], targetRoot: string): { findings:
         break;
       }
     }
-
-    const userInputToPrompt = /(?:req\.body|req\.query|req\.params|user_?input|user_?message)\b[^;]*(?:prompt|message|content)\s*[:=+]/gi;
-    if (userInputToPrompt.test(text) && !hasPromptGuards) {
-      findings.push({
-        severity: "high",
-        category: "AI Disclosure",
-        title: "User input passed directly to AI prompt without sanitization",
-        detail: "User-supplied content is concatenated into AI prompts without visible input filtering. This enables prompt injection attacks that can override system instructions.",
-        file: rel,
-        line: null,
-        remediation: "Validate and sanitize user input before including it in prompts. Use structured message formats (separate system/user roles) and consider input/output guardrails.",
-      });
-    }
+    // Prompt-injection detection (user input reaching a prompt with no
+    // guard) now lives in controls/checks/aiPromptInjectionControl.ts
+    // (AI-001), wired into the control library -- see scanner/index.ts.
   }
 
   if (!usesAi) return { findings, passed };
