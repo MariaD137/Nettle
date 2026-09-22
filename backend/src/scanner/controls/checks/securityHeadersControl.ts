@@ -1,11 +1,11 @@
 import fs from "fs";
-import path from "path";
-import type { Finding, Pass } from "./types";
+import type { CheckResult, Severity } from "../../types";
+import { generateCheckId } from "../../threeStateModel";
 
 interface HeaderCheck {
   name: string;
   patterns: RegExp[];
-  severity: Finding["severity"];
+  severity: Severity;
   detail: string;
   remediation: string;
 }
@@ -62,49 +62,108 @@ const HEADER_CHECKS: HeaderCheck[] = [
   },
 ];
 
-export function scanSecurityHeaders(files: string[], targetRoot: string): { findings: Finding[]; passed: Pass[] } {
-  const findings: Finding[] = [];
-  const passed: Pass[] = [];
-
+/**
+ * BROWSER-001, wired to the control library. Moved from
+ * scanner/securityHeaders.ts (now deleted -- every check it made is
+ * promoted here, none left as legacy) with the same detection logic and
+ * title/detail/remediation text, restructured to emit CheckResult with a
+ * controlKey and to survive an unreadable file.
+ */
+export function scanSecurityHeadersControl(files: string[], targetRoot: string): CheckResult[] {
+  const results: CheckResult[] = [];
   const serverFiles = files.filter((f) => /\.(js|ts)$/.test(f));
-  const allSource = serverFiles.map((f) => fs.readFileSync(f, "utf8")).join("\n");
+
+  let allSource = "";
+  let anyReadable = false;
+  for (const file of serverFiles) {
+    try {
+      allSource += fs.readFileSync(file, "utf8") + "\n";
+      anyReadable = true;
+    } catch {
+      // fall through; handled below if nothing at all could be read
+    }
+  }
+
+  if (serverFiles.length > 0 && !anyReadable) {
+    return [
+      {
+        checkId: generateCheckId("Configuration", "BROWSER-001:unreadable"),
+        status: "NOT_VERIFIED",
+        category: "Configuration",
+        title: "No server file could be read for security-header analysis",
+        confidence: 0,
+        detectionMethod: "heuristic",
+        controlKey: "BROWSER-001",
+      },
+    ];
+  }
 
   const hasHelmet = HEADER_CHECKS[0].patterns.some((p) => p.test(allSource));
 
   if (hasHelmet) {
-    passed.push({ category: "Security", title: "Helmet security headers middleware is installed" });
+    results.push({
+      checkId: generateCheckId("Configuration", "BROWSER-001:helmet:pass"),
+      status: "PASS",
+      category: "Configuration",
+      title: "Helmet security headers middleware is installed",
+      confidence: 85,
+      detectionMethod: "heuristic",
+      controlKey: "BROWSER-001",
+    });
     for (const check of HEADER_CHECKS.slice(1)) {
-      passed.push({ category: "Security", title: `${check.name} (covered by Helmet)` });
+      results.push({
+        checkId: generateCheckId("Configuration", `BROWSER-001:pass:${check.name}`),
+        status: "PASS",
+        category: "Configuration",
+        title: `${check.name} (covered by Helmet)`,
+        confidence: 85,
+        detectionMethod: "heuristic",
+        controlKey: "BROWSER-001",
+      });
     }
-    return { findings, passed };
+    return results;
   }
 
-  findings.push({
-    severity: HEADER_CHECKS[0].severity,
-    category: "Security",
+  results.push({
+    checkId: generateCheckId("Configuration", "BROWSER-001:no-middleware"),
+    status: "FAIL",
+    category: "Configuration",
     title: "No security headers middleware detected",
     detail: HEADER_CHECKS[0].detail,
-    file: null,
-        line: null,
+    severity: HEADER_CHECKS[0].severity,
+    confidence: 75,
+    detectionMethod: "heuristic",
     remediation: HEADER_CHECKS[0].remediation,
+    controlKey: "BROWSER-001",
   });
 
   for (const check of HEADER_CHECKS.slice(1)) {
     const found = check.patterns.some((p) => p.test(allSource));
     if (found) {
-      passed.push({ category: "Security", title: `${check.name} header is configured` });
+      results.push({
+        checkId: generateCheckId("Configuration", `BROWSER-001:pass:${check.name}`),
+        status: "PASS",
+        category: "Configuration",
+        title: `${check.name} header is configured`,
+        confidence: 75,
+        detectionMethod: "heuristic",
+        controlKey: "BROWSER-001",
+      });
     } else {
-      findings.push({
-        severity: check.severity,
-        category: "Security",
+      results.push({
+        checkId: generateCheckId("Configuration", `BROWSER-001:fail:${check.name}`),
+        status: "FAIL",
+        category: "Configuration",
         title: `Missing ${check.name} header`,
         detail: check.detail,
-        file: null,
-        line: null,
+        severity: check.severity,
+        confidence: 75,
+        detectionMethod: "heuristic",
         remediation: check.remediation,
+        controlKey: "BROWSER-001",
       });
     }
   }
 
-  return { findings, passed };
+  return results;
 }

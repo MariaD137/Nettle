@@ -6,7 +6,6 @@ import { scanLegalPolicy } from "./legalPolicy";
 import { scanAIDisclosure } from "./aiDisclosure";
 import { scanWithSemgrep } from "./semgrepScanner";
 import { scanOSVVulnerabilities } from "./osvVulnerabilities";
-import { scanSecurityHeaders } from "./securityHeaders";
 import { scanCodeQuality } from "./codeQuality";
 import { scanCrypto } from "./cryptoSecurity";
 import { scanDatabaseSecurity } from "./databaseSecurity";
@@ -17,9 +16,11 @@ import { scanSessionJwt } from "./sessionJwt";
 import { scanAuthControl } from "./controls/checks/authControl";
 import { scanApiRateLimitControl } from "./controls/checks/rateLimitControl";
 import { scanSqlInjectionControl } from "./controls/checks/sqlInjectionControl";
+import { scanSecurityHeadersControl } from "./controls/checks/securityHeadersControl";
+import { scanJwtAlgorithmControl } from "./controls/checks/jwtAlgorithmControl";
 import { detectFrameworks } from "./frameworkDetection";
 import { mapFrameworkToTechnology } from "./controls/technologyMap";
-import "./controls"; // registers the control library (AUTH-001, SECRET-001, API-001, DB-001, ...)
+import "./controls"; // registers the control library (AUTH-001, AUTH-002, SECRET-001, API-001, DB-001, BROWSER-001, ...)
 import { SCANNER_VERSION, type CheckResult, type Finding, type Pass, type ScanReport } from "./types";
 import { getSemgrepVersion } from "./initialization";
 import { SCORING_CONFIG, calculateScore, calculateConfidence } from "./scoringConfig";
@@ -39,6 +40,8 @@ export function runScan(targetPath: string): ScanReport {
     ...scanSecretsControl(files, targetRoot),
     ...scanApiRateLimitControl(files, targetRoot),
     ...scanSqlInjectionControl(files, targetRoot),
+    ...scanSecurityHeadersControl(files, targetRoot),
+    ...scanJwtAlgorithmControl(files, targetRoot),
   ];
 
   // Every other scanner module still speaks the legacy Finding/Pass shape.
@@ -50,7 +53,6 @@ export function runScan(targetPath: string): ScanReport {
     scanAIDisclosure(files),
     scanWithSemgrep(targetRoot),
     scanOSVVulnerabilities(targetRoot),
-    scanSecurityHeaders(files, targetRoot),
     scanCodeQuality(files, targetRoot),
     scanCrypto(files, targetRoot),
     scanDatabaseSecurity(files, targetRoot),

@@ -8,6 +8,8 @@ import "./library/auth";
 import "./library/secrets";
 import "./library/api";
 import "./library/database";
+import "./library/browserSecurity";
+import "./library/jwtAlgorithm";
 
 export { getControl, listControls, listControlsByCategory } from "./registry";
 export { hydrateCheckResult, hydrateCheckResults, type HydratedFinding } from "./hydrate";

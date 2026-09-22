@@ -1,5 +1,4 @@
 import fs from "fs";
-import path from "path";
 import type { Finding, Pass } from "./types";
 
 const JWT_USAGE_PATTERNS = [
@@ -18,8 +17,10 @@ const JWT_EXPIRY_PATTERNS = [
   /maxAge\s*:/,
 ];
 
+// "none"-algorithm detection now lives in
+// controls/checks/jwtAlgorithmControl.ts (AUTH-002), wired into the control
+// library -- see scanner/index.ts.
 const JWT_ALGO_PATTERNS = {
-  none: /algorithm\s*:\s*['"]none['"]/i,
   hs256: /algorithm\s*:\s*['"]HS256['"]/,
   weak: /algorithm\s*:\s*['"](HS384|HS512)['"]/,
   strong: /algorithm\s*:\s*['"](RS256|RS384|RS512|ES256|ES384|ES512|EdDSA)['"]/,
@@ -54,7 +55,6 @@ export function scanSessionJwt(files: string[], targetRoot: string): { findings:
   const jsFiles = files.filter((f) => /\.(js|ts|jsx|tsx)$/.test(f));
   let usesJwt = false;
   let hasExpiry = false;
-  let hasAlgoNone = false;
   let hasStrongAlgo = false;
   let usesSession = false;
   let hasSessionStore = false;
@@ -63,23 +63,14 @@ export function scanSessionJwt(files: string[], targetRoot: string): { findings:
   let hasLogoutInvalidation = false;
 
   for (const file of jsFiles) {
-    const text = fs.readFileSync(file, "utf8");
-    const rel = path.relative(targetRoot, file);
-
+    let text: string;
+    try {
+      text = fs.readFileSync(file, "utf8");
+    } catch {
+      continue;
+    }
     if (JWT_USAGE_PATTERNS.some((p) => p.test(text))) usesJwt = true;
     if (JWT_EXPIRY_PATTERNS.some((p) => p.test(text))) hasExpiry = true;
-    if (JWT_ALGO_PATTERNS.none.test(text)) {
-      hasAlgoNone = true;
-      findings.push({
-        severity: "critical",
-        category: "Session Management",
-        title: "JWT algorithm set to 'none'",
-        detail: "Using algorithm: 'none' disables signature verification entirely. Anyone can forge valid tokens.",
-        file: rel,
-        line: null,
-        remediation: "Use a strong signing algorithm like RS256 or ES256. Never allow 'none' as an algorithm.",
-      });
-    }
     if (JWT_ALGO_PATTERNS.strong.test(text)) hasStrongAlgo = true;
 
     if (SESSION_PATTERNS.expressSession.test(text)) usesSession = true;
