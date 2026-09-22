@@ -340,6 +340,65 @@ button.destructive {
   color: var(--ink);
 }
 
+/* Fix Center */
+.impact-pill {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  white-space: nowrap;
+}
+.impact-block-release {
+  background: color-mix(in srgb, var(--sev-critical) 18%, transparent);
+  color: var(--sev-critical);
+}
+.impact-review-before-release {
+  background: color-mix(in srgb, var(--sev-high) 15%, transparent);
+  color: var(--sev-high);
+}
+.impact-fix-recommended {
+  background: color-mix(in srgb, var(--sev-warning) 15%, transparent);
+  color: var(--sev-warning);
+}
+.impact-improvement,
+.impact-informational {
+  background: var(--surface-2);
+  color: var(--muted);
+}
+.fix-detail {
+  margin-top: 10px;
+  padding: 12px 14px;
+  background: var(--surface-2);
+  border-radius: 6px;
+  cursor: default;
+}
+.fix-section {
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--ink);
+  margin-bottom: 8px;
+}
+.fix-section:last-child {
+  margin-bottom: 0;
+}
+.fix-section strong {
+  color: var(--muted);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  display: block;
+  margin-bottom: 2px;
+}
+.fix-refs {
+  margin: 4px 0 0;
+  padding-left: 18px;
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.6;
+}
+
 /* Passed checks */
 .passed-check {
   display: flex;

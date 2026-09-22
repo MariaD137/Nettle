@@ -42,14 +42,60 @@ export interface ScanAccess {
   message: string | null;
 }
 
+export type CheckStatus = "PASS" | "FAIL" | "NOT_VERIFIED";
+
+export type ReleaseImpact = "BLOCK_RELEASE" | "REVIEW_BEFORE_RELEASE" | "FIX_RECOMMENDED" | "IMPROVEMENT" | "INFORMATIONAL";
+
+export interface Recommendation {
+  whyItMatters: string;
+  recommendedSolution: string;
+  quickFix: string;
+  developerFix: string;
+  architectureFix: string | null;
+  longTermHardening: string | null;
+  verificationMethod: string;
+  references: string[];
+  technologyMatched: string;
+  multipleValidSolutions: boolean;
+}
+
+/**
+ * The unified, three-state check result the control library produces.
+ * `recommendation`/`releaseImpact` are only present on a FAIL whose
+ * controlKey matches a control the backend has migrated onto the control
+ * library — see scanner/controls/ on the backend. A FAIL with a controlKey
+ * but recommendation: null is a check that hasn't been migrated yet, not a
+ * missing feature to hide: the Fix Center shows it plainly rather than
+ * pretending every finding has full guidance.
+ */
+export interface CheckResult {
+  checkId: string;
+  status: CheckStatus;
+  category: string;
+  title: string;
+  detail?: string;
+  severity?: Severity;
+  file?: string | null;
+  line?: number | null;
+  remediation?: string | null;
+  confidence?: number;
+  controlKey?: string;
+  recommendation?: Recommendation | null;
+  releaseImpact?: ReleaseImpact | null;
+  humanReviewRequired?: boolean;
+}
+
 export interface ScanReport {
   scannedAt: string;
   target: string;
   score: number;
+  scoreConfidence?: number;
   scannerVersion: string;
+  detectedTechnology?: string | null;
   access?: ScanAccess;
   findings: Finding[];
   passed: { category: string; title: string }[];
+  checkResults?: CheckResult[];
   summary: { critical: number; high: number; medium: number; low: number; info: number; clear: number };
 }
 

@@ -101,6 +101,11 @@ export const Icons = {
       <path d="M12 9v4M12 17h.01" />
     </svg>
   ),
+  fixcenter: (
+    <svg viewBox="0 0 24 24" width="23" height="23" {...s}>
+      <path d="M14.7 6.3a4 4 0 01-5.4 5.4L4 17l3 3 5.3-5.3a4 4 0 015.4-5.4l-2.5 2.5-2-2z" />
+    </svg>
+  ),
   alerts: (
     <svg viewBox="0 0 24 24" width="23" height="23" {...s}>
       <path d="M18 8a6 6 0 00-12 0c0 7-3 9-3 9h18s-3-2-3-9" />

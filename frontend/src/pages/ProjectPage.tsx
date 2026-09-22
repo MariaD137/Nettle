@@ -3,7 +3,7 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import {
   api, ApiError,
   type Alert, type AlertCounts, type AlertStatus, type BadgeState,
-  type Finding, type FindingStatus, type Project, type ScanComparison,
+  type CheckResult, type Finding, type FindingStatus, type Project, type ReleaseImpact, type ScanComparison,
   type ScanReport, type StoredFindingStatus, type StoredScan,
 } from "../api";
 import BadgePill from "../components/BadgePill";
@@ -11,7 +11,22 @@ import NettleLogo from "../components/NettleLogo";
 import { AppBar, BottomNav, Icons, type TabItem } from "../components/MobileChrome";
 import { useIsMobile } from "../useIsMobile";
 
-type Tab = "overview" | "scan" | "findings" | "alerts" | "history" | "settings";
+type Tab = "overview" | "scan" | "fixcenter" | "findings" | "alerts" | "history" | "settings";
+
+const TAB_LABELS: Record<Tab, string> = {
+  overview: "Overview",
+  scan: "Scan",
+  fixcenter: "Fix Center",
+  findings: "Findings",
+  alerts: "Alerts",
+  history: "History",
+  settings: "Settings",
+};
+
+/** Open (FAIL) checks from the latest scan — what the Fix Center's badge counts. */
+function fixCount(latestScan: StoredScan | null): number {
+  return latestScan?.report.checkResults?.filter((r) => r.status === "FAIL").length ?? 0;
+}
 
 export default function ProjectPage() {
   const { id } = useParams<{ id: string }>();
@@ -42,12 +57,13 @@ export default function ProjectPage() {
   if (error) return <div className="shell error-banner">{error}</div>;
   if (!project || !badge) return <div className="shell muted">Loading…</div>;
 
-  const tabs: Tab[] = ["overview", "scan", "findings", "alerts", "history", "settings"];
+  const tabs: Tab[] = ["overview", "scan", "fixcenter", "findings", "alerts", "history", "settings"];
 
   const content = (
     <>
       {tab === "overview" && <OverviewTab project={project} latestScan={latestScan} />}
       {tab === "scan" && <ScanTab project={project} onScanned={(b) => { setBadge(b); refresh(); }} />}
+      {tab === "fixcenter" && <FixCenterTab latestScan={latestScan} onRescan={() => setTab("scan")} />}
       {tab === "findings" && <FindingsTab projectId={project.id} latestScan={latestScan} />}
       {tab === "alerts" && <AlertsTab projectId={project.id} onUpdate={(c) => setAlertCounts(c)} />}
       {tab === "history" && <HistoryTab projectId={project.id} />}
@@ -65,6 +81,7 @@ export default function ProjectPage() {
     const navItems: TabItem[] = [
       { key: "overview", label: "Overview", icon: Icons.overview },
       { key: "scan", label: "Scan", icon: Icons.scan },
+      { key: "fixcenter", label: "Fix Center", icon: Icons.fixcenter, badge: fixCount(latestScan) },
       { key: "findings", label: "Findings", icon: Icons.findings },
       { key: "alerts", label: "Alerts", icon: Icons.alerts, badge: alertCounts?.new },
       { key: "history", label: "History", icon: Icons.history },
@@ -101,9 +118,12 @@ export default function ProjectPage() {
       <div className="tabs">
         {tabs.map((t) => (
           <button key={t} className={`tab ${tab === t ? "active" : ""}`} onClick={() => setTab(t)} type="button">
-            {t[0].toUpperCase() + t.slice(1)}
+            {TAB_LABELS[t]}
             {t === "alerts" && alertCounts && alertCounts.new > 0 && (
               <span className="tab-badge">{alertCounts.new}</span>
+            )}
+            {t === "fixcenter" && fixCount(latestScan) > 0 && (
+              <span className="tab-badge">{fixCount(latestScan)}</span>
             )}
           </button>
         ))}
@@ -358,6 +378,158 @@ function FindingRow({ finding }: { finding: Finding }) {
           <strong>How to fix:</strong> {finding.remediation}
         </div>
       )}
+    </div>
+  );
+}
+
+// --- Fix Center ---------------------------------------------------------
+//
+// Built on checkResults, not the legacy findings[] array: checkResults is
+// where a hydrated recommendation (quickFix/developerFix/architectureFix/
+// verification/references) lives, for whichever checks the backend has
+// migrated onto its control library. A FAIL with a controlKey but no
+// recommendation is a check that hasn't been migrated yet — shown plainly
+// with its remediation string (or a human-review note if it has neither),
+// never hidden or faked.
+
+const RELEASE_IMPACT_LABELS: Record<ReleaseImpact, string> = {
+  BLOCK_RELEASE: "Block release",
+  REVIEW_BEFORE_RELEASE: "Review before release",
+  FIX_RECOMMENDED: "Fix recommended",
+  IMPROVEMENT: "Improvement",
+  INFORMATIONAL: "Informational",
+};
+
+const SEVERITY_GROUPS: { key: string; title: string }[] = [
+  { key: "critical", title: "Critical" },
+  { key: "high", title: "High" },
+  { key: "medium", title: "Medium" },
+  { key: "low", title: "Low" },
+];
+
+function FixCenterTab({ latestScan, onRescan }: { latestScan: StoredScan | null; onRescan: () => void }) {
+  if (!latestScan) {
+    return (
+      <div className="card">
+        <h2>Fix Center</h2>
+        <p className="muted">Run a scan to see prioritized, actionable recommendations here.</p>
+      </div>
+    );
+  }
+
+  const results = latestScan.report.checkResults ?? [];
+  const fails = results.filter((r) => r.status === "FAIL");
+  const notVerified = results.filter((r) => r.status === "NOT_VERIFIED");
+  const groups = SEVERITY_GROUPS.map((g) => ({
+    ...g,
+    items: fails.filter((f) => (f.severity ?? "info") === g.key),
+  })).filter((g) => g.items.length > 0);
+
+  return (
+    <div className="card">
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+        <h2 style={{ margin: 0 }}>Fix Center</h2>
+        <button className="small secondary" onClick={onRescan}>Rescan</button>
+      </div>
+      <p className="muted" style={{ marginBottom: 16 }}>
+        {fails.length === 0
+          ? "No open issues from the latest scan — nice work."
+          : `${fails.length} issue${fails.length === 1 ? "" : "s"} to fix, prioritized by severity.`}
+      </p>
+
+      {groups.map((g) => (
+        <div key={g.key}>
+          <h2 style={{ marginTop: 20 }}>{g.title} ({g.items.length})</h2>
+          {g.items.map((item) => (
+            <FixItem key={item.checkId} item={item} />
+          ))}
+        </div>
+      ))}
+
+      {notVerified.length > 0 && (
+        <div style={{ marginTop: 24 }}>
+          <h2>What Nettle couldn't verify ({notVerified.length})</h2>
+          <p className="muted">
+            Not a pass — Nettle didn't have enough evidence in this scan to determine these one way or the other.
+          </p>
+          {notVerified.map((r) => (
+            <div key={r.checkId} className="finding finding-info">
+              <div className="finding-top">
+                <span className="finding-title">{r.title}</span>
+                <span className="finding-cat">{r.category}</span>
+              </div>
+              {r.detail && <p className="finding-detail">{r.detail}</p>}
+              {r.file && <p className="finding-file">{r.file}{r.line ? `:${r.line}` : ""}</p>}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function FixItem({ item }: { item: CheckResult }) {
+  const [expanded, setExpanded] = useState(false);
+  const rec = item.recommendation;
+
+  return (
+    <div className={`finding finding-${item.severity ?? "info"}`} style={{ cursor: "pointer" }} onClick={() => setExpanded(!expanded)}>
+      <div className="finding-top">
+        <span className="finding-title">{item.title}</span>
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          {item.releaseImpact && (
+            <span className={`impact-pill impact-${item.releaseImpact.toLowerCase().replace(/_/g, "-")}`}>
+              {RELEASE_IMPACT_LABELS[item.releaseImpact]}
+            </span>
+          )}
+          <span className="finding-cat">{item.category}</span>
+        </div>
+      </div>
+      {item.detail && <p className="finding-detail">{item.detail}</p>}
+      {item.file && <p className="finding-file">{item.file}{item.line ? `:${item.line}` : ""}</p>}
+
+      {expanded && (
+        <div className="fix-detail" onClick={(e) => e.stopPropagation()}>
+          {rec ? (
+            <>
+              <FixSection label="Why it matters" text={rec.whyItMatters} />
+              <FixSection label="Quick fix" text={rec.quickFix} />
+              <FixSection label="Developer fix" text={rec.developerFix} />
+              {rec.architectureFix && <FixSection label="Architecture fix" text={rec.architectureFix} />}
+              {rec.longTermHardening && <FixSection label="Long-term hardening" text={rec.longTermHardening} />}
+              <FixSection label="Verification" text={rec.verificationMethod} />
+              {rec.multipleValidSolutions && (
+                <p className="muted" style={{ marginTop: 8 }}>
+                  There are multiple valid implementations — Nettle recommends the option above based on{" "}
+                  {rec.technologyMatched === "generic" ? "no specific framework detected in this scan" : `the detected ${rec.technologyMatched} stack`}.
+                </p>
+              )}
+              {rec.references.length > 0 && (
+                <div style={{ marginTop: 10 }}>
+                  <strong style={{ fontSize: 12.5 }}>References</strong>
+                  <ul className="fix-refs">
+                    {rec.references.map((ref, i) => <li key={i}>{ref}</li>)}
+                  </ul>
+                </div>
+              )}
+            </>
+          ) : item.remediation ? (
+            <div className="remediation"><strong>How to fix:</strong> {item.remediation}</div>
+          ) : (
+            <p className="muted">
+              Nettle hasn't published detailed remediation guidance for this check yet — human/developer review recommended.
+            </p>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function FixSection({ label, text }: { label: string; text: string }) {
+  return (
+    <div className="fix-section">
+      <strong>{label}:</strong> <span>{text}</span>
     </div>
   );
 }
