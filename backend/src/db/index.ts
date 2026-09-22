@@ -107,7 +107,34 @@ class MigratingDriver implements SqlDriver {
   }
 }
 
-export const db: SqlDriver = new MigratingDriver(createDriver());
+/**
+ * Lazy by construction: `createDriver()` must not run at import time.
+ *
+ * `index.ts`'s `start()` calls `assertProductionPersistence()` before it
+ * calls `initializeDatabase()` (the first thing that actually touches `db`).
+ * If `db` were a plain module-level `const`, `createDriver()` would run the
+ * instant anything imports this module — including `index.ts`'s own
+ * top-level import — which is before `start()` gets a chance to run its
+ * guard. In production with DATABASE_URL unset, that meant the process
+ * crashed on the SqliteDriver constructor's "directory must exist and be
+ * writable" error instead of the intended, actionable
+ * assertProductionPersistence() message. The Proxy defers construction
+ * until the first real call, by which point the guard has already run.
+ */
+let instance: SqlDriver | null = null;
+function getInstance(): SqlDriver {
+  if (!instance) {
+    instance = new MigratingDriver(createDriver());
+  }
+  return instance;
+}
+
+export const db: SqlDriver = new Proxy({} as SqlDriver, {
+  get(_target, prop, receiver) {
+    const value = Reflect.get(getInstance() as object, prop, receiver);
+    return typeof value === "function" ? value.bind(getInstance()) : value;
+  },
+});
 
 /**
  * Applies migrations eagerly. Production calls this at startup so a broken
