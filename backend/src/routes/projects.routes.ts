@@ -1,12 +1,13 @@
 import { Router } from "express";
 import { createProject, getProject, listProjectsByUser, updateProject, deleteProject, archiveProject, restoreProject, rotateApiKey, countProjectsByUser } from "../patrol/projects";
 import { listAlerts, getAlert, updateAlertStatus, countAlertsByStatus } from "../patrol/alerts";
-import { listScans, getLatestScan } from "../patrol/scans";
+import { listScans, getLatestScan, type StoredScan } from "../patrol/scans";
 import { computeBadgeState } from "../patrol/badge";
 import { hashFinding, upsertFindingStatus, listFindingStatuses } from "../patrol/findingStatuses";
 import { requireAuth } from "../auth/middleware";
 import { requireSubscription } from "../billing/subscription";
 import { getQuotaState } from "../billing/scanQuota";
+import { hydrateCheckResults } from "../scanner/controls";
 import type { AlertStatus, FindingStatus } from "../patrol/types";
 
 export const projectsRouter = Router();
@@ -21,6 +22,30 @@ export const projectsRouter = Router();
 const paywalled = [requireAuth, requireSubscription];
 
 const PLAN_LIMITS: Record<string, number> = { free: 3, tier1: 10, tier2: 50 };
+
+/**
+ * Every route here sits behind requireSubscription, so unlike
+ * routes/scans.routes.ts's respondWithScan there's no free-tier trimming to
+ * apply — a caller who reaches this route is already entitled to the full
+ * report. What's still missing without this is hydration: a scan stored via
+ * recordScan() carries the raw checkResults from the scan pipeline, with a
+ * controlKey but no recommendation attached (hydration happens at the
+ * response boundary, not before storage — see routes/scans.routes.ts). The
+ * Fix Center needs that recommendation for stored/historical scans, not
+ * just freshly-run ones, so it's added here the same way.
+ */
+function hydrateStoredScan(scan: StoredScan | null): StoredScan | null {
+  if (!scan || !scan.report.checkResults) return scan;
+  return {
+    ...scan,
+    report: {
+      ...scan.report,
+      checkResults: hydrateCheckResults(scan.report.checkResults, {
+        detectedTechnology: scan.report.detectedTechnology ?? undefined,
+      }),
+    },
+  };
+}
 
 projectsRouter.post("/api/projects", ...paywalled, async (req, res) => {
   const name = typeof req.body?.name === "string" ? req.body.name.trim() : "";
@@ -61,7 +86,7 @@ projectsRouter.get("/api/projects/:id", ...paywalled, async (req, res) => {
   const project = await ownedProjectOr404(req, res);
   if (!project) return;
   const badge = await computeBadgeState(project.id);
-  const latestScan = await getLatestScan(project.id);
+  const latestScan = hydrateStoredScan(await getLatestScan(project.id));
   const alertCounts = await countAlertsByStatus(project.id);
   res.json({ project, badge, latestScan, alertCounts });
 });
@@ -133,7 +158,8 @@ projectsRouter.patch("/api/projects/:id/alerts/:alertId", ...paywalled, async (r
 projectsRouter.get("/api/projects/:id/scans", ...paywalled, async (req, res) => {
   const project = await ownedProjectOr404(req, res);
   if (!project) return;
-  res.json({ project: { id: project.id, name: project.name }, scans: await listScans(project.id) });
+  const scans = (await listScans(project.id)).map(hydrateStoredScan) as StoredScan[];
+  res.json({ project: { id: project.id, name: project.name }, scans });
 });
 
 projectsRouter.get("/api/projects/:id/scans/compare", ...paywalled, async (req, res) => {
@@ -210,7 +236,18 @@ projectsRouter.get("/api/overview", ...paywalled, async (req, res) => {
   let latestScore: number | null = null;
   let latestScanAt: string | null = null;
 
-  const projectSummaries = projects.map(async (p) => {
+  // Must be awaited before res.json() below reads totalCritical/totalHigh/
+  // totalNewAlerts/latestScore/latestScanAt: a plain projects.map(async...)
+  // returns an array of pending Promises immediately, without running any of
+  // the callback bodies first. That meant this route always serialized
+  // "projects": [{}, {}, ...] (JSON.stringify on a Promise has no enumerable
+  // properties) and always reported 0/null for every aggregate stat,
+  // regardless of what was actually in the database -- the dashboard has
+  // never shown a real badge or a real stat. Caught via an actual browser
+  // render (BadgePill crashing on `state.status` of an empty object), not by
+  // the existing test, which only asserted totalProjects -- the one field
+  // this bug didn't touch, since it comes from projects.length, not the map.
+  const projectSummaries = await Promise.all(projects.map(async (p) => {
     const badge = await computeBadgeState(p.id);
     const latest = await getLatestScan(p.id);
     const alertCounts = await countAlertsByStatus(p.id);
@@ -234,7 +271,7 @@ projectsRouter.get("/api/overview", ...paywalled, async (req, res) => {
       lastScannedAt: latest?.scannedAt ?? null,
       newAlerts: alertCounts.new,
     };
-  });
+  }));
 
   res.json({
     quota: await getQuotaState(req.userId!),
