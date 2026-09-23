@@ -1,6 +1,6 @@
 import fs from "fs";
 import path from "path";
-import type { CheckResult, Finding, Pass } from "./types";
+import type { CheckResult } from "./types";
 import { generateCheckId } from "./threeStateModel";
 
 interface SecretPattern {
@@ -159,49 +159,16 @@ function detectSecrets(text: string): SecretMatch[] {
   return results;
 }
 
-export function scanSecrets(files: string[], targetRoot: string): { findings: Finding[]; passed: Pass[] } {
-  const findings: Finding[] = [];
-  let secretsFound = 0;
-
-  for (const file of files) {
-    let text: string;
-    try {
-      text = fs.readFileSync(file, "utf8");
-    } catch {
-      // An unreadable file contributes neither a finding nor a pass for it —
-      // matches this function's pre-existing (unstated) behavior for every
-      // file that as READABLE. scanSecretsControl below reports this
-      // explicitly as NOT_VERIFIED instead of silently continuing.
-      continue;
-    }
-
-    for (const match of detectSecrets(text)) {
-      secretsFound += match.count;
-      findings.push({
-        severity: "critical",
-        category: "Security",
-        title: `${match.pattern.name} found in source`,
-        detail: `Matched ${match.count} time(s). Secrets committed to source are readable by anyone with repo access and get indexed by any tool/AI assistant that reads the codebase.`,
-        file: path.relative(targetRoot, file),
-        line: match.firstLine,
-        remediation: match.pattern.remediation,
-      });
-    }
-  }
-
-  const passed: Pass[] =
-    secretsFound === 0 ? [{ category: "Security", title: "No hardcoded secrets detected in scanned files" }] : [];
-
-  return { findings, passed };
-}
-
 /**
- * SECRET-001, wired to the control library. Same detection as scanSecrets
- * above (detectSecrets is shared, not duplicated) but reports an unreadable
- * file as NOT_VERIFIED rather than silently skipping it — scanSecrets
- * previously had no try/catch at all here, so one unreadable file (a
- * permissions issue, a binary file with an extension this scanner treats as
- * text, …) would throw and abort the entire scan, not just this check.
+ * SECRET-001, wired to the control library. This is the only exported scan
+ * function in this module now — the legacy scanSecrets(files, targetRoot)
+ * (same detectSecrets core, but returning Finding/Pass with no
+ * NOT_VERIFIED path for an unreadable file, so one unreadable file would
+ * throw and abort the entire scan rather than just this check) was never
+ * called from scanner/index.ts's legacyResults array and had no test
+ * coverage of its own — it was already fully superseded by this function
+ * before this round, just left in place as dead code. Removed rather than
+ * migrated.
  */
 export function scanSecretsControl(files: string[], targetRoot: string): CheckResult[] {
   const results: CheckResult[] = [];
