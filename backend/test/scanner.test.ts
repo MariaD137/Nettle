@@ -29,8 +29,14 @@ test("flags the known-vulnerable lodash version", () => {
   assert.ok(flawedReport.findings.some((f) => f.title.includes("lodash@4.17.4")));
 });
 
-test("flags a missing privacy policy", () => {
-  assert.ok(flawedReport.findings.some((f) => f.title === "No privacy policy found"));
+test("flags a missing privacy policy as NOT_VERIFIED, not a fabricated compliance failure", () => {
+  // LEGAL-001: whether a privacy policy is legally required depends on facts
+  // (data collected, applicable jurisdiction) this scan can't determine, and
+  // it may exist outside the scanned file set — so absence is NOT_VERIFIED,
+  // not an asserted FAIL. See controls/checks/legalPolicyControl.ts.
+  assert.ok(
+    flawedReport.checkResults?.some((r) => r.controlKey === "LEGAL-001" && r.status === "NOT_VERIFIED")
+  );
 });
 
 test("flags undisclosed AI-generated content", () => {
