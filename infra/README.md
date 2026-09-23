@@ -192,13 +192,17 @@ depends on them existing.
 ## First-time setup
 
 **The fast path:** once prerequisites (below) are met, `infra/scripts/deploy-cloudshell.sh`
-runs steps 1-4 below end to end — network, database, ECR, an `linux/amd64`
-image build and push, and the API service — with the same safety checks a
-human operator would apply by hand (safe recovery from a stack stuck in
-`ROLLBACK_COMPLETE`, refusing to push an image that isn't `amd64`). It does
-not touch Stripe secrets or GitHub wiring (steps 5, 7, 8 below) — those need
-a human. Run it from AWS CloudShell (or any shell already configured against
-the target account):
+runs steps 1-6 and 9-11 below end to end — network, database, ECR, an
+`linux/amd64` image build and push, the scan worker, the API service, WAF
+for both the API and CloudFront, the frontend bucket/distribution, and
+CI — with the same safety checks a human operator would apply by hand (safe
+recovery from a stack stuck in `ROLLBACK_COMPLETE`, refusing to push an
+image that isn't `amd64`, bootstrapping `us-east-1` separately when the
+deploy region differs, since the CloudFront-scope WAF must live there). It
+does not touch the Stripe secret, populate the frontend bucket, request an
+ACM certificate, or wire GitHub Actions variables (steps 7, 10 (partial),
+12-13 below) — those need a human. Run it from AWS CloudShell (or any shell
+already configured against the target account):
 
 ```bash
 bash infra/scripts/deploy-cloudshell.sh
