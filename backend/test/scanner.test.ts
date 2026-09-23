@@ -47,24 +47,37 @@ test("flags routes with no visible auth check", () => {
   assert.ok(flawedReport.findings.some((f) => f.title.includes("no recognized authentication check")));
 });
 
+// The five Semgrep-backed titles below were renamed when semgrepScanner.ts
+// was migrated onto the control library (scanSemgrepControl, see
+// controls/checks/semgrepControl.ts) -- SQL injection, hardcoded JWT
+// secrets, disabled TLS verification, and wildcard CORS now attach as
+// complementary AST evidence onto their existing controlKey (DB-001,
+// SECRET-001, NET-001, API-002 respectively) rather than a bare
+// titleFor(check_id) string, and their titles were reworded to make clear
+// they're the AST-detected angle, not a duplicate of that control's own
+// regex-based check.
+
 test("Semgrep catches the SQL-injection-shaped query", () => {
-  assert.ok(flawedReport.findings.some((f) => f.title === "Sql string concat"), JSON.stringify(flawedReport.findings, null, 2));
+  assert.ok(
+    flawedReport.findings.some((f) => f.title === "SQL injection pattern detected via AST analysis"),
+    JSON.stringify(flawedReport.findings, null, 2)
+  );
 });
 
 test("Semgrep catches the command-injection-shaped exec call", () => {
-  assert.ok(flawedReport.findings.some((f) => f.title === "Child process exec template"));
+  assert.ok(flawedReport.findings.some((f) => f.title === "Shell command built via string interpolation passed to exec()"));
 });
 
 test("Semgrep catches the inline hardcoded JWT secret", () => {
-  assert.ok(flawedReport.findings.some((f) => f.title === "Hardcoded jwt secret"));
+  assert.ok(flawedReport.findings.some((f) => f.title === "JWT signed or verified with a hardcoded secret (detected via AST analysis)"));
 });
 
 test("Semgrep catches TLS verification being disabled", () => {
-  assert.ok(flawedReport.findings.some((f) => f.title === "Disabled tls verification"));
+  assert.ok(flawedReport.findings.some((f) => f.title === "TLS certificate verification disabled (detected via AST analysis)"));
 });
 
 test("Semgrep catches wildcard CORS", () => {
-  assert.ok(flawedReport.findings.some((f) => f.title === "Wildcard cors"));
+  assert.ok(flawedReport.findings.some((f) => f.title === "CORS configured to allow any origin (detected via AST analysis)"));
 });
 
 test("flawed app scores low and has only critical/caution findings, no clears", () => {

@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { scanWithSemgrepCheckResults } from "../src/scanner/semgrepScanner";
+import { scanSemgrepControl } from "../src/scanner/controls/checks/semgrepControl";
 import { initializeScanner, isSemgrepAvailable } from "../src/scanner/initialization";
 import path from "node:path";
 
@@ -26,13 +26,13 @@ test("H-1: isSemgrepAvailable tracks initialization", () => {
 });
 
 test("H-1: Semgrep missing returns NOT_VERIFIED for AST checks", () => {
-  // If Semgrep is not available in this environment, scanWithSemgrepCheckResults
+  // If Semgrep is not available in this environment, scanSemgrepControl
   // should return NOT_VERIFIED for each of the 6 AST checks
   const dummyPath = CLEAN_FIXTURE;
   let results;
 
   try {
-    results = scanWithSemgrepCheckResults(dummyPath);
+    results = scanSemgrepControl(dummyPath);
   } catch {
     // If there's a fatal error, skip — the mock may not have write access
     return;
@@ -60,7 +60,7 @@ test("H-1: Check results include detection method", () => {
   let results;
 
   try {
-    results = scanWithSemgrepCheckResults(dummyPath);
+    results = scanSemgrepControl(dummyPath);
   } catch {
     return;
   }
@@ -81,7 +81,7 @@ test("H-1: Check results include confidence", () => {
   let results;
 
   try {
-    results = scanWithSemgrepCheckResults(dummyPath);
+    results = scanSemgrepControl(dummyPath);
   } catch {
     return;
   }
@@ -102,14 +102,24 @@ test("H-1: AST check titles are descriptive", () => {
   let results;
 
   try {
-    results = scanWithSemgrepCheckResults(dummyPath);
+    results = scanSemgrepControl(dummyPath);
   } catch {
     return;
   }
 
-  const titles = results.map((r) => r.title).join(", ");
-
-  // Should have descriptive titles for the 6 AST checks
-  assert.ok(titles.includes("detection"), "Should have detection in titles");
+  assert.ok(
+    results.every((r) => typeof r.title === "string" && r.title.length > 10),
+    "Every result should have a descriptive title"
+  );
   assert.ok(results.length >= 6, "Should have at least the 6 required AST checks");
+
+  // Each of the 6 rules is wired to a controlKey — two brand-new controls
+  // (eval usage, command injection) and four that attach as complementary
+  // AST evidence onto an existing control (SQL injection -> DB-001,
+  // hardcoded JWT -> SECRET-001, disabled TLS -> NET-001, wildcard CORS ->
+  // API-002) rather than duplicating them. See semgrepControl.ts's RULE_MAP.
+  const controlKeys = new Set(results.map((r) => r.controlKey));
+  for (const key of ["INPUT-003", "INPUT-004", "DB-001", "SECRET-001", "NET-001", "API-002"]) {
+    assert.ok(controlKeys.has(key), `Expected a result for ${key}`);
+  }
 });

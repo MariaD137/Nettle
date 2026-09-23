@@ -1,7 +1,6 @@
 import path from "path";
 import { walk } from "./walk";
 import { scanSecretsControl } from "./secrets";
-import { scanWithSemgrep } from "./semgrepScanner";
 import { scanOSVVulnerabilities } from "./osvVulnerabilities";
 import { scanCodeQuality } from "./codeQuality";
 import { scanFrontendSecurity } from "./frontendSecurity";
@@ -34,6 +33,7 @@ import { scanAiOutputValidationControl } from "./controls/checks/aiOutputValidat
 import { scanDependencyLockfileControl } from "./controls/checks/dependencyLockfileControl";
 import { scanLegalPolicyControl } from "./controls/checks/legalPolicyControl";
 import { scanAiContentDisclosureControl } from "./controls/checks/aiContentDisclosureControl";
+import { scanSemgrepControl } from "./controls/checks/semgrepControl";
 import { detectFrameworks } from "./frameworkDetection";
 import { mapFrameworkToTechnology } from "./controls/technologyMap";
 import "./controls"; // registers the control library (AUTH-001..008, SECRET-001, API-001..006, DB-001..003, BROWSER-001, CRYPTO-001, AI-001..005, INPUT-001..002, NET-001, DEPS-001, LEGAL-001..004, ...)
@@ -83,16 +83,16 @@ export function runScan(targetPath: string): ScanReport {
     ...scanDependencyLockfileControl(targetRoot),
     ...scanLegalPolicyControl(targetRoot),
     ...scanAiContentDisclosureControl(files, targetRoot),
+    ...scanSemgrepControl(targetRoot),
   ];
 
   // Every other scanner module still speaks the legacy Finding/Pass shape.
   // Not yet migrated onto a Control definition — see the gap report for
   // what that migration involves per module. apiSecurity.ts,
   // databaseSecurity.ts, sessionJwt.ts, aiSecurity.ts, dependencies.ts,
-  // legalPolicy.ts, and aiDisclosure.ts are fully migrated (every check
-  // each made now lives above) and have been deleted.
+  // legalPolicy.ts, aiDisclosure.ts, and semgrepScanner.ts are fully
+  // migrated (every check each made now lives above) and have been deleted.
   const legacyResults = [
-    scanWithSemgrep(targetRoot),
     scanOSVVulnerabilities(targetRoot),
     scanCodeQuality(files, targetRoot),
     scanFrontendSecurity(files, targetRoot),

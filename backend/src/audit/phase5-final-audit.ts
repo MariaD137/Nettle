@@ -62,7 +62,7 @@ const GAP_AUDIT: GapItem[] = [
     implementedBy: [
       "backend/Dockerfile",
       "src/scanner/initialization.ts",
-      "src/scanner/semgrepScanner.ts",
+      "src/scanner/controls/checks/semgrepControl.ts",
     ],
     evidence: "Semgrep 1.65.0 pinned, initialization tracking, 6 NOT_VERIFIED per AST check",
     testCount: 6,
