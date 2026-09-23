@@ -9,7 +9,6 @@ import { scanOSVVulnerabilities } from "./osvVulnerabilities";
 import { scanCodeQuality } from "./codeQuality";
 import { scanFrontendSecurity } from "./frontendSecurity";
 import { scanAiSecurity } from "./aiSecurity";
-import { scanSessionJwt } from "./sessionJwt";
 import { scanAuthControl } from "./controls/checks/authControl";
 import { scanApiRateLimitControl } from "./controls/checks/rateLimitControl";
 import { scanSqlInjectionControl } from "./controls/checks/sqlInjectionControl";
@@ -29,9 +28,13 @@ import { scanFileUploadControl } from "./controls/checks/fileUploadControl";
 import { scanDeserializationControl } from "./controls/checks/deserializationControl";
 import { scanDbCredentialExposureControl } from "./controls/checks/dbCredentialExposureControl";
 import { scanParameterizedQueryControl } from "./controls/checks/parameterizedQueryControl";
+import { scanRefreshTokenControl } from "./controls/checks/refreshTokenControl";
+import { scanSessionStoreControl } from "./controls/checks/sessionStoreControl";
+import { scanSessionExpirationControl } from "./controls/checks/sessionExpirationControl";
+import { scanLogoutInvalidationControl } from "./controls/checks/logoutInvalidationControl";
 import { detectFrameworks } from "./frameworkDetection";
 import { mapFrameworkToTechnology } from "./controls/technologyMap";
-import "./controls"; // registers the control library (AUTH-001..004, SECRET-001, API-001..006, DB-001..003, BROWSER-001, CRYPTO-001, AI-001, INPUT-001..002, NET-001, ...)
+import "./controls"; // registers the control library (AUTH-001..008, SECRET-001, API-001..006, DB-001..003, BROWSER-001, CRYPTO-001, AI-001, INPUT-001..002, NET-001, ...)
 import { getControlLibraryVersion, getControlVersionsSnapshot } from "./controls";
 import { SCANNER_VERSION, type CheckResult, type Finding, type Pass, type ScanReport } from "./types";
 import { getSemgrepVersion } from "./initialization";
@@ -68,13 +71,17 @@ export function runScan(targetPath: string): ScanReport {
     ...scanDeserializationControl(files, targetRoot),
     ...scanDbCredentialExposureControl(files, targetRoot),
     ...scanParameterizedQueryControl(files, targetRoot),
+    ...scanRefreshTokenControl(files, targetRoot),
+    ...scanSessionStoreControl(files, targetRoot),
+    ...scanSessionExpirationControl(files, targetRoot),
+    ...scanLogoutInvalidationControl(files, targetRoot),
   ];
 
   // Every other scanner module still speaks the legacy Finding/Pass shape.
   // Not yet migrated onto a Control definition — see the gap report for
-  // what that migration involves per module. apiSecurity.ts and
-  // databaseSecurity.ts are fully migrated (every check either made now
-  // lives above) and have been deleted.
+  // what that migration involves per module. apiSecurity.ts,
+  // databaseSecurity.ts, and sessionJwt.ts are fully migrated (every check
+  // each made now lives above) and have been deleted.
   const legacyResults = [
     scanDependencies(targetRoot),
     scanLegalPolicy(targetRoot),
@@ -84,7 +91,6 @@ export function runScan(targetPath: string): ScanReport {
     scanCodeQuality(files, targetRoot),
     scanFrontendSecurity(files, targetRoot),
     scanAiSecurity(files, targetRoot),
-    scanSessionJwt(files, targetRoot),
   ];
 
   const legacyFindings: Finding[] = legacyResults.flatMap((r) => r.findings);

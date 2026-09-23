@@ -24,6 +24,10 @@ import "./library/fileUpload";
 import "./library/deserialization";
 import "./library/dbCredentials";
 import "./library/parameterizedQueries";
+import "./library/refreshTokenRotation";
+import "./library/sessionStore";
+import "./library/sessionExpiration";
+import "./library/logoutInvalidation";
 
 export { getControl, listControls, listControlsByCategory, getControlLibraryVersion, getControlVersionsSnapshot } from "./registry";
 export { hydrateCheckResult, hydrateCheckResults, type HydratedFinding } from "./hydrate";
