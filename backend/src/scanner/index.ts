@@ -1,7 +1,6 @@
 import path from "path";
 import { walk } from "./walk";
 import { scanSecretsControl } from "./secrets";
-import { scanCodeQuality } from "./codeQuality";
 import { scanFrontendSecurity } from "./frontendSecurity";
 import { scanAuthControl } from "./controls/checks/authControl";
 import { scanApiRateLimitControl } from "./controls/checks/rateLimitControl";
@@ -34,9 +33,10 @@ import { scanLegalPolicyControl } from "./controls/checks/legalPolicyControl";
 import { scanAiContentDisclosureControl } from "./controls/checks/aiContentDisclosureControl";
 import { scanSemgrepControl } from "./controls/checks/semgrepControl";
 import { scanOsvVulnerabilityControl } from "./controls/checks/osvVulnerabilityControl";
+import { scanCodeQualityControl } from "./controls/checks/codeQualityControl";
 import { detectFrameworks } from "./frameworkDetection";
 import { mapFrameworkToTechnology } from "./controls/technologyMap";
-import "./controls"; // registers the control library (AUTH-001..008, SECRET-001, API-001..006, DB-001..003, BROWSER-001, CRYPTO-001, AI-001..005, INPUT-001..004, NET-001, DEPS-001, LEGAL-001..004, OSV-001, ...)
+import "./controls"; // registers the control library (AUTH-001..008, SECRET-001..002, API-001..006, DB-001..003, BROWSER-001, CRYPTO-001, AI-001..005, INPUT-001..004, NET-001, DEPS-001, LEGAL-001..004, OSV-001, CQ-001..007, ...)
 import { getControlLibraryVersion, getControlVersionsSnapshot } from "./controls";
 import { SCANNER_VERSION, type CheckResult, type Finding, type Pass, type ScanReport } from "./types";
 import { getSemgrepVersion } from "./initialization";
@@ -85,17 +85,17 @@ export function runScan(targetPath: string): ScanReport {
     ...scanAiContentDisclosureControl(files, targetRoot),
     ...scanSemgrepControl(targetRoot),
     ...scanOsvVulnerabilityControl(targetRoot),
+    ...scanCodeQualityControl(files, targetRoot),
   ];
 
   // Every other scanner module still speaks the legacy Finding/Pass shape.
   // Not yet migrated onto a Control definition — see the gap report for
   // what that migration involves per module. apiSecurity.ts,
   // databaseSecurity.ts, sessionJwt.ts, aiSecurity.ts, dependencies.ts,
-  // legalPolicy.ts, aiDisclosure.ts, semgrepScanner.ts, and
-  // osvVulnerabilities.ts are fully migrated (every check each made now
-  // lives above) and have been deleted.
+  // legalPolicy.ts, aiDisclosure.ts, semgrepScanner.ts, osvVulnerabilities.ts,
+  // and codeQuality.ts are fully migrated (every check each made now lives
+  // above) and have been deleted.
   const legacyResults = [
-    scanCodeQuality(files, targetRoot),
     scanFrontendSecurity(files, targetRoot),
   ];
 

@@ -37,6 +37,7 @@ import "./library/aiContentDisclosure";
 import "./library/evalUsage";
 import "./library/commandInjection";
 import "./library/osvVulnerabilities";
+import "./library/codeQuality";
 
 export { getControl, listControls, listControlsByCategory, getControlLibraryVersion, getControlVersionsSnapshot } from "./registry";
 export { hydrateCheckResult, hydrateCheckResults, type HydratedFinding } from "./hydrate";
