@@ -89,6 +89,7 @@ export interface NettleApiStackProps extends StackProps {
  */
 export class NettleApiStack extends Stack {
   public readonly serviceUrl: string;
+  public readonly serviceArn: string;
   public readonly repositoryArn: string;
 
   constructor(scope: Construct, id: string, props: NettleApiStackProps) {
@@ -343,6 +344,7 @@ export class NettleApiStack extends Stack {
     });
 
     this.serviceUrl = service.attrServiceUrl;
+    this.serviceArn = service.attrServiceArn;
     this.repositoryArn = repository.repositoryArn;
 
     new CfnOutput(this, "ServiceUrl", { value: `https://${service.attrServiceUrl}` });

@@ -7,6 +7,7 @@ import { NettleEcrStack } from "../lib/ecr-stack";
 import { NettleScanWorkerStack } from "../lib/scan-worker-stack";
 import { NettleApiStack } from "../lib/api-stack";
 import { NettleFrontendStack } from "../lib/frontend-stack";
+import { NettleWafCloudFrontStack, NettleWafApiStack } from "../lib/waf-stack";
 import { NettleCiStack } from "../lib/ci-stack";
 
 const app = new App();
@@ -104,13 +105,33 @@ new NettleApiStack(app, "Nettle-Api-Staging", {
   imageTag: "staging",
 });
 
+// AWS WAF: an additional edge-layer protection in front of both public
+// entry points (see waf-stack.ts's own doc comment for the full design and
+// why blindly enabling every managed rule would be wrong for this specific
+// API's own traffic). NettleWafCloudFrontStack is hardcoded to us-east-1 —
+// an AWS WAF requirement for the CLOUDFRONT scope, independent of whatever
+// region the rest of this app deploys to — with crossRegionReferences
+// enabled on both ends so Nettle-Frontend (below) can consume its ACL ARN
+// even if they end up in different regions.
+const wafCloudFront = new NettleWafCloudFrontStack(app, "Nettle-Waf-CloudFront", {
+  env: { account: env.account, region: "us-east-1" },
+  crossRegionReferences: true,
+});
+
+new NettleWafApiStack(app, "Nettle-Waf-Api", {
+  env,
+  apiServiceArn: api.serviceArn,
+});
+
 // S3 + CloudFront hosting for frontend/'s Vite build. Depends on Nettle-Api
 // only for its serviceUrl (allowed through the CSP's connect-src — see
 // frontend-stack.ts) — no other coupling, and its own deploy/teardown is
 // otherwise fully independent of the API.
 const frontend = new NettleFrontendStack(app, "Nettle-Frontend", {
   env,
+  crossRegionReferences: true,
   apiOrigin: `https://${api.serviceUrl}`,
+  webAclArn: wafCloudFront.webAclArn,
 });
 
 new NettleCiStack(app, "Nettle-CI", {

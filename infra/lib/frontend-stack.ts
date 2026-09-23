@@ -22,6 +22,13 @@ export interface NettleFrontendStackProps extends StackProps {
    * app makes once real security headers are enforced.
    */
   apiOrigin: string;
+  /**
+   * waf-stack.ts's NettleWafCloudFrontStack ACL ARN (CLOUDFRONT scope,
+   * always created in us-east-1 regardless of this stack's own region —
+   * see that file's own comment). Optional: omitted, the distribution has
+   * no WAF attached, same as before this prop existed.
+   */
+  webAclArn?: string;
 }
 
 /**
@@ -128,6 +135,7 @@ export class NettleFrontendStack extends Stack {
         { httpStatus: 403, responseHttpStatus: 200, responsePagePath: "/index.html", ttl: Duration.seconds(0) },
         { httpStatus: 404, responseHttpStatus: 200, responsePagePath: "/index.html", ttl: Duration.seconds(0) },
       ],
+      webAclId: props.webAclArn,
     });
 
     this.distributionDomainName = this.distribution.distributionDomainName;
