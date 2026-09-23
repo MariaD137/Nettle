@@ -33,6 +33,7 @@ import "./library/aiToolExecution";
 import "./library/aiOutputValidation";
 import "./library/dependencyLockfile";
 import "./library/legalPolicy";
+import "./library/aiContentDisclosure";
 
 export { getControl, listControls, listControlsByCategory, getControlLibraryVersion, getControlVersionsSnapshot } from "./registry";
 export { hydrateCheckResult, hydrateCheckResults, type HydratedFinding } from "./hydrate";
