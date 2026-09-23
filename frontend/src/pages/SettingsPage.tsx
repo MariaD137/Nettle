@@ -22,6 +22,10 @@ export default function SettingsPage() {
           <span>{user?.email}</span>
         </div>
         <div className="settings-row">
+          <span className="settings-label">Organizations</span>
+          <Link to="/organizations" className="link-btn">Manage</Link>
+        </div>
+        <div className="settings-row">
           <span className="settings-label">Plan</span>
           <span>
             <span className="plan-badge">{PLAN_LABELS[user?.plan ?? "free"] ?? user?.plan}</span>{" "}

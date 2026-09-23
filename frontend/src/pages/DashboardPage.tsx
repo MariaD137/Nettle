@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { api, ApiError, type OverviewData } from "../api";
+import { api, ApiError, type OverviewData, type OrganizationSummary } from "../api";
 import { useAuth } from "../AuthContext";
 import BadgePill from "../components/BadgePill";
 import NettleLogo from "../components/NettleLogo";
@@ -22,10 +22,12 @@ export default function DashboardPage() {
   const navigate = useNavigate();
   const [showNew, setShowNew] = useState(false);
   const [overview, setOverview] = useState<OverviewData | null>(null);
+  const [organizations, setOrganizations] = useState<OrganizationSummary[]>([]);
   const [newName, setNewName] = useState("");
   const [newUrl, setNewUrl] = useState("");
   const [newDesc, setNewDesc] = useState("");
   const [newEnv, setNewEnv] = useState("");
+  const [newOrgId, setNewOrgId] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [showAdvanced, setShowAdvanced] = useState(false);
@@ -37,6 +39,7 @@ export default function DashboardPage() {
 
   useEffect(() => {
     refresh().catch((err) => setError(err instanceof ApiError ? err.message : "Couldn't load dashboard"));
+    api.listOrganizations().then(({ organizations }) => setOrganizations(organizations)).catch(() => {});
   }, []);
 
   async function handleCreate(e: React.FormEvent) {
@@ -48,11 +51,13 @@ export default function DashboardPage() {
         url: newUrl || undefined,
         description: newDesc || undefined,
         environment: newEnv || undefined,
+        organizationId: newOrgId || undefined,
       });
       setNewName("");
       setNewUrl("");
       setNewDesc("");
       setNewEnv("");
+      setNewOrgId("");
       setShowAdvanced(false);
       setShowNew(false);
       await refresh();
@@ -62,6 +67,18 @@ export default function DashboardPage() {
       setCreating(false);
     }
   }
+
+  const orgPicker = organizations.length > 0 && (
+    <div className="field">
+      <label htmlFor="proj-org">Organization</label>
+      <select id="proj-org" value={newOrgId} onChange={(e) => setNewOrgId(e.target.value)}>
+        <option value="">Personal (just me)</option>
+        {organizations.map((org) => (
+          <option key={org.id} value={org.id}>{org.name}</option>
+        ))}
+      </select>
+    </div>
+  );
 
   // --- Mobile: app bar, stat strip, grouped project list, bottom tab bar ---
   if (isMobile) {
@@ -118,6 +135,7 @@ export default function DashboardPage() {
                     <label htmlFor="m-url">URL (optional)</label>
                     <input id="m-url" value={newUrl} onChange={(e) => setNewUrl(e.target.value)} placeholder="https://myapp.com" />
                   </div>
+                  {orgPicker}
                   <div className="field">
                     <label htmlFor="m-env">Environment (optional)</label>
                     <select id="m-env" value={newEnv} onChange={(e) => setNewEnv(e.target.value)}>
@@ -175,6 +193,7 @@ export default function DashboardPage() {
         <span className="brand"><NettleLogo size={22} title="" />nettle</span>
         <div className="topbar-right">
           <Link to="/explore" className="settings-link">Explore</Link>
+          <Link to="/organizations" className="settings-link">Organizations</Link>
           <Link to="/subscribe" className="settings-link">Upgrade</Link>
           <Link to="/settings" className="settings-link">Settings</Link>
           <span>{user?.email}</span>
@@ -270,6 +289,7 @@ export default function DashboardPage() {
                 <label htmlFor="proj-desc">Description</label>
                 <input id="proj-desc" value={newDesc} onChange={(e) => setNewDesc(e.target.value)} placeholder="Brief description" />
               </div>
+              {orgPicker}
               <div className="field">
                 <label htmlFor="proj-env">Environment</label>
                 <select id="proj-env" value={newEnv} onChange={(e) => setNewEnv(e.target.value)}>

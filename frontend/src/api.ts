@@ -28,6 +28,7 @@ export interface User {
 export interface Project {
   id: string;
   userId: string;
+  organizationId: string | null;
   name: string;
   apiKey: string;
   url: string | null;
@@ -35,6 +36,36 @@ export interface Project {
   environment: string | null;
   archivedAt: string | null;
   createdAt: string;
+}
+
+export type OrganizationRole = "owner" | "member";
+
+export interface Organization {
+  id: string;
+  name: string;
+  ownerId: string;
+  createdAt: string;
+}
+
+export interface OrganizationMember {
+  id: string;
+  organizationId: string;
+  userId: string;
+  email: string;
+  role: OrganizationRole;
+  createdAt: string;
+}
+
+export interface OrganizationSummary extends Organization {
+  role: OrganizationRole;
+}
+
+export interface OrganizationInvitation {
+  id: string;
+  email: string;
+  role: OrganizationRole;
+  createdAt: string;
+  expiresAt: string;
 }
 
 export type Severity = "critical" | "high" | "medium" | "low" | "info";
@@ -371,7 +402,7 @@ export const api = {
   listProjects: (includeArchived = false) =>
     request<{ projects: Project[] }>(`/api/projects${includeArchived ? "?includeArchived=true" : ""}`),
 
-  createProject: (name: string, opts?: { url?: string; description?: string; environment?: string }) =>
+  createProject: (name: string, opts?: { url?: string; description?: string; environment?: string; organizationId?: string }) =>
     request<Project>("/api/projects", { method: "POST", body: JSON.stringify({ name, ...opts }) }),
 
   getProject: (id: string) => request<ProjectDetail>(`/api/projects/${id}`),
@@ -472,6 +503,52 @@ export const api = {
     request<{ url: string }>("/api/billing/checkout-session", {
       method: "POST",
       body: JSON.stringify({ plan }),
+    }),
+
+  // Organizations
+  listOrganizations: () =>
+    request<{ organizations: OrganizationSummary[] }>("/api/organizations"),
+
+  createOrganization: (name: string) =>
+    request<{ organization: Organization; role: OrganizationRole }>("/api/organizations", {
+      method: "POST",
+      body: JSON.stringify({ name }),
+    }),
+
+  getOrganization: (id: string) =>
+    request<{ organization: Organization; role: OrganizationRole; members: OrganizationMember[] }>(`/api/organizations/${id}`),
+
+  renameOrganization: (id: string, name: string) =>
+    request<{ organization: Organization }>(`/api/organizations/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify({ name }),
+    }),
+
+  removeOrganizationMember: (id: string, userId: string) =>
+    request<void>(`/api/organizations/${id}/members/${userId}`, { method: "DELETE" }),
+
+  addOrganizationMember: (id: string, email: string) =>
+    request<{ member: OrganizationMember }>(`/api/organizations/${id}/members`, {
+      method: "POST",
+      body: JSON.stringify({ email }),
+    }),
+
+  listInvitations: (id: string) =>
+    request<{ invitations: OrganizationInvitation[] }>(`/api/organizations/${id}/invitations`),
+
+  createInvitation: (id: string, email: string) =>
+    request<{ invitation: OrganizationInvitation; delivered: boolean }>(`/api/organizations/${id}/invitations`, {
+      method: "POST",
+      body: JSON.stringify({ email, role: "member" }),
+    }),
+
+  revokeInvitation: (id: string, invitationId: string) =>
+    request<void>(`/api/organizations/${id}/invitations/${invitationId}`, { method: "DELETE" }),
+
+  acceptInvitation: (token: string) =>
+    request<{ member: OrganizationMember; organization: Organization | null }>("/api/invitations/accept", {
+      method: "POST",
+      body: JSON.stringify({ token }),
     }),
 };
 

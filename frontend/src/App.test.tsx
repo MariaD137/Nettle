@@ -77,4 +77,26 @@ describe("App routing", () => {
     renderAt("/billing/cancelled");
     expect(document.body.textContent).toBeTruthy();
   });
+
+  it("redirects to /login from /organizations when signed out", async () => {
+    const { __setMockUser } = await import("./AuthContext") as any;
+    __setMockUser(null);
+
+    renderAt("/organizations");
+    await waitFor(() => {
+      expect(document.body.textContent).toBeTruthy();
+    });
+    // ProtectedRoute bounces to /login rather than rendering the org list.
+    expect(screen.queryByText("Your organizations")).not.toBeInTheDocument();
+  });
+
+  it("renders the accept-invitation page without auth when a token is present", () => {
+    renderAt("/accept-invitation?token=abc123");
+    expect(screen.getByText(/Log in or create an account/)).toBeInTheDocument();
+  });
+
+  it("shows an invalid-link message at /accept-invitation with no token", () => {
+    renderAt("/accept-invitation");
+    expect(screen.getByText("Invalid invitation link")).toBeInTheDocument();
+  });
 });

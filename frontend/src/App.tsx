@@ -8,6 +8,9 @@ import BillingResultPage from "./pages/BillingResultPage";
 import SettingsPage from "./pages/SettingsPage";
 import ResetPasswordPage from "./pages/ResetPasswordPage";
 import SubscribePage from "./pages/SubscribePage";
+import OrganizationsPage from "./pages/OrganizationsPage";
+import OrganizationDetailPage from "./pages/OrganizationDetailPage";
+import AcceptInvitationPage from "./pages/AcceptInvitationPage";
 
 /**
  * Every signed-in account gets a real (if capped) dashboard now — FREE
@@ -41,6 +44,26 @@ export default function App() {
     <Routes>
       <Route path="/login" element={<LoginPage />} />
       <Route path="/reset-password" element={<ResetPasswordPage />} />
+      {/* Reachable signed out — the invited person may not have an account or
+          session yet; the page itself handles login/signup inline so the
+          invitation token in the URL is never lost to a redirect. */}
+      <Route path="/accept-invitation" element={<AcceptInvitationPage />} />
+      <Route
+        path="/organizations"
+        element={
+          <ProtectedRoute>
+            <OrganizationsPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/organizations/:id"
+        element={
+          <ProtectedRoute>
+            <OrganizationDetailPage />
+          </ProtectedRoute>
+        }
+      />
       <Route
         path="/subscribe"
         element={
