@@ -8,8 +8,10 @@ import {
   HeadersFrameOption,
   HeadersReferrerPolicy,
   PriceClass,
+  SecurityPolicyProtocol,
 } from "aws-cdk-lib/aws-cloudfront";
 import { S3BucketOrigin } from "aws-cdk-lib/aws-cloudfront-origins";
+import { Certificate } from "aws-cdk-lib/aws-certificatemanager";
 import type { Construct } from "constructs";
 
 export interface NettleFrontendStackProps extends StackProps {
@@ -29,6 +31,36 @@ export interface NettleFrontendStackProps extends StackProps {
    * no WAF attached, same as before this prop existed.
    */
   webAclArn?: string;
+  /**
+   * A real domain the deployer actually controls (e.g. "app.nettle.dev") —
+   * never invented here. Read from FRONTEND_DOMAIN in bin/app.ts; both this
+   * and certificateArn must be provided together, or neither. Omitted
+   * (the default), the distribution serves only its own
+   * `*.cloudfront.net` domain, exactly as before this prop existed.
+   */
+  domainName?: string;
+  /**
+   * ARN of an ACM certificate the deployer already created and validated
+   * out of band — this stack never creates or DNS-validates a certificate
+   * itself. Two real constraints that fall out of that:
+   *   1. The certificate MUST already be in `us-east-1` (a CloudFront
+   *      requirement, independent of this stack's own region — same
+   *      reasoning as waf-stack.ts's NettleWafCloudFrontStack). CDK cannot
+   *      verify this at synth time for an externally-referenced ARN; if
+   *      it's wrong, CloudFormation rejects the distribution at deploy
+   *      time with a clear error.
+   *   2. It must actually show `Status: ISSUED` in ACM before this
+   *      deploys — a PENDING_VALIDATION certificate makes the distribution
+   *      fail to create. This repo has no Route 53 hosted zone (checked
+   *      directly — nothing under aws-route53 appears anywhere in
+   *      lib/*.ts), so this stack deliberately does NOT attempt
+   *      DNS-validated certificate creation via a HostedZone lookup, which
+   *      would silently assume Route 53 is authoritative for a domain it
+   *      might not be. See infra/README.md's "Custom domain" section for
+   *      the actual manual steps (works with any DNS provider) and the
+   *      CNAME record needed once this deploys.
+   */
+  certificateArn?: string;
 }
 
 /**
@@ -55,6 +87,16 @@ export class NettleFrontendStack extends Stack {
 
   constructor(scope: Construct, id: string, props: NettleFrontendStackProps) {
     super(scope, id, props);
+
+    // A CloudFront custom domain needs both a name and a certificate for
+    // that name together — half of this pair is a real misconfiguration,
+    // not a valid partial state, so this fails loudly at synth time rather
+    // than producing a distribution CloudFormation would reject (or worse,
+    // one that deploys but silently doesn't answer on the intended domain).
+    if (!!props.domainName !== !!props.certificateArn) {
+      throw new Error("NettleFrontendStack: domainName and certificateArn must both be provided together, or neither");
+    }
+    const certificate = props.certificateArn ? Certificate.fromCertificateArn(this, "FrontendCertificate", props.certificateArn) : undefined;
 
     // No explicit bucketName: S3 bucket names are unique GLOBALLY (across
     // every AWS account, not just this one), unlike every other physical
@@ -136,6 +178,15 @@ export class NettleFrontendStack extends Stack {
         { httpStatus: 404, responseHttpStatus: 200, responsePagePath: "/index.html", ttl: Duration.seconds(0) },
       ],
       webAclId: props.webAclArn,
+      // Both undefined (the default) or both set together — see the
+      // domainName/certificateArn props' own comments. HTTPS stays
+      // enforced regardless (viewerProtocolPolicy above); this only adds a
+      // custom name and its certificate on top, never weakens it — CloudFront
+      // never terminates plain HTTP for a distribution with a certificate
+      // attached, same as it never did with the default *.cloudfront.net one.
+      domainNames: props.domainName ? [props.domainName] : undefined,
+      certificate,
+      minimumProtocolVersion: certificate ? SecurityPolicyProtocol.TLS_V1_2_2021 : undefined,
     });
 
     this.distributionDomainName = this.distribution.distributionDomainName;
@@ -146,5 +197,12 @@ export class NettleFrontendStack extends Stack {
       value: this.distributionDomainName,
       description: "Set as VITE_API's counterpart on the frontend build — the URL customers actually visit, or the CNAME target for a custom domain",
     });
+    if (props.domainName) {
+      new CfnOutput(this, "CustomDomainDnsRecord", {
+        value: `${props.domainName} CNAME ${this.distributionDomainName}`,
+        description:
+          "Add this record with whatever DNS provider is authoritative for the domain (this stack never assumes Route 53 or changes any DNS record itself) — see infra/README.md's 'Custom domain' section.",
+      });
+    }
   }
 }

@@ -123,6 +123,14 @@ new NettleWafApiStack(app, "Nettle-Waf-Api", {
   apiServiceArn: api.serviceArn,
 });
 
+// Custom domain (see frontend-stack.ts's own props for the full reasoning):
+// both env vars are optional and read together — the deployer's own real
+// domain and an already-validated ACM certificate ARN, never invented or
+// auto-created here. Neither set (the default): the distribution keeps
+// serving only its own *.cloudfront.net domain, unchanged.
+const frontendDomain = process.env.FRONTEND_DOMAIN;
+const frontendCertificateArn = process.env.FRONTEND_CERTIFICATE_ARN;
+
 // S3 + CloudFront hosting for frontend/'s Vite build. Depends on Nettle-Api
 // only for its serviceUrl (allowed through the CSP's connect-src — see
 // frontend-stack.ts) — no other coupling, and its own deploy/teardown is
@@ -132,6 +140,8 @@ const frontend = new NettleFrontendStack(app, "Nettle-Frontend", {
   crossRegionReferences: true,
   apiOrigin: `https://${api.serviceUrl}`,
   webAclArn: wafCloudFront.webAclArn,
+  domainName: frontendDomain,
+  certificateArn: frontendCertificateArn,
 });
 
 new NettleCiStack(app, "Nettle-CI", {

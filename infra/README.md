@@ -75,10 +75,12 @@ Eleven stacks (nine production, plus a staging pair mirroring two of them), each
   it's never out of sync with where the API actually is. Deliberately does
   NOT bundle `frontend/dist` into the stack as a CDK asset — same
   out-of-band-build shape as the backend (see `frontend-deploy.yml`) rather
-  than requiring a CDK deploy for every frontend change. No custom
-  domain/ACM certificate here — that needs a real domain and DNS control
-  this sandbox doesn't have; the distribution's own `*.cloudfront.net`
-  domain works as-is, or add a domain later (see that section below).
+  than requiring a CDK deploy for every frontend change. Supports an
+  optional custom domain + ACM certificate (`FRONTEND_DOMAIN`/
+  `FRONTEND_CERTIFICATE_ARN`) — not activated in this sandbox, since that
+  needs a real domain and a manually-validated certificate this sandbox
+  doesn't have; the distribution's own `*.cloudfront.net` domain works
+  as-is until one is added. See "Custom domain" below for the exact steps.
 - **Nettle-CI** — a GitHub OIDC provider + a deploy role scoped to exactly
   what this repo's deploy workflows do: push images to the Nettle-Ecr repo,
   and sync/invalidate the Nettle-Frontend bucket/distribution. No AWS access
@@ -115,6 +117,8 @@ Eleven stacks (nine production, plus a staging pair mirroring two of them), each
 | `Nettle-Waf-Api`'s association targets `Nettle-Api`'s real App Runner service ARN, not a placeholder | Inspected the synthesized `AWS::WAFv2::WebACLAssociation`'s `ResourceArn` directly — a cross-stack `Fn::ImportValue` of `Nettle-Api`'s `ServiceArn` output |
 | The two rule groups deliberately left in COUNT mode on `Nettle-Waf-Api` (Common, SQLi) are actually configured that way, not silently in BLOCK | Inspected the synthesized `ApiWebAcl`'s `Rules[].OverrideAction` directly — confirmed `{Count: {}}` for those two, `{None: {}}` (defers to the managed rule group's own default, which is BLOCK) for the rest |
 | **Live AWS**: whether the Web ACL is actually active, evaluating real traffic, or blocking/counting anything | **Not verified** — `cdk synth` only. No live deploy, no AWS credentials in this sandbox. Do not read the checks above as "the WAF is live"; they verify the CDK code produces the intended CloudFormation, nothing about a running AWS resource. |
+| The custom-domain code path (`FRONTEND_DOMAIN`/`FRONTEND_CERTIFICATE_ARN`) produces correct CloudFormation — `Aliases`, `ViewerCertificate.AcmCertificateArn`, `MinimumProtocolVersion: TLSv1.2_2021` all set, and the missing-half-the-pair case fails loudly at synth time | Ran `cdk synth Nettle-Frontend` directly with fake `FRONTEND_DOMAIN`/`FRONTEND_CERTIFICATE_ARN` values set and inspected the resulting template; separately confirmed `FRONTEND_DOMAIN` alone (no certificate) throws a synth-time error rather than producing a broken distribution |
+| **Live AWS**: no ACM certificate was requested, validated, or issued anywhere — no real domain exists in this sandbox to do that against | **Not attempted.** Every command in "Custom domain" below is documented, none was run. |
 | Adding Nettle-ScanWorker left Nettle-Database/Nettle-Frontend/Nettle-CI untouched; Nettle-Api's diff is purely additive (new IAM policy statements + new runtime env vars, all conditional on props.scanWorker) | Diffed both templates directly against a synth from before Nettle-ScanWorker existed |
 | Nettle-ScanWorker's task role has exactly two scoped S3 actions (read one workspace prefix, write one results prefix) and no other permission — no Secrets Manager, no database, no Stripe/SES | Inspected the synthesized `ScanWorkerTaskRoleDefaultPolicy`'s statements directly |
 | Adding the staging stacks left `Nettle-Api`/`Nettle-Database`'s own templates completely unchanged | Diffed `cdk synth`'s output for both stacks directly against a synth from before the staging stacks/props existed — zero-byte diff |
@@ -345,6 +349,10 @@ distribution serves an empty bucket (a 403→index.html fallback with nothing
 at `/index.html` either — a blank error page, not a security problem,
 just not useful yet).
 
+Want a real domain instead of `*.cloudfront.net`? See "Custom domain"
+below — a few extra manual steps (an ACM certificate, two DNS records),
+optional, and can be added any time after this step, not just now.
+
 **11. Deploy CI:**
 
 ```bash
@@ -403,6 +411,66 @@ server-side state, so a staging frontend build (pointed at
 `Nettle-Api-Staging`'s URL via `VITE_API_BASE_URL`) can be served from any
 static host (even just `npx serve dist` locally) without needing its own
 CDK-managed S3/CloudFront stack.
+
+## Custom domain
+
+`Nettle-Frontend`'s distribution serves over `*.cloudfront.net` by default.
+To put a real domain in front of it, `NettleFrontendStack` accepts a
+`domainName`/`certificateArn` pair — both required together, validated at
+synth time (`frontend-stack.ts` throws a clear error if only one is set).
+This is deliberately manual, not automated end-to-end: this app has no
+Route 53 hosted zone anywhere in it (checked directly — nothing under
+`aws-route53` appears in any `lib/*.ts` file), so automatic DNS-validated
+certificate creation would mean assuming Route 53 is authoritative for a
+domain that might be managed somewhere else entirely (Cloudflare, another
+registrar's DNS, anything). This works identically regardless of which DNS
+provider is actually authoritative for the domain.
+
+**1. Request a certificate in ACM — in `us-east-1` specifically**, regardless
+of which region the rest of this app deploys to (a real AWS requirement for
+CloudFront, not a shortcut — see `frontend-stack.ts`'s `certificateArn` prop
+comment):
+
+```bash
+aws acm request-certificate \
+  --region us-east-1 \
+  --domain-name app.yourdomain.com \
+  --validation-method DNS
+```
+
+**2. Add the DNS validation record ACM gives you** — `aws acm
+describe-certificate --region us-east-1 --certificate-arn <arn>` prints the
+exact CNAME name/value to add. Add it with whatever DNS provider is
+actually authoritative for the domain; this repo does not do this for you.
+
+**3. Wait for `Status: ISSUED`** (poll the same `describe-certificate`
+call, or watch the ACM console) — typically a few minutes to a few hours
+after the DNS record propagates. Deploying against a certificate that's
+still `PENDING_VALIDATION` makes the distribution fail to create.
+
+**4. Deploy with the domain and certificate ARN set:**
+
+```bash
+FRONTEND_DOMAIN=app.yourdomain.com \
+FRONTEND_CERTIFICATE_ARN=arn:aws:acm:us-east-1:<account-id>:certificate/<id> \
+npx cdk deploy Nettle-Frontend
+```
+
+**5. Add the CNAME that actually routes traffic to CloudFront** — the
+deploy's own `CustomDomainDnsRecord` output prints the exact record
+(`app.yourdomain.com CNAME <distribution>.cloudfront.net`). Add it with the
+same DNS provider as step 2. This is a second, separate DNS record from the
+ACM validation one in step 2 — that one only proved domain ownership to
+ACM, this one is what makes traffic to the domain actually reach
+CloudFront.
+
+HTTPS stays enforced throughout (`viewerProtocolPolicy:
+REDIRECT_TO_HTTPS`, unchanged); the distribution additionally gets
+`minimumProtocolVersion: TLS_V1_2_2021` once a certificate is attached. The
+private S3 bucket, Origin Access Control, strict CSP/security headers, and
+SPA routing are completely unaffected by any of this — a custom domain is
+purely about which name(s) the same already-private distribution answers
+to, never about exposing the bucket or loosening anything else.
 
 ## Cost notes (estimates, not sourced pricing — check AWS's current pricing page)
 
@@ -480,13 +548,18 @@ guard, so this is a clean, complete teardown.
   cleanup job (EventBridge Scheduler → Lambda/ECS task, matching the
   reasoning in `../docs/DATABASE.md`'s rate-limit-table section, which
   explains why *that* table doesn't need one) is still open.
-- **A custom domain for the frontend.** `Nettle-Frontend`'s distribution is
-  real and serves over the default `*.cloudfront.net` domain, but there's no
-  ACM certificate or Route 53/DNS wiring here — that needs a real domain
-  this sandbox doesn't have. Add a `viewerCertificate`/`domainNames` on the
-  `Distribution` construct and a validated ACM cert (must be in `us-east-1`
-  regardless of the app's own region — a CloudFront requirement) once a
-  domain exists.
+- **A custom domain for the frontend is supported, but not activated in
+  this sandbox — no real domain exists here to activate it against.**
+  `NettleFrontendStack` accepts an optional `domainName`/`certificateArn`
+  pair (read from `FRONTEND_DOMAIN`/`FRONTEND_CERTIFICATE_ARN` in
+  `bin/app.ts`); omitted, the distribution serves only its default
+  `*.cloudfront.net` domain, unchanged from before this existed. See
+  "Custom domain" below for the actual steps once a real domain is
+  available — deliberately manual for the ACM certificate (no Route 53
+  hosted zone exists anywhere in this app, so DNS-validated certificate
+  creation isn't attempted automatically; assuming Route 53 is
+  authoritative for a domain it might not be would be worse than asking
+  for one manual step).
 - **WAF is implemented but not live-verified, and two of its rule groups
   are deliberately in COUNT mode.** `Nettle-Waf-CloudFront`/`Nettle-Waf-Api`
   are real CDK code (see their own bullets above and `lib/waf-stack.ts`),
