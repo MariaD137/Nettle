@@ -232,10 +232,24 @@ and `lib/api-stack.ts`.
 
 ## What's deliberately not here yet
 
-- **Asynchronous scanning.** `runScan` still runs on the request path inside
-  the single App Runner service; a large scan can still block that
-  instance's event loop. An SQS+worker (or ECS/Fargate task) architecture is
-  designed but not implemented.
+- **Asynchronous scanning is now real, but in-process.** A project-tied
+  `POST /api/scans`/`/api/scans/repo` (any request that identifies a
+  project via its API key) returns immediately with a CREATED scan record;
+  `scanner/scanQueue.ts` runs the actual scan afterward, off the request
+  path — same in-process async-queue pattern as continuous monitoring's
+  detection queue, and for the same reason (no SQS/Fargate/worker
+  infrastructure added speculatively before there's real traffic to
+  justify it). What this does and doesn't fix, stated honestly: no HTTP
+  connection has to stay open for a scan's duration anymore, and a scan
+  failure can no longer take an in-flight request down with it — but
+  `runScan()` itself still blocks the Node event loop while it executes
+  (it shells out to Semgrep via a synchronous, timeout-bounded
+  `execFileSync`, unchanged), so this is not true multi-core parallelism.
+  A separate worker process/task (ECS/Fargate) is still the next real step
+  for that, and for surviving a process crash mid-scan — today's queue is
+  memory-only, same disclosed limitation as the detection queue. Scans with
+  no project attached (the anonymous try-it-without-an-account flow) are
+  deliberately unchanged and stay synchronous.
 - **Event retention.** The `events` table has no pruning yet; a scheduled
   cleanup job (EventBridge Scheduler → Lambda/ECS task, matching the
   reasoning in `../docs/DATABASE.md`'s rate-limit-table section, which

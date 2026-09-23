@@ -7,7 +7,8 @@ import multer from "multer";
 import { runScan } from "../scanner";
 import { resolveScanRoot } from "../scanner/resolveScanRoot";
 import { findProjectByApiKey } from "../patrol/projects";
-import { recordScan } from "../patrol/scans";
+import { createQueuedScan } from "../patrol/scans";
+import { enqueueScan } from "../scanner/scanQueue";
 import { requireAuth, optionalAuth } from "../auth/middleware";
 import { requireSubscription, entitledPlan } from "../billing/subscription";
 import { canRunScan, getMonthlyScanLimit } from "../billing/entitlements";
@@ -219,38 +220,27 @@ scansRouter.post("/api/scans", optionalAuth, scanUploadLimiter, upload.single("c
   }
 
   const extractDir = fs.mkdtempSync(path.join(os.tmpdir(), "nettle-scan-"));
+
+  // Extraction happens synchronously either way — it's the cheap,
+  // security-critical step (symlink/decompression-bomb/path-traversal
+  // checks) that must reject a bad archive before the caller is told
+  // anything succeeded, async or not. What moves off the request path below
+  // is the expensive part: actually running the scanner.
+  let scanRoot: string;
   try {
     safeExtractZip(req.file.path, extractDir);
-    const scanRoot = resolveScanRoot(extractDir);
-    const report = runScan(scanRoot);
-
-    // Optional: if the request identifies a project (same API key the
-    // monitoring middleware uses), persist the scan against it so the badge
-    // and dashboard have real history. Scanning without a project is still
-    // fully supported — a quick one-off check needs no account at all.
-    //
-    // Note the full report is what gets stored; only the response is trimmed
-    // to the caller's plan, so upgrading later unlocks this scan in place.
-    let ownerUserId: string | undefined;
-    if (upfrontProject) {
-      await recordScan(upfrontProject.id, report);
-      ownerUserId = upfrontProject.userId;
-    }
-
-    if (billedUserId) await recordScanUsage(billedUserId, upfrontProject?.id ?? null, "upload");
-
-    respondWithScan(res, report, await planForScan(req, ownerUserId));
+    scanRoot = resolveScanRoot(extractDir);
   } catch (err) {
+    fs.unlinkSync(req.file.path);
+    fs.rmSync(extractDir, { recursive: true, force: true });
     const msg = (err as Error).message;
     let statusCode = 422;
-    let errorMsg = "Couldn't extract or scan the uploaded file";
+    let errorMsg = "Couldn't extract the uploaded file";
 
     if (msg.includes("symlink")) {
       statusCode = 400;
       errorMsg = "Archive contains symlinks, which are not allowed";
     } else if (msg.includes("absolute path") || msg.includes("path traversal")) {
-      // Caller error, not a server failure: the archive is malformed in a way
-      // we deliberately refuse, so say so rather than returning a generic 422.
       statusCode = 400;
       errorMsg = "Archive contains entries that would write outside the upload, which is not allowed";
     } else if (msg.includes("timeout")) {
@@ -258,12 +248,45 @@ scansRouter.post("/api/scans", optionalAuth, scanUploadLimiter, upload.single("c
       errorMsg = "Archive appears to be a decompression bomb or is too complex";
     } else if (msg.includes("exceeds limit")) {
       statusCode = 413;
-      errorMsg = msg; // Use the specific limit message
+      errorMsg = msg;
     }
 
-    res.status(statusCode).json({ error: errorMsg, detail: msg });
+    return res.status(statusCode).json({ error: errorMsg, detail: msg });
+  }
+  fs.unlinkSync(req.file.path); // the zip itself is no longer needed once extracted
+
+  // Project-tied uploads run async: the record is created now, the client
+  // gets its id back immediately, and the actual scan happens off the
+  // request path via scanner/scanQueue.ts (see that file for exactly what
+  // "async" does and doesn't mean here). Anonymous/no-project uploads keep
+  // today's synchronous one-shot behavior unchanged — see scanBlocked()'s
+  // comment for why that pre-existing flow is deliberately untouched.
+  if (upfrontProject) {
+    const queued = await createQueuedScan(upfrontProject.id);
+    if (billedUserId) await recordScanUsage(billedUserId, upfrontProject.id, "upload");
+
+    enqueueScan({
+      scanId: queued.id,
+      scanRoot,
+      cleanup: () => fs.rmSync(extractDir, { recursive: true, force: true }),
+    });
+
+    return res.status(202).json({
+      scanId: queued.id,
+      projectId: upfrontProject.id,
+      status: queued.status,
+      message: "Scan queued — poll GET /api/projects/:id/scans or the project detail route for its status.",
+    });
+  }
+
+  try {
+    const report = runScan(scanRoot);
+    if (billedUserId) await recordScanUsage(billedUserId, null, "upload");
+    respondWithScan(res, report, await planForScan(req));
+  } catch (err) {
+    const msg = (err as Error).message;
+    res.status(422).json({ error: "Couldn't scan the uploaded file", detail: msg });
   } finally {
-    fs.unlinkSync(req.file.path);
     fs.rmSync(extractDir, { recursive: true, force: true });
   }
 });
@@ -289,25 +312,18 @@ scansRouter.post("/api/scans/repo", requireAuth, scanRepoLimiter, requireSubscri
   if (await scanBlocked(billedUserId, res)) return;
 
   const cloneDir = fs.mkdtempSync(path.join(os.tmpdir(), "nettle-repo-"));
+
+  // Cloning stays synchronous and on the request path — it's bounded (60s
+  // timeout) and its own failure modes (repo not found, bad branch) need to
+  // reach the caller as a clear error, not a queued job that fails
+  // immediately after being accepted.
   try {
     const args = ["clone", "--depth", "1"];
     if (branch) args.push("--branch", branch);
     args.push(repoUrl, cloneDir);
-
     execFileSync("git", args, { timeout: 60_000, stdio: "pipe" });
-
-    const report = runScan(cloneDir);
-
-    let ownerUserId: string | undefined;
-    if (repoProject) {
-      await recordScan(repoProject.id, report);
-      ownerUserId = repoProject.userId;
-    }
-
-    if (billedUserId) await recordScanUsage(billedUserId, repoProject?.id ?? null, "repo");
-
-    respondWithScan(res, report, await planForScan(req, ownerUserId));
   } catch (err) {
+    fs.rmSync(cloneDir, { recursive: true, force: true });
     const msg = (err as Error).message;
     if (msg.includes("not found") || msg.includes("Could not read")) {
       return res.status(404).json({ error: "Repository not found — check the URL and make sure it's public" });
@@ -315,7 +331,36 @@ scansRouter.post("/api/scans/repo", requireAuth, scanRepoLimiter, requireSubscri
     if (msg.includes("not a valid branch") || msg.includes("Remote branch")) {
       return res.status(400).json({ error: `Branch '${branch}' not found in the repository` });
     }
-    res.status(422).json({ error: "Couldn't clone or scan the repository", detail: msg });
+    return res.status(422).json({ error: "Couldn't clone the repository", detail: msg });
+  }
+
+  // Same split as POST /api/scans: a project-tied clone runs the actual
+  // scan async, off the request path; a project-less one (bearer-token-only,
+  // no project apiKey supplied) stays synchronous — see scanQueue.ts.
+  if (repoProject) {
+    const queued = await createQueuedScan(repoProject.id);
+    if (billedUserId) await recordScanUsage(billedUserId, repoProject.id, "repo");
+
+    enqueueScan({
+      scanId: queued.id,
+      scanRoot: cloneDir,
+      cleanup: () => fs.rmSync(cloneDir, { recursive: true, force: true }),
+    });
+
+    return res.status(202).json({
+      scanId: queued.id,
+      projectId: repoProject.id,
+      status: queued.status,
+      message: "Scan queued — poll GET /api/projects/:id/scans or the project detail route for its status.",
+    });
+  }
+
+  try {
+    const report = runScan(cloneDir);
+    if (billedUserId) await recordScanUsage(billedUserId, null, "repo");
+    respondWithScan(res, report, await planForScan(req));
+  } catch (err) {
+    res.status(422).json({ error: "Couldn't scan the repository", detail: (err as Error).message });
   } finally {
     fs.rmSync(cloneDir, { recursive: true, force: true });
   }

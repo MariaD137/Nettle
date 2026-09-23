@@ -4,7 +4,7 @@ import {
   api, ApiError,
   type Alert, type AlertCounts, type AlertStatus, type BadgeState,
   type CheckResult, type ComparisonFinding, type DiffStatus, type Finding, type FindingStatus, type Project, type ReleaseImpact, type ScanComparison,
-  type ScanReport, type StoredFindingStatus, type StoredScan,
+  type ScanReport, type ScanQueuedResponse, type StoredFindingStatus, type StoredScan,
 } from "../api";
 import BadgePill from "../components/BadgePill";
 import NettleLogo from "../components/NettleLogo";
@@ -172,7 +172,24 @@ function OverviewTab({ project, latestScan }: { project: Project; latestScan: St
         <div className="code-snippet">{project.apiKey}</div>
       </div>
 
-      {latestScan && (
+      {latestScan && (latestScan.status === "CREATED" || latestScan.status === "SCANNING") && (
+        <div className="card">
+          <h2>Latest scan</h2>
+          <p className="muted">Scan in progress — this project's most recent scan hasn't finished yet. Check back shortly.</p>
+        </div>
+      )}
+
+      {latestScan && latestScan.status === "FAILED" && (
+        <div className="card">
+          <h2>Latest scan</h2>
+          <p className="error-banner">
+            The most recent scan failed to complete ({new Date(latestScan.scannedAt).toLocaleString()}). Try running
+            it again from the Scan tab.
+          </p>
+        </div>
+      )}
+
+      {latestScan && latestScan.status !== "CREATED" && latestScan.status !== "SCANNING" && latestScan.status !== "FAILED" && (
         <div className="card">
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
             <h2>Latest scan</h2>
@@ -197,6 +214,24 @@ function OverviewTab({ project, latestScan }: { project: Project; latestScan: St
 
 type ScanMethod = "upload" | "repo";
 
+/**
+ * Project-tied scans run async now (backend/src/scanner/scanQueue.ts) — the
+ * POST just returns a scanId + CREATED status, so the client polls the
+ * scan list until it leaves CREATED/SCANNING. 2s between polls, up to 2
+ * minutes: generous for Semgrep's own 30s subprocess timeout plus queueing
+ * behind any other scan already running for this account.
+ */
+async function pollScan(projectId: string, scanId: string): Promise<StoredScan> {
+  const maxAttempts = 60;
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    const { scans } = await api.getScans(projectId);
+    const found = scans.find((s) => s.id === scanId);
+    if (found && found.status !== "CREATED" && found.status !== "SCANNING") return found;
+    await new Promise((resolve) => setTimeout(resolve, 2000));
+  }
+  throw new Error("The scan is taking longer than expected. Check the History tab shortly.");
+}
+
 function ScanTab({ project, onScanned }: { project: Project; onScanned: (badge: BadgeState) => void }) {
   const { user } = useAuth();
   const [method, setMethod] = useState<ScanMethod>("upload");
@@ -205,6 +240,7 @@ function ScanTab({ project, onScanned }: { project: Project; onScanned: (badge: 
   const [branch, setBranch] = useState("");
   const [report, setReport] = useState<ScanReport | null>(null);
   const [scanning, setScanning] = useState(false);
+  const [scanStage, setScanStage] = useState<"idle" | "submitting" | "queued">("idle");
   const [error, setError] = useState<string | null>(null);
 
   if (!canRunScan(user)) {
@@ -223,21 +259,40 @@ function ScanTab({ project, onScanned }: { project: Project; onScanned: (badge: 
   async function handleScan() {
     setError(null);
     setScanning(true);
+    setScanStage("submitting");
     try {
-      let result: ScanReport;
+      let result: ScanReport | ScanQueuedResponse;
       if (method === "repo") {
-        if (!repoUrl) { setError("Enter a repository URL"); setScanning(false); return; }
+        if (!repoUrl) { setError("Enter a repository URL"); setScanning(false); setScanStage("idle"); return; }
         result = await api.scanRepo(repoUrl, { branch: branch || undefined, apiKey: project.apiKey });
       } else {
-        if (!file) { setError("Select a file"); setScanning(false); return; }
+        if (!file) { setError("Select a file"); setScanning(false); setScanStage("idle"); return; }
         result = await api.scanCodebase(file, project.apiKey);
       }
-      setReport(result);
+
+      if ("scanId" in result) {
+        // The queued path (always taken here — this tab always sends
+        // project.apiKey, so the request is always project-tied). Poll
+        // until the worker has actually persisted a real result; a FAILED
+        // scan surfaces as an error, never as a fabricated report.
+        setScanStage("queued");
+        const finished = await pollScan(project.id, result.scanId);
+        if (finished.status === "FAILED") {
+          setError("The scan failed to complete. Check the History tab for details, or try again.");
+        } else {
+          setReport(finished.report);
+        }
+      } else {
+        // Fallback for the (here, unreachable in practice) synchronous
+        // response shape a project-less request would get.
+        setReport(result);
+      }
       onScanned(await api.getBadge(project.id));
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Scan failed");
     } finally {
       setScanning(false);
+      setScanStage("idle");
     }
   }
 
@@ -263,6 +318,9 @@ function ScanTab({ project, onScanned }: { project: Project; onScanned: (badge: 
       </div>
 
       {error && <div className="error-banner">{error}</div>}
+      {scanStage === "queued" && (
+        <p className="muted">Scan queued and running — this page will update automatically once it finishes.</p>
+      )}
 
       {method === "upload" && (
         <div>
@@ -270,7 +328,7 @@ function ScanTab({ project, onScanned }: { project: Project; onScanned: (badge: 
           <div className="scan-upload-row">
             <input type="file" accept=".zip" onChange={(e) => setFile(e.target.files?.[0] ?? null)} />
             <button onClick={handleScan} disabled={!file || scanning}>
-              {scanning ? "Scanning…" : "Scan"}
+              {scanStage === "submitting" ? "Submitting…" : scanStage === "queued" ? "Scanning…" : "Scan"}
             </button>
           </div>
         </div>
@@ -298,7 +356,7 @@ function ScanTab({ project, onScanned }: { project: Project; onScanned: (badge: 
             />
           </div>
           <button onClick={handleScan} disabled={!repoUrl || scanning}>
-            {scanning ? "Cloning & scanning…" : "Scan repository"}
+            {scanStage === "submitting" ? "Cloning…" : scanStage === "queued" ? "Scanning…" : "Scan repository"}
           </button>
         </div>
       )}
@@ -455,6 +513,24 @@ function FixCenterTab({ latestScan, projectId, onRescan }: { latestScan: StoredS
   }, [projectId, latestScan?.id]);
 
   const { user } = useAuth();
+
+  if (latestScan && (latestScan.status === "CREATED" || latestScan.status === "SCANNING")) {
+    return (
+      <div className="card">
+        <h2>Fix Center</h2>
+        <p className="muted">The latest scan is still running — its findings will appear here once it completes.</p>
+      </div>
+    );
+  }
+
+  if (latestScan && latestScan.status === "FAILED") {
+    return (
+      <div className="card">
+        <h2>Fix Center</h2>
+        <p className="error-banner">The latest scan failed to complete, so there's nothing to show yet. Try scanning again.</p>
+      </div>
+    );
+  }
 
   if (!latestScan) {
     return (
@@ -963,7 +1039,13 @@ function HistoryTab({ projectId }: { projectId: string }) {
             >
               <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
                 <span>{new Date(s.scannedAt).toLocaleDateString()}</span>
-                <span className="score-num" style={{ fontSize: 20 }}>{s.score}</span>
+                {s.status === "CREATED" || s.status === "SCANNING" ? (
+                  <span className="muted">Running…</span>
+                ) : s.status === "FAILED" ? (
+                  <span className="finding-critical" style={{ padding: "2px 8px", borderRadius: 4 }}>Failed</span>
+                ) : (
+                  <span className="score-num" style={{ fontSize: 20 }}>{s.score}</span>
+                )}
                 {diff !== null && diff !== 0 && (
                   <span className={diff > 0 ? "score-up" : "score-down"}>
                     {diff > 0 ? "+" : ""}{diff}
@@ -972,9 +1054,11 @@ function HistoryTab({ projectId }: { projectId: string }) {
                 {baselineId === s.id && <span className="baseline-marker">Baseline</span>}
               </div>
               <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
-                <span className="muted">
-                  {s.criticalCount} critical · {s.cautionCount} caution
-                </span>
+                {(s.status === "CREATED" || s.status === "SCANNING" || s.status === "FAILED") ? null : (
+                  <span className="muted">
+                    {s.criticalCount} critical · {s.cautionCount} caution
+                  </span>
+                )}
                 {scans.length >= 2 && (
                   <button
                     className="small secondary"

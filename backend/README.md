@@ -247,7 +247,15 @@ static analysis over code an attacker fully controls. Before this goes
 anywhere near real traffic, extraction and scanning need to happen in an
 isolated, network-less sandbox (see the AWS architecture notes: ECS Fargate
 tasks with no NAT/egress, or a service like e2b/Modal purpose-built for
-executing untrusted code).
+executing untrusted code). A project-tied scan now runs asynchronously
+(`scanner/scanQueue.ts`, off the HTTP request path — see `infra/README.md`'s
+"what's deliberately not here yet"), but async is not the same thing as
+sandboxed: it still runs in the same process, on the same host, as
+everything else. Isolation between *concurrent* scans is real today (each
+gets its own uniquely-named temp directory, and the queue processes jobs
+strictly one at a time, so there is no window where two scans' filesystem
+operations could even race) — isolation from *the host itself* is the gap
+this note is actually about, and remains open.
 
 **Billing is untested against a live Stripe account.** The webhook's
 signature verification is genuinely tested (see above), but the actual

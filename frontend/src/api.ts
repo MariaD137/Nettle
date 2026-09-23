@@ -104,18 +104,29 @@ export interface CheckResult {
   humanReviewRequired?: boolean;
 }
 
+export type ScanStatus = "CREATED" | "SCANNING" | "COMPLETED" | "PARTIALLY_COMPLETED" | "FAILED" | "CANCELLED";
+
 export interface ScanReport {
   scannedAt: string;
   target: string;
   score: number;
   scoreConfidence?: number;
   scannerVersion: string;
+  status?: ScanStatus;
   detectedTechnology?: string | null;
   access?: ScanAccess;
   findings: Finding[];
   passed: { category: string; title: string }[];
   checkResults?: CheckResult[];
   summary: { critical: number; high: number; medium: number; low: number; info: number; clear: number };
+}
+
+/** POST /api/scans or /api/scans/repo's response for a project-tied (async) scan — see backend/src/scanner/scanQueue.ts. */
+export interface ScanQueuedResponse {
+  scanId: string;
+  projectId: string;
+  status: ScanStatus;
+  message: string;
 }
 
 export interface StoredScan {
@@ -126,6 +137,8 @@ export interface StoredScan {
   criticalCount: number;
   cautionCount: number;
   clearCount: number;
+  /** Async scan lifecycle (see backend/src/scanner/scanQueue.ts). A project-tied scan starts CREATED, moves to SCANNING, then COMPLETED/FAILED. Only a COMPLETED (or PARTIALLY_COMPLETED) report's findings/score are meaningful — CREATED/SCANNING carry an empty placeholder, not "a clean scan". */
+  status: ScanStatus;
   report: ScanReport;
 }
 
@@ -440,16 +453,16 @@ export const api = {
   badgeSvgUrl: (projectId: string) => `${API_BASE}/api/projects/${projectId}/badge.svg`,
 
   // Scan upload
-  scanCodebase: async (file: File, apiKey?: string): Promise<ScanReport> => {
+  scanCodebase: async (file: File, apiKey?: string): Promise<ScanReport | ScanQueuedResponse> => {
     const form = new FormData();
     form.append("codebase", file);
     const headers: Record<string, string> = {};
     if (apiKey) headers["X-Nettle-Api-Key"] = apiKey;
-    return request<ScanReport>("/api/scans", { method: "POST", body: form, headers });
+    return request<ScanReport | ScanQueuedResponse>("/api/scans", { method: "POST", body: form, headers });
   },
 
   scanRepo: (repoUrl: string, opts?: { branch?: string; apiKey?: string }) =>
-    request<ScanReport>("/api/scans/repo", {
+    request<ScanReport | ScanQueuedResponse>("/api/scans/repo", {
       method: "POST",
       body: JSON.stringify({ repoUrl, branch: opts?.branch, apiKey: opts?.apiKey }),
     }),
