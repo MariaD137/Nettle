@@ -550,10 +550,16 @@ function FixItem({ item, diffStatus }: { item: CheckResult; diffStatus?: DiffSta
               {rec.architectureFix && <FixSection label="Architecture fix" text={rec.architectureFix} />}
               {rec.longTermHardening && <FixSection label="Long-term hardening" text={rec.longTermHardening} />}
               <FixSection label="Verification" text={rec.verificationMethod} />
-              {rec.multipleValidSolutions && (
+              {rec.recommendationConfidence === "LOW" && (
                 <p className="muted" style={{ marginTop: 8 }}>
-                  There are multiple valid implementations — Nettle recommends the option above based on{" "}
-                  {rec.technologyMatched === "generic" ? "no specific framework detected in this scan" : `the detected ${rec.technologyMatched} stack`}.
+                  Nettle couldn't determine this project's exact framework, so the fix above is general guidance —
+                  a more specific fix likely exists for your stack once it's detected.
+                </p>
+              )}
+              {rec.recommendationConfidence === "HIGH" && rec.multipleValidSolutions && (
+                <p className="muted" style={{ marginTop: 8 }}>
+                  There are multiple valid implementations — Nettle recommends the option above based on the
+                  detected {rec.technologyMatched} stack.
                 </p>
               )}
               {rec.references.length > 0 && (

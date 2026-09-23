@@ -46,6 +46,8 @@ export type CheckStatus = "PASS" | "FAIL" | "NOT_VERIFIED";
 
 export type ReleaseImpact = "BLOCK_RELEASE" | "REVIEW_BEFORE_RELEASE" | "FIX_RECOMMENDED" | "IMPROVEMENT" | "INFORMATIONAL";
 
+export type RecommendationConfidence = "HIGH" | "MEDIUM" | "LOW";
+
 export interface Recommendation {
   whyItMatters: string;
   recommendedSolution: string;
@@ -57,6 +59,7 @@ export interface Recommendation {
   references: string[];
   technologyMatched: string;
   multipleValidSolutions: boolean;
+  recommendationConfidence: RecommendationConfidence;
 }
 
 /**

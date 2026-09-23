@@ -67,6 +67,23 @@ export interface Control {
   version: string;
 }
 
+/**
+ * How confident Nettle is that the specific fix shown is the right one for
+ * this codebase — distinct from CheckResult.confidence, which is about
+ * whether the underlying FAIL is real. recommendationConfidence never
+ * factors in finding confidence; it's purely about how well the shown fix
+ * was matched to this app's actual technology stack:
+ *
+ * - HIGH: a technology-specific fix matching the detected stack was found.
+ * - MEDIUM: the generic fix was used, but the control only ever offers a
+ *   generic fix — there was nothing more specific to miss.
+ * - LOW: the generic fix was used as a fallback even though the control
+ *   has technology-specific fixes for other stacks — a better-matched
+ *   answer likely exists but this scan couldn't determine the technology
+ *   needed to select it.
+ */
+export type RecommendationConfidence = "HIGH" | "MEDIUM" | "LOW";
+
 /** The recommendation block attached to a hydrated finding — spec §20/§22. */
 export interface Recommendation {
   whyItMatters: string;
@@ -79,4 +96,5 @@ export interface Recommendation {
   references: string[];
   technologyMatched: string; // which TechnologyFix.technology was used ("generic" if none matched)
   multipleValidSolutions: boolean; // true when the control has >1 non-generic TechnologyFix
+  recommendationConfidence: RecommendationConfidence;
 }

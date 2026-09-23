@@ -33,9 +33,13 @@ test("a FAIL result with a controlKey gets hydrated with a full recommendation",
   assert.ok(hydrated.recommendation!.verificationMethod.length > 0);
   assert.ok(hydrated.recommendation!.references.length > 0);
   assert.equal(hydrated.humanReviewRequired, false);
+  // recommendationConfidence: distinct from CheckResult.confidence (the
+  // evidence for the finding) — this is about how well the fix itself was
+  // matched to the detected stack. A real technology match is HIGH.
+  assert.equal(hydrated.recommendation!.recommendationConfidence, "HIGH");
 });
 
-test("hydration falls back to the control's generic fix for an unmatched technology", () => {
+test("hydration falls back to the control's generic fix for an unmatched technology, and recommendationConfidence reflects that a more specific fix exists but wasn't matched", () => {
   const result: CheckResult = {
     checkId: "x",
     status: "FAIL",
@@ -48,6 +52,42 @@ test("hydration falls back to the control's generic fix for an unmatched technol
 
   const hydrated = hydrateCheckResult(result, { detectedTechnology: "some-unknown-framework" });
   assert.equal(hydrated.recommendation!.technologyMatched, "generic");
+  // AUTH-001 has express/django/flask/fastapi-specific fixes that exist but
+  // weren't matched here — LOW, not MEDIUM, since a better answer is out
+  // there, just not selected.
+  assert.equal(hydrated.recommendation!.recommendationConfidence, "LOW");
+});
+
+test("recommendationConfidence is MEDIUM when the control only ever offers a generic fix — there's nothing more specific to miss", () => {
+  const result: CheckResult = {
+    checkId: "x",
+    status: "FAIL",
+    category: "AI Disclosure",
+    title: "No token limits configured for AI API calls",
+    severity: "medium",
+    confidence: 70,
+    controlKey: "AI-002", // aiCostLimits.ts: a single "generic" TechnologyFix, no others
+  };
+
+  const hydrated = hydrateCheckResult(result, { detectedTechnology: "express" });
+  assert.equal(hydrated.recommendation!.technologyMatched, "generic");
+  assert.equal(hydrated.recommendation!.recommendationConfidence, "MEDIUM");
+});
+
+test("recommendationConfidence with no detectedTechnology option at all behaves the same as an unmatched one", () => {
+  const result: CheckResult = {
+    checkId: "x",
+    status: "FAIL",
+    category: "Authentication",
+    title: "unprotected route",
+    severity: "high",
+    confidence: 80,
+    controlKey: "AUTH-001",
+  };
+
+  const hydrated = hydrateCheckResult(result); // no options at all
+  assert.equal(hydrated.recommendation!.technologyMatched, "generic");
+  assert.equal(hydrated.recommendation!.recommendationConfidence, "LOW");
 });
 
 test("hydration never fabricates a recommendation for a result with no controlKey", () => {

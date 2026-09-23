@@ -1,5 +1,5 @@
 import type { CheckResult } from "../types";
-import type { Control, Recommendation, ReleaseImpact } from "./types";
+import type { Control, Recommendation, RecommendationConfidence, ReleaseImpact } from "./types";
 import { getControl } from "./registry";
 import { computeReleaseImpact } from "./releaseGate";
 
@@ -21,6 +21,17 @@ function selectTechnologyFix(control: Control, detectedTechnology: string | unde
     : undefined;
   if (byTech) return byTech;
   return control.technologyFixes.find((f) => f.technology === "generic") ?? control.technologyFixes[0];
+}
+
+/**
+ * Distinct from finding confidence entirely — see RecommendationConfidence's
+ * own doc comment. Computed purely from whether the shown fix is
+ * technology-specific, and if not, whether a technology-specific one exists
+ * that just wasn't matched.
+ */
+function computeRecommendationConfidence(matchedTechnology: string, hasNonGenericFixes: boolean): RecommendationConfidence {
+  if (matchedTechnology !== "generic") return "HIGH";
+  return hasNonGenericFixes ? "LOW" : "MEDIUM";
 }
 
 /**
@@ -64,6 +75,7 @@ export function hydrateCheckResult(
     references: control.references ?? [],
     technologyMatched: fix.technology,
     multipleValidSolutions: nonGenericFixes.length > 1,
+    recommendationConfidence: computeRecommendationConfidence(fix.technology, nonGenericFixes.length > 0),
   };
 
   const severity = result.severity ?? control.defaultSeverity;
