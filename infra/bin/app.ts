@@ -38,6 +38,46 @@ const api = new NettleApiStack(app, "Nettle-Api", {
   repository: ecr.repository,
 });
 
+/**
+ * Staging: a second, independent environment tracking the ECR :staging tag
+ * that backend-deploy-staging.yml (triggered on every push to `develop`)
+ * has been pushing since before anything here consumed it — that workflow
+ * ran successfully and had nowhere for its output to go. These two stacks
+ * close that gap.
+ *
+ * Shares Nettle-Network (same VPC) with production — there's no requirement
+ * for network-level separation between the two, only for the data and the
+ * running service to be independent, which the stageName suffix on each of
+ * these stacks' physical resource names (secrets, VPC connector, service
+ * name) guarantees; see database-stack.ts's and api-stack.ts's own comments
+ * on that prop. Does NOT share Nettle-Database, Nettle-Api, or either
+ * stack's Secrets Manager secret with production — a staging deploy can
+ * never read or write production customer data or production Stripe keys.
+ *
+ * `production: false` on the database (database-stack.ts) gets staging a
+ * cheaper, destroyable instance — 1-day backup retention, no deletion
+ * protection, RemovalPolicy.DESTROY — appropriate for an environment that's
+ * meant to be disposable, unlike Nettle-Database.
+ */
+const stagingDatabase = new NettleDatabaseStack(app, "Nettle-Database-Staging", {
+  env,
+  vpc: network.vpc,
+  connectorSecurityGroup: network.connectorSecurityGroup,
+  production: false,
+  stageName: "staging",
+});
+
+new NettleApiStack(app, "Nettle-Api-Staging", {
+  env,
+  vpc: network.vpc,
+  connectorSecurityGroup: network.connectorSecurityGroup,
+  databaseSecret: stagingDatabase.secret,
+  databaseEndpoint: stagingDatabase.instance.dbInstanceEndpointAddress,
+  repository: ecr.repository, // same ECR repo as production — only the image TAG differs
+  stageName: "staging",
+  imageTag: "staging",
+});
+
 new NettleCiStack(app, "Nettle-CI", {
   env,
   githubRepo: "MariaD137/Nettle",

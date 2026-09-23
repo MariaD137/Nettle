@@ -1,6 +1,6 @@
 # Nettle infra
 
-Five stacks, each scoped to one concern:
+Seven stacks (five production, plus a staging pair mirroring two of them), each scoped to one concern:
 
 - **Nettle-Network** — a VPC. One NAT gateway (not one per AZ) plus
   public/private-egress/isolated subnet tiers, and a Secrets Manager
@@ -27,12 +27,34 @@ Five stacks, each scoped to one concern:
 - **Nettle-CI** — a GitHub OIDC provider + a deploy role scoped to exactly
   one permission set: push images to the Nettle-Ecr repo. No AWS access
   keys are ever stored in GitHub.
+- **Nettle-Database-Staging** / **Nettle-Api-Staging** — a second,
+  independent environment: `NettleDatabaseStack`/`NettleApiStack` (the same
+  classes as `Nettle-Database`/`Nettle-Api`) instantiated a second time with
+  `stageName: "staging"`, sharing `Nettle-Network`'s VPC and `Nettle-Ecr`'s
+  repository but with their own Secrets Manager secrets, App Runner service,
+  and RDS instance — never production's. `Nettle-Api-Staging` tracks the
+  ECR `:staging` tag rather than `:latest` (`imageTag: "staging"`), which is
+  what `.github/workflows/backend-deploy-staging.yml` has been pushing on
+  every merge to `develop` since before this pair existed to consume it —
+  that workflow ran successfully the whole time with nowhere for its output
+  to go; App Runner's `autoDeploymentsEnabled` on `Nettle-Api-Staging`
+  closes that gap the same way it already does for production watching
+  `:latest`. The staging database is `production: false` (1-day backups, no
+  deletion protection, `RemovalPolicy.DESTROY`) — deliberately disposable,
+  unlike `Nettle-Database`. See `lib/api-stack.ts`'s and
+  `lib/database-stack.ts`'s `stageName` prop comments for exactly which
+  physical resource names this affects; verified via `cdk synth` that
+  `Nettle-Api`/`Nettle-Database`'s own templates are byte-for-byte unchanged
+  by this addition (diffed directly against `cdk synth` from before these
+  props existed) — deploying this cannot rename or replace any resource
+  CloudFormation already manages for production.
 
 ## What's validated vs. what isn't
 
 | Checked | How |
 |---|---|
-| All five stacks synthesize to valid CloudFormation | `cdk synth` |
+| All seven stacks synthesize to valid CloudFormation | `cdk synth` |
+| Adding the staging stacks left `Nettle-Api`/`Nettle-Database`'s own templates completely unchanged | Diffed `cdk synth`'s output for both stacks directly against a synth from before the staging stacks/props existed — zero-byte diff |
 | Nettle-Api correctly imports (not re-creates) the ECR repo cross-stack | Inspected the synthesized template's `Fn::ImportValue` reference directly |
 | The database has no public ingress, encrypted, SG-scoped to the API connector only | Inspected the synthesized template's resource properties directly — confirmed `PubliclyAccessible: false`, `StorageEncrypted: true`, ingress rule is a security-group reference, never `0.0.0.0/0` |
 | The RDS password never appears in App Runner's own runtime config, only resolved inside the container | Inspected the synthesized template directly — confirmed `RuntimeEnvironmentVariables` carries no `{{resolve:secretsmanager:...}}` value (previously it did: a composite `DATABASE_URL` built by joining `secretValueFromJson(...).unsafeUnwrap()` calls, which CloudFormation resolves before calling App Runner's API — so the plaintext password ended up stored in App Runner's own service configuration, visible via `DescribeService`/the console to anyone with that read permission, not just to principals with `secretsmanager:GetSecretValue` on the DB secret specifically. Fixed: `DB_USERNAME`/`DB_PASSWORD` now go through `RuntimeEnvironmentSecrets`, the same native ARN-reference mechanism already used correctly for the Stripe secrets, which App Runner resolves only inside the running container and never stores in its own config. `backend/src/db/index.ts`'s `resolveDatabaseUrl()` assembles the real connection string from that plus the plain `DB_HOST`/`DB_PORT`/`DB_NAME` values once the container is running) |
@@ -48,18 +70,35 @@ references), but if you deploy stacks individually, this order matters:
 
 ```
 Nettle-Network  →  Nettle-Database  →  Nettle-Ecr  →  [push an image]  →  Nettle-Api  →  Nettle-CI
+                 →  Nettle-Database-Staging                            →  Nettle-Api-Staging
 ```
 
 **Nettle-Ecr must be deployed, and a real image pushed into it, before
-Nettle-Api is deployed for the first time.** `AWS::AppRunner::Service`
-references the image at `:latest` and CloudFormation waits for the service
-to reach `RUNNING` before the resource is considered created. On a first-ever
-deploy there is no image yet — if the ECR repo and the App Runner service
-were in the same stack (an earlier version of this code had them together),
-the service would fail to pull, CloudFormation would roll back the *entire*
-stack, and it would delete the ECR repo it had just created moments earlier
-along with everything else. Splitting them into separate stacks is what
-breaks that chicken-and-egg — see `lib/ecr-stack.ts`.
+Nettle-Api (or Nettle-Api-Staging) is deployed for the first time.**
+`AWS::AppRunner::Service` references an image tag (`:latest` for
+`Nettle-Api`, `:staging` for `Nettle-Api-Staging`) and CloudFormation waits
+for the service to reach `RUNNING` before the resource is considered
+created. On a first-ever deploy there is no image at either tag yet — if the
+ECR repo and the App Runner service were in the same stack (an earlier
+version of this code had them together), the service would fail to pull,
+CloudFormation would roll back the *entire* stack, and it would delete the
+ECR repo it had just created moments earlier along with everything else.
+Splitting them into separate stacks is what breaks that chicken-and-egg —
+see `lib/ecr-stack.ts`.
+
+**`cdk deploy --all` now deploys the staging pair too** (they're
+unconditionally in `bin/app.ts`, same as every other stack) — this is a
+real behavior change for anyone who has that command memorized from before
+these two stacks existed. To deploy only staging (e.g. after `Nettle-Ecr`
+already exists and a `:staging` image has been pushed):
+
+```
+npx cdk deploy Nettle-Database-Staging Nettle-Api-Staging
+```
+
+Staging is genuinely optional infrastructure — skip both if there's no need
+for a separate pre-production environment yet; nothing else in this app
+depends on them existing.
 
 ## First-time setup
 
@@ -189,14 +228,19 @@ curl -X POST https://<ServiceUrl>/api/auth/signup \
 npx cdk deploy Nettle-CI
 ```
 
-**8. Wire GitHub Actions.** Add these repository variables (Settings →
-Secrets and variables → Actions → Variables):
+**8. Wire GitHub Actions.** `backend-deploy.yml` runs under the `production`
+GitHub Environment and `backend-deploy-staging.yml` under `staging` — add
+the same three repository/environment variables to **both** (Settings →
+Secrets and variables → Actions → Variables; set per-environment if you
+want staging pushing with a narrower role, or as plain repository variables
+to share one set — `Nettle-CI`'s deploy role is already scoped to any ref
+in this repo, so sharing is fine):
 
 | Variable | Value |
 |---|---|
 | `AWS_REGION` | the region you deployed to |
 | `AWS_DEPLOY_ROLE_ARN` | `Nettle-CI` stack's `DeployRoleArn` output |
-| `ECR_REPOSITORY_URI` | `Nettle-Ecr` stack's `RepositoryUri` output |
+| `ECR_REPOSITORY_URI` | `Nettle-Ecr` stack's `RepositoryUri` output (same repo for both — only the image tag differs) |
 
 **9. (Recommended)** Add a `production` GitHub Environment with required
 reviewers, so a push to `main` pauses for approval before it touches AWS —
@@ -204,7 +248,27 @@ reviewers, so a push to `main` pauses for approval before it touches AWS —
 
 From here on, every push to `main` touching `backend/**` builds a new image
 and pushes `:latest` — App Runner's `autoDeploymentsEnabled: true` picks it
-up automatically, no separate deploy step needed.
+up automatically, no separate deploy step needed. Every push to `develop`
+does the same for `:staging`, once step 10 below exists to consume it.
+
+**10. (Optional) Deploy staging** — a second, independent environment (its
+own database, its own App Runner service, its own Stripe-secret slot)
+tracking the `:staging` tag `backend-deploy-staging.yml` already pushes on
+every merge to `develop`:
+
+```bash
+npx cdk deploy Nettle-Database-Staging
+# push a real image tagged :staging into the same ECR repo from step 3
+# before deploying the service, same chicken-and-egg reasoning as step 4 —
+# use the same docker build/tag/push sequence with :staging instead of :latest
+npx cdk deploy Nettle-Api-Staging
+```
+
+Then populate `nettle/application-staging` (step 5's command, with
+`--secret-id nettle/application-staging`) — with Stripe **test-mode** keys,
+never the live keys from step 5. Skip this step entirely if there's no need
+for a separate pre-production environment yet; nothing else here depends on
+it existing.
 
 ## Cost notes (estimates, not sourced pricing — check AWS's current pricing page)
 
@@ -229,6 +293,14 @@ Rough total: **$90-130/month** at low/zero traffic. The two big line items
 requirements (outbound calls to Stripe/git hosts; Semgrep's actual resource
 needs) documented at the point they were added — see `lib/network-stack.ts`
 and `lib/api-stack.ts`.
+
+**If staging is also deployed**, add roughly another **$35-45/month**: a
+second `db.t4g.micro` RDS instance (no NAT gateway or VPC endpoint
+duplication — staging shares `Nettle-Network`) plus a second 1 vCPU/2 GB App
+Runner service at the same sizing as production. Destroy the staging stacks
+(see "Tearing it down") when not actively using them if that cost isn't
+justified yet — unlike production's database, staging's has no retention
+guard, so this is a clean, complete teardown.
 
 ## What's deliberately not here yet
 
@@ -270,16 +342,10 @@ and `lib/api-stack.ts`.
   account is still in the SES sandbox, verify each recipient too, or
   request production access) before trusting this in production. Set
   `EMAIL_FROM_ADDRESS`, `APP_PASSWORD_RESET_URL`, and
-  `APP_ORGANIZATION_INVITE_URL` to enable delivery; the API's own IAM
-  instance role also needs `ses:SendEmail` — not yet added to
-  `lib/api-stack.ts`'s `ApiInstanceRole`, so add that policy statement
-  alongside verifying the sending identity before deploying this.
-- **A working staging deploy target.** `backend-deploy-staging.yml` pushes
-  an image tagged `:staging` to the same ECR repo, but there's only one App
-  Runner service (watching `:latest`) — nothing currently reads that tag. A
-  second, smaller App Runner service (or a second environment's stacks
-  entirely) is needed before that workflow does anything but push an unused
-  image.
+  `APP_ORGANIZATION_INVITE_URL` to enable delivery — the API's own IAM
+  instance role already grants `ses:SendEmail`/`ses:SendRawEmail`
+  (`ApiInstanceRole` in `lib/api-stack.ts`), scoped to this account/region's
+  identities.
 - **Cognito.** Auth is real (email/password, scrypt-hashed, hashed opaque
   session tokens, rate-limited) but hand-rolled rather than Cognito-backed —
   revisit if there's a concrete reason (social login, enterprise SSO) to
@@ -295,6 +361,16 @@ and `lib/api-stack.ts`.
 
 ```bash
 npx cdk destroy Nettle-CI Nettle-Api Nettle-Ecr Nettle-Database Nettle-Network
+```
+
+If the staging pair was deployed, tear it down first (no dependents, so
+order relative to the above doesn't matter) — unlike `Nettle-Database`, it
+has no `RemovalPolicy.RETAIN`/deletion protection, so this actually deletes
+the staging database along with the stack, as intended for disposable
+infrastructure:
+
+```bash
+npx cdk destroy Nettle-Api-Staging Nettle-Database-Staging
 ```
 
 `Nettle-Database` has `RemovalPolicy.RETAIN` and deletion protection on in

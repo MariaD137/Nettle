@@ -20,6 +20,29 @@ export interface NettleApiStackProps extends StackProps {
    * attempt as the service that reads from it.
    */
   repository: IRepository;
+  /**
+   * Set to deploy a second, independent environment (e.g. "staging") off
+   * this same stack definition rather than duplicating it. Left undefined,
+   * every physical resource name below is IDENTICAL to what this stack
+   * created before this parameter existed — the production instantiation in
+   * bin/app.ts omits it deliberately, so this change cannot rename/replace
+   * any resource CloudFormation already manages for production. When set,
+   * it suffixes the handful of physical names that must be unique
+   * account-wide (Secrets Manager secret name, VPC connector name, App
+   * Runner service name) so a second instantiation of this stack doesn't
+   * collide with the first.
+   */
+  stageName?: string;
+  /**
+   * Which ECR image tag this service tracks. Defaults to "latest" (what
+   * production has always used — see backend-deploy.yml, which pushes
+   * :latest and relies on autoDeploymentsEnabled below to pick it up).
+   * A staging instantiation passes "staging" to track the tag
+   * backend-deploy-staging.yml already pushes on every merge to `develop`
+   * (that workflow has pushed :staging since before this stack existed to
+   * consume it — see that file's history).
+   */
+  imageTag?: string;
 }
 
 /**
@@ -52,6 +75,13 @@ export class NettleApiStack extends Stack {
     super(scope, id, props);
 
     const repository = props.repository;
+    // Every physical name below that must be unique account-wide gets this
+    // suffix — "" for the production instantiation (props.stageName
+    // omitted), so production's resource names are byte-for-byte identical
+    // to what they were before stageName existed. See the prop's own
+    // comment on why that matters.
+    const suffix = props.stageName ? `-${props.stageName}` : "";
+    const imageTag = props.imageTag ?? "latest";
 
     /**
      * Application secrets, as opposed to the database credentials RDS
@@ -63,8 +93,14 @@ export class NettleApiStack extends Stack {
      *
      * Populate with:
      *   aws secretsmanager put-secret-value \
-     *     --secret-id nettle/application \
+     *     --secret-id nettle/application{suffix} \
      *     --secret-string '{"STRIPE_SECRET_KEY":"...", ...}'
+     *
+     * A staging instantiation gets its OWN secret (nettle/application-staging),
+     * never the production one — staging is meant to be populated with
+     * Stripe test-mode keys, and sharing the production secret would mean a
+     * staging deploy either can't be configured independently or, worse,
+     * ends up pointed at live Stripe keys.
      *
      * secretObjectValue below gives the secret real JSON structure at
      * creation, with placeholder (non-functional) values — not just
@@ -80,7 +116,7 @@ export class NettleApiStack extends Stack {
      * exactly the failure this comment exists to prevent recurring.
      */
     const appSecret = new Secret(this, "ApplicationSecret", {
-      secretName: "nettle/application",
+      secretName: `nettle/application${suffix}`,
       description:
         "Nettle application secrets. Keys: STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET, " +
         "STRIPE_PRICE_BUILD, STRIPE_PRICE_PROTECT. Populate out of band; never in source control.",
@@ -130,20 +166,31 @@ export class NettleApiStack extends Stack {
       // to Stripe and the git hosts through the NAT gateway.
       subnets: props.vpc.selectSubnets({ subnetType: SubnetType.PRIVATE_WITH_EGRESS }).subnetIds,
       securityGroups: [props.connectorSecurityGroup.securityGroupId],
-      vpcConnectorName: "nettle-api-connector",
+      vpcConnectorName: `nettle-api-connector${suffix}`,
     });
 
     const service = new CfnService(this, "ApiService", {
-      serviceName: "nettle-api",
+      serviceName: `nettle-api${suffix}`,
       sourceConfiguration: {
         autoDeploymentsEnabled: true,
         authenticationConfiguration: { accessRoleArn: ecrAccessRole.roleArn },
         imageRepository: {
-          imageIdentifier: `${repository.repositoryUri}:latest`,
+          // imageTag defaults to "latest" (production, unchanged). A staging
+          // instantiation passes "staging" — this is what makes the service
+          // actually watch the tag backend-deploy-staging.yml has been
+          // pushing on every merge to `develop`, closing the gap where that
+          // workflow ran but nothing ever consumed its output.
+          imageIdentifier: `${repository.repositoryUri}:${imageTag}`,
           imageRepositoryType: "ECR",
           imageConfiguration: {
             port: "8080",
             runtimeEnvironmentVariables: [
+              // NODE_ENV stays "production" even for staging — this is the
+              // app's own operating mode (which guards its startup requires,
+              // e.g. db/index.ts's DATABASE_URL check), not an indicator of
+              // which physical environment it's running in. Staging should
+              // behave like production code, against a separate database
+              // and separate Stripe test-mode keys.
               { name: "NODE_ENV", value: "production" },
               { name: "PORT", value: "8080" },
               // Non-sensitive connection parts only. The credentials

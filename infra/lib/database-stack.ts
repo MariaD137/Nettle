@@ -25,6 +25,16 @@ export interface NettleDatabaseStackProps extends StackProps {
    * retention window is wanted.
    */
   backupRetentionDays?: number;
+  /**
+   * Set to deploy a second, independent database (e.g. "staging") from this
+   * same stack definition. Left undefined, the generated credentials
+   * secret's name is unchanged from before this parameter existed — see
+   * api-stack.ts's identical stageName prop for why that matters. Only
+   * affects the secret name; databaseName ("nettle") is intentionally the
+   * same in every environment; it's scoped by which physical RDS instance
+   * it lives in, not by name.
+   */
+  stageName?: string;
 }
 
 /**
@@ -87,7 +97,7 @@ export class NettleDatabaseStack extends Stack {
       // source, in CloudFormation parameters, or in any environment file. The
       // password is not knowable from the repository.
       credentials: Credentials.fromGeneratedSecret("nettle_app", {
-        secretName: "nettle/database/credentials",
+        secretName: `nettle/database/credentials${props.stageName ? `-${props.stageName}` : ""}`,
       }),
 
       allocatedStorage: 20,
