@@ -16,7 +16,8 @@ export type FindingCategory =
   | "Session Management"
   | "Payment Security"
   | "CI/CD Security"
-  | "Multi-Tenant Security";
+  | "Multi-Tenant Security"
+  | "Cloud Security";
 
 export type CheckStatus = "PASS" | "FAIL" | "NOT_VERIFIED";
 
