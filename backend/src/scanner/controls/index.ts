@@ -44,6 +44,7 @@ import "./library/cicdSecurity";
 import "./library/multiTenantSecurity";
 import "./library/cloudSecurity";
 import "./library/aiCodeReview";
+import "./library/supplyChain";
 
 export { getControl, listControls, listControlsByCategory, getControlLibraryVersion, getControlVersionsSnapshot } from "./registry";
 export { hydrateCheckResult, hydrateCheckResults, type HydratedFinding } from "./hydrate";
