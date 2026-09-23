@@ -13,7 +13,8 @@ export type FindingCategory =
   | "Frontend Security"
   | "Code Quality"
   | "Supply Chain"
-  | "Session Management";
+  | "Session Management"
+  | "Payment Security";
 
 export type CheckStatus = "PASS" | "FAIL" | "NOT_VERIFIED";
 
