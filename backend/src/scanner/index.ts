@@ -36,9 +36,10 @@ import { scanCodeQualityControl } from "./controls/checks/codeQualityControl";
 import { scanFrontendSecurityControl } from "./controls/checks/frontendSecurityControl";
 import { scanPaymentSecurityControl } from "./controls/checks/paymentSecurityControl";
 import { scanCicdSecurityControl } from "./controls/checks/cicdSecurityControl";
+import { scanMultiTenantSecurityControl } from "./controls/checks/multiTenantSecurityControl";
 import { detectFrameworks } from "./frameworkDetection";
 import { mapFrameworkToTechnology } from "./controls/technologyMap";
-import "./controls"; // registers the control library (AUTH-001..008, SECRET-001..002, API-001..006, DB-001..003, BROWSER-001, CRYPTO-001, AI-001..005, INPUT-001..004, NET-001, DEPS-001, LEGAL-001..004, OSV-001, CQ-001..007, FE-001..004, PAY-001..004, CICD-001..003, ...)
+import "./controls"; // registers the control library (AUTH-001..008, SECRET-001..002, API-001..006, DB-001..003, BROWSER-001, CRYPTO-001, AI-001..005, INPUT-001..004, NET-001, DEPS-001, LEGAL-001..004, OSV-001, CQ-001..007, FE-001..004, PAY-001..004, CICD-001..003, MT-001..002, ...)
 import { getControlLibraryVersion, getControlVersionsSnapshot } from "./controls";
 import { SCANNER_VERSION, type CheckResult, type Finding, type Pass, type ScanReport } from "./types";
 import { getSemgrepVersion } from "./initialization";
@@ -91,6 +92,7 @@ export function runScan(targetPath: string): ScanReport {
     ...scanFrontendSecurityControl(files, targetRoot),
     ...scanPaymentSecurityControl(files, targetRoot),
     ...scanCicdSecurityControl(files, targetRoot),
+    ...scanMultiTenantSecurityControl(files, targetRoot),
   ];
 
   // Every legacy Finding/Pass-shaped scanner module (apiSecurity.ts,
