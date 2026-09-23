@@ -1,6 +1,9 @@
 export interface Project {
   id: string;
   userId: string;
+  /** Set only when this project was created under an organization (Phase D
+   *  scoped MVP) — null for an ordinary personal project. */
+  organizationId: string | null;
   name: string;
   apiKey: string;
   url: string | null;

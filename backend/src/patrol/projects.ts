@@ -4,6 +4,7 @@ import type { Project } from "./types";
 interface ProjectRow {
   id: string;
   user_id: string;
+  organization_id: string | null;
   name: string;
   api_key: string;
   url: string | null;
@@ -17,6 +18,7 @@ function toProject(row: ProjectRow): Project {
   return {
     id: row.id,
     userId: row.user_id,
+    organizationId: row.organization_id ?? null,
     name: row.name,
     apiKey: row.api_key,
     url: row.url ?? null,
@@ -27,10 +29,11 @@ function toProject(row: ProjectRow): Project {
   };
 }
 
-export async function createProject(userId: string, name: string, opts?: { url?: string; description?: string; environment?: string }): Promise<Project> {
+export async function createProject(userId: string, name: string, opts?: { url?: string; description?: string; environment?: string; organizationId?: string }): Promise<Project> {
   const project: Project = {
     id: newId(),
     userId,
+    organizationId: opts?.organizationId ?? null,
     name,
     apiKey: newApiKey(),
     url: opts?.url ?? null,
@@ -39,7 +42,10 @@ export async function createProject(userId: string, name: string, opts?: { url?:
     archivedAt: null,
     createdAt: new Date().toISOString(),
   };
-  await db.run("INSERT INTO projects (id, user_id, name, api_key, url, description, environment, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", [project.id, project.userId, project.name, project.apiKey, project.url, project.description, project.environment, project.createdAt]);
+  await db.run(
+    "INSERT INTO projects (id, user_id, organization_id, name, api_key, url, description, environment, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    [project.id, project.userId, project.organizationId, project.name, project.apiKey, project.url, project.description, project.environment, project.createdAt]
+  );
   return project;
 }
 
@@ -94,6 +100,35 @@ export async function listProjectsByUser(userId: string, includeArchived = false
     : "SELECT * FROM projects WHERE user_id = ? AND archived_at IS NULL ORDER BY created_at DESC";
   const rows = await db.all(sql, [userId]) as unknown as ProjectRow[];
   return rows.map(toProject);
+}
+
+/**
+ * Every project a user can see: their own personal projects (organization_id
+ * IS NULL), plus every project belonging to an organization they're
+ * currently a member of — regardless of which member created it, and
+ * governed by current membership, not who happened to create it (removed
+ * from the org means the project drops out of this list too).
+ */
+export async function listAccessibleProjects(userId: string, includeArchived = false): Promise<Project[]> {
+  const archivedClause = includeArchived ? "" : "AND archived_at IS NULL";
+  const sql = `
+    SELECT * FROM projects
+    WHERE (
+      (user_id = ? AND organization_id IS NULL)
+      OR organization_id IN (SELECT organization_id FROM organization_members WHERE user_id = ?)
+    )
+    ${archivedClause}
+    ORDER BY created_at DESC
+  `;
+  const rows = await db.all(sql, [userId, userId]) as unknown as ProjectRow[];
+  return rows.map(toProject);
+}
+
+/** True when userId has access to this project — either as its personal owner, or as a member of the organization it belongs to. */
+export async function canAccessProject(userId: string, project: Project): Promise<boolean> {
+  if (project.organizationId === null) return project.userId === userId;
+  const row = await db.get("SELECT 1 AS present FROM organization_members WHERE organization_id = ? AND user_id = ?", [project.organizationId, userId]);
+  return !!row;
 }
 
 export async function countProjectsByUser(userId: string): Promise<number> {

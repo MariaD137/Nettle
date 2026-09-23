@@ -1,5 +1,6 @@
 import { Router } from "express";
-import { createProject, getProject, listProjectsByUser, updateProject, deleteProject, archiveProject, restoreProject, rotateApiKey, countProjectsByUser } from "../patrol/projects";
+import { createProject, getProject, listAccessibleProjects, updateProject, deleteProject, archiveProject, restoreProject, rotateApiKey, countProjectsByUser, canAccessProject } from "../patrol/projects";
+import { isMember } from "../organizations/organizations";
 import { listAlerts, getAlert, updateAlertStatus, countAlertsByStatus, createAlert, hasRecentAlert } from "../patrol/alerts";
 import { listScans, getLatestScan, type StoredScan } from "../patrol/scans";
 import { computeBadgeState } from "../patrol/badge";
@@ -71,6 +72,14 @@ projectsRouter.post("/api/projects", ...paywalled, async (req, res) => {
     return res.status(400).json({ error: "Provide a project 'name'" });
   }
 
+  const organizationId = typeof req.body?.organizationId === "string" ? req.body.organizationId : undefined;
+  if (organizationId && !(await isMember(organizationId, req.userId!))) {
+    return res.status(403).json({ error: "You are not a member of that organization" });
+  }
+
+  // Plan limits stay per-user even for an org project (Phase D scoped MVP
+  // doesn't move billing to the organization) — the creating user's own
+  // plan/count is what's checked, same as a personal project.
   const user = req as any;
   const limit = PLAN_LIMITS[user.userPlan ?? "free"] ?? 3;
   const count = await countProjectsByUser(req.userId!);
@@ -82,18 +91,27 @@ projectsRouter.post("/api/projects", ...paywalled, async (req, res) => {
     url: typeof req.body?.url === "string" ? req.body.url.trim() : undefined,
     description: typeof req.body?.description === "string" ? req.body.description.trim() : undefined,
     environment: typeof req.body?.environment === "string" ? req.body.environment : undefined,
+    organizationId,
   });
   res.status(201).json(project);
 });
 
 projectsRouter.get("/api/projects", ...paywalled, async (req, res) => {
   const includeArchived = req.query.includeArchived === "true";
-  res.json({ projects: await listProjectsByUser(req.userId!, includeArchived) });
+  res.json({ projects: await listAccessibleProjects(req.userId!, includeArchived) });
 });
 
-async function ownedProjectOr404(req: import("express").Request, res: import("express").Response) {
+/**
+ * Accessible, not "owned": a project reachable either because the caller
+ * owns it personally, or because they're a member of the organization it
+ * belongs to (see canAccessProject). Still a 404, not 403, for a project
+ * that exists but the caller can't reach — same reasoning as before this
+ * became org-aware: don't confirm the id exists to someone with no
+ * relationship to it.
+ */
+async function accessibleProjectOr404(req: import("express").Request, res: import("express").Response) {
   const project = await getProject(req.params.id);
-  if (!project || project.userId !== req.userId) {
+  if (!project || !(await canAccessProject(req.userId!, project))) {
     res.status(404).json({ error: "Project not found" });
     return null;
   }
@@ -101,7 +119,7 @@ async function ownedProjectOr404(req: import("express").Request, res: import("ex
 }
 
 projectsRouter.get("/api/projects/:id", ...paywalled, async (req, res) => {
-  const project = await ownedProjectOr404(req, res);
+  const project = await accessibleProjectOr404(req, res);
   if (!project) return;
   const badge = await computeBadgeState(project.id);
   const latestScan = hydrateStoredScan(await getLatestScan(project.id));
@@ -110,7 +128,7 @@ projectsRouter.get("/api/projects/:id", ...paywalled, async (req, res) => {
 });
 
 projectsRouter.patch("/api/projects/:id", ...paywalled, async (req, res) => {
-  const project = await ownedProjectOr404(req, res);
+  const project = await accessibleProjectOr404(req, res);
   if (!project) return;
   const updates: Record<string, string | undefined> = {};
   if (typeof req.body?.name === "string") updates.name = req.body.name.trim();
@@ -122,41 +140,41 @@ projectsRouter.patch("/api/projects/:id", ...paywalled, async (req, res) => {
 });
 
 projectsRouter.delete("/api/projects/:id", ...paywalled, async (req, res) => {
-  const project = await ownedProjectOr404(req, res);
+  const project = await accessibleProjectOr404(req, res);
   if (!project) return;
   await deleteProject(project.id);
   res.status(204).end();
 });
 
 projectsRouter.post("/api/projects/:id/archive", ...paywalled, async (req, res) => {
-  const project = await ownedProjectOr404(req, res);
+  const project = await accessibleProjectOr404(req, res);
   if (!project) return;
   const archived = await archiveProject(project.id);
   res.json(archived);
 });
 
 projectsRouter.post("/api/projects/:id/restore", ...paywalled, async (req, res) => {
-  const project = await ownedProjectOr404(req, res);
+  const project = await accessibleProjectOr404(req, res);
   if (!project) return;
   const restored = await restoreProject(project.id);
   res.json(restored);
 });
 
 projectsRouter.post("/api/projects/:id/rotate-key", ...paywalled, async (req, res) => {
-  const project = await ownedProjectOr404(req, res);
+  const project = await accessibleProjectOr404(req, res);
   if (!project) return;
   const updated = await rotateApiKey(project.id);
   res.json(updated);
 });
 
 projectsRouter.get("/api/projects/:id/alerts", ...paywalled, async (req, res) => {
-  const project = await ownedProjectOr404(req, res);
+  const project = await accessibleProjectOr404(req, res);
   if (!project) return;
   res.json({ project: { id: project.id, name: project.name }, alerts: await listAlerts(project.id) });
 });
 
 projectsRouter.patch("/api/projects/:id/alerts/:alertId", ...paywalled, async (req, res) => {
-  const project = await ownedProjectOr404(req, res);
+  const project = await accessibleProjectOr404(req, res);
   if (!project) return;
 
   const alert = await getAlert(req.params.alertId);
@@ -174,7 +192,7 @@ projectsRouter.patch("/api/projects/:id/alerts/:alertId", ...paywalled, async (r
 });
 
 projectsRouter.get("/api/projects/:id/scans", ...paywalled, async (req, res) => {
-  const project = await ownedProjectOr404(req, res);
+  const project = await accessibleProjectOr404(req, res);
   if (!project) return;
   const scans = (await listScans(project.id)).map(hydrateStoredScan) as StoredScan[];
   res.json({ project: { id: project.id, name: project.name }, scans });
@@ -196,7 +214,7 @@ function hydrateComparisonList(list: ComparisonFinding[], detectedTechnology: st
 }
 
 projectsRouter.get("/api/projects/:id/scans/compare", ...paywalled, async (req, res) => {
-  const project = await ownedProjectOr404(req, res);
+  const project = await accessibleProjectOr404(req, res);
   if (!project) return;
   // listScans is already project-scoped (§21): a from/to id belonging to
   // another project simply won't be found in this array, so compareScans
@@ -247,14 +265,14 @@ projectsRouter.get("/api/projects/:id/scans/compare", ...paywalled, async (req, 
 });
 
 projectsRouter.get("/api/projects/:id/findings", ...paywalled, async (req, res) => {
-  const project = await ownedProjectOr404(req, res);
+  const project = await accessibleProjectOr404(req, res);
   if (!project) return;
   const statuses = await listFindingStatuses(project.id);
   res.json({ findingStatuses: statuses });
 });
 
 projectsRouter.patch("/api/projects/:id/findings/:findingHash", ...paywalled, async (req, res) => {
-  const project = await ownedProjectOr404(req, res);
+  const project = await accessibleProjectOr404(req, res);
   if (!project) return;
   const status = req.body?.status as FindingStatus;
   const validStatuses: FindingStatus[] = ["open", "in_progress", "resolved", "false_positive", "accepted_risk"];
@@ -267,7 +285,7 @@ projectsRouter.patch("/api/projects/:id/findings/:findingHash", ...paywalled, as
 });
 
 projectsRouter.get("/api/projects/:id/scans/:scanId/export", ...paywalled, async (req, res) => {
-  const project = await ownedProjectOr404(req, res);
+  const project = await accessibleProjectOr404(req, res);
   if (!project) return;
   const scans = await listScans(project.id);
   const scan = scans.find((s) => s.id === req.params.scanId);
@@ -279,7 +297,7 @@ projectsRouter.get("/api/projects/:id/scans/:scanId/export", ...paywalled, async
 });
 
 projectsRouter.get("/api/overview", ...paywalled, async (req, res) => {
-  const projects = await listProjectsByUser(req.userId!);
+  const projects = await listAccessibleProjects(req.userId!);
 
   let totalCritical = 0;
   let totalHigh = 0;

@@ -4,6 +4,7 @@ import express, { type NextFunction, type Request, type Response } from "express
 import { healthRouter } from "./routes/health.routes";
 import { scansRouter } from "./routes/scans.routes";
 import { projectsRouter } from "./routes/projects.routes";
+import { organizationsRouter } from "./routes/organizations.routes";
 import { eventsRouter } from "./routes/events.routes";
 import { authRouter } from "./routes/auth.routes";
 import { badgeRouter } from "./routes/badge.routes";
@@ -92,6 +93,7 @@ app.use(express.json());
 app.use(healthRouter);
 app.use(scansRouter);
 app.use(projectsRouter);
+app.use(organizationsRouter);
 app.use(eventsRouter);
 app.use(authRouter);
 app.use(badgeRouter);
