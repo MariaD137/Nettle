@@ -28,6 +28,9 @@ import "./library/refreshTokenRotation";
 import "./library/sessionStore";
 import "./library/sessionExpiration";
 import "./library/logoutInvalidation";
+import "./library/aiCostLimits";
+import "./library/aiToolExecution";
+import "./library/aiOutputValidation";
 
 export { getControl, listControls, listControlsByCategory, getControlLibraryVersion, getControlVersionsSnapshot } from "./registry";
 export { hydrateCheckResult, hydrateCheckResults, type HydratedFinding } from "./hydrate";
