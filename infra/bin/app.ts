@@ -4,6 +4,7 @@ import { NettleNetworkStack } from "../lib/network-stack";
 import { NettleDatabaseStack } from "../lib/database-stack";
 import { NettleEcrStack } from "../lib/ecr-stack";
 import { NettleApiStack } from "../lib/api-stack";
+import { NettleFrontendStack } from "../lib/frontend-stack";
 import { NettleCiStack } from "../lib/ci-stack";
 
 const app = new App();
@@ -78,6 +79,15 @@ new NettleApiStack(app, "Nettle-Api-Staging", {
   imageTag: "staging",
 });
 
+// S3 + CloudFront hosting for frontend/'s Vite build. Depends on Nettle-Api
+// only for its serviceUrl (allowed through the CSP's connect-src — see
+// frontend-stack.ts) — no other coupling, and its own deploy/teardown is
+// otherwise fully independent of the API.
+const frontend = new NettleFrontendStack(app, "Nettle-Frontend", {
+  env,
+  apiOrigin: `https://${api.serviceUrl}`,
+});
+
 new NettleCiStack(app, "Nettle-CI", {
   env,
   githubRepo: "MariaD137/Nettle",
@@ -86,4 +96,6 @@ new NettleCiStack(app, "Nettle-CI", {
   // has been deployed yet, and this keeps that permission from being
   // entangled with the service's own deploy order.
   ecrRepositoryArn: ecr.repository.repositoryArn,
+  frontendBucketArn: frontend.bucket.bucketArn,
+  frontendDistributionId: frontend.distribution.distributionId,
 });

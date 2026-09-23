@@ -1,6 +1,6 @@
 # Nettle infra
 
-Seven stacks (five production, plus a staging pair mirroring two of them), each scoped to one concern:
+Eight stacks (six production, plus a staging pair mirroring two of them), each scoped to one concern:
 
 - **Nettle-Network** — a VPC. One NAT gateway (not one per AZ) plus
   public/private-egress/isolated subnet tiers, and a Secrets Manager
@@ -24,8 +24,25 @@ Seven stacks (five production, plus a staging pair mirroring two of them), each 
   secrets injected via Secrets Manager (`runtimeEnvironmentSecrets` —
   resolved by App Runner at start-up, never rendered into the template or a
   log line).
+- **Nettle-Frontend** — static hosting for `frontend/`'s Vite build: a
+  private S3 bucket (all public access blocked, HTTPS-only bucket policy)
+  behind a CloudFront distribution using Origin Access Control, never a
+  public bucket or S3 website endpoint. SPA client-side routing (403/404 →
+  `/index.html` with an explicit 200) and a strict `ResponseHeadersPolicy`
+  (CSP with no `unsafe-inline`/`unsafe-eval` — the Vite build emits no
+  inline script/style at all — HSTS, `X-Content-Type-Options: nosniff`,
+  `X-Frame-Options: DENY`, `Referrer-Policy`). The CSP's `connect-src`
+  references `Nettle-Api`'s live `ServiceUrl` via a cross-stack import, so
+  it's never out of sync with where the API actually is. Deliberately does
+  NOT bundle `frontend/dist` into the stack as a CDK asset — same
+  out-of-band-build shape as the backend (see `frontend-deploy.yml`) rather
+  than requiring a CDK deploy for every frontend change. No custom
+  domain/ACM certificate here — that needs a real domain and DNS control
+  this sandbox doesn't have; the distribution's own `*.cloudfront.net`
+  domain works as-is, or add a domain later (see that section below).
 - **Nettle-CI** — a GitHub OIDC provider + a deploy role scoped to exactly
-  one permission set: push images to the Nettle-Ecr repo. No AWS access
+  what this repo's deploy workflows do: push images to the Nettle-Ecr repo,
+  and sync/invalidate the Nettle-Frontend bucket/distribution. No AWS access
   keys are ever stored in GitHub.
 - **Nettle-Database-Staging** / **Nettle-Api-Staging** — a second,
   independent environment: `NettleDatabaseStack`/`NettleApiStack` (the same
@@ -53,8 +70,11 @@ Seven stacks (five production, plus a staging pair mirroring two of them), each 
 
 | Checked | How |
 |---|---|
-| All seven stacks synthesize to valid CloudFormation | `cdk synth` |
+| All eight stacks synthesize to valid CloudFormation | `cdk synth` |
 | Adding the staging stacks left `Nettle-Api`/`Nettle-Database`'s own templates completely unchanged | Diffed `cdk synth`'s output for both stacks directly against a synth from before the staging stacks/props existed — zero-byte diff |
+| Adding `Nettle-Frontend` left `Nettle-Database` unchanged and added exactly one thing to `Nettle-Api` — a new CloudFormation `Export` of the App Runner service's `ServiceUrl`, for `Nettle-Frontend`'s cross-stack CSP reference | Diffed both templates directly against a synth from before `Nettle-Frontend` existed — `Nettle-Database` zero-byte diff; `Nettle-Api`'s diff is purely additive (a new `Outputs` entry), no existing resource modified or replaced |
+| `Nettle-Frontend`'s bucket has all public access blocked, is reachable only via the one CloudFront distribution (Origin Access Control, `AWS:SourceArn` condition scoped to that exact distribution id), and denies any non-HTTPS request | Inspected the synthesized bucket policy directly — confirmed `PublicAccessBlockConfiguration` blocks all four dimensions, the `s3:GetObject` grant's principal is `cloudfront.amazonaws.com` conditioned on this distribution's ARN specifically (not any CloudFront distribution), and a separate statement denies `s3:*` account-wide when `aws:SecureTransport` is false |
+| `Nettle-Frontend`'s CSP has no `unsafe-inline`/`unsafe-eval` | Inspected `frontend/dist/index.html` directly — the Vite build emits zero inline `<script>`/`<style>`, every asset is external, same-origin, and hashed |
 | Nettle-Api correctly imports (not re-creates) the ECR repo cross-stack | Inspected the synthesized template's `Fn::ImportValue` reference directly |
 | The database has no public ingress, encrypted, SG-scoped to the API connector only | Inspected the synthesized template's resource properties directly — confirmed `PubliclyAccessible: false`, `StorageEncrypted: true`, ingress rule is a security-group reference, never `0.0.0.0/0` |
 | The RDS password never appears in App Runner's own runtime config, only resolved inside the container | Inspected the synthesized template directly — confirmed `RuntimeEnvironmentVariables` carries no `{{resolve:secretsmanager:...}}` value (previously it did: a composite `DATABASE_URL` built by joining `secretValueFromJson(...).unsafeUnwrap()` calls, which CloudFormation resolves before calling App Runner's API — so the plaintext password ended up stored in App Runner's own service configuration, visible via `DescribeService`/the console to anyone with that read permission, not just to principals with `secretsmanager:GetSecretValue` on the DB secret specifically. Fixed: `DB_USERNAME`/`DB_PASSWORD` now go through `RuntimeEnvironmentSecrets`, the same native ARN-reference mechanism already used correctly for the Stripe secrets, which App Runner resolves only inside the running container and never stores in its own config. `backend/src/db/index.ts`'s `resolveDatabaseUrl()` assembles the real connection string from that plus the plain `DB_HOST`/`DB_PORT`/`DB_NAME` values once the container is running) |
@@ -69,9 +89,14 @@ dependency graph correctly (CDK topologically sorts by cross-stack
 references), but if you deploy stacks individually, this order matters:
 
 ```
-Nettle-Network  →  Nettle-Database  →  Nettle-Ecr  →  [push an image]  →  Nettle-Api  →  Nettle-CI
+Nettle-Network  →  Nettle-Database  →  Nettle-Ecr  →  [push an image]  →  Nettle-Api  →  Nettle-Frontend  →  Nettle-CI
                  →  Nettle-Database-Staging                            →  Nettle-Api-Staging
 ```
+
+`Nettle-Frontend` depends on `Nettle-Api` (its CSP imports `Nettle-Api`'s
+`ServiceUrl` — see that stack's own comment) but not on anything else;
+`Nettle-CI` depends on `Nettle-Ecr` and `Nettle-Frontend` (it grants its
+deploy role permissions scoped to both).
 
 **Nettle-Ecr must be deployed, and a real image pushed into it, before
 Nettle-Api (or Nettle-Api-Staging) is deployed for the first time.**
@@ -222,36 +247,55 @@ curl -X POST https://<ServiceUrl>/api/auth/signup \
   -d '{"email":"you@example.com","password":"a real passphrase here"}'
 ```
 
-**7. Deploy CI:**
+**7. Deploy the frontend bucket/distribution:**
+
+```bash
+npx cdk deploy Nettle-Frontend
+```
+
+Note the `BucketName` and `DistributionId` outputs — `frontend-deploy.yml`
+needs both (step 9). This creates the distribution itself but does not put
+anything in the bucket yet; until the first `frontend-deploy.yml` run, the
+distribution serves an empty bucket (a 403→index.html fallback with nothing
+at `/index.html` either — a blank error page, not a security problem,
+just not useful yet).
+
+**8. Deploy CI:**
 
 ```bash
 npx cdk deploy Nettle-CI
 ```
 
-**8. Wire GitHub Actions.** `backend-deploy.yml` runs under the `production`
-GitHub Environment and `backend-deploy-staging.yml` under `staging` — add
-the same three repository/environment variables to **both** (Settings →
+**9. Wire GitHub Actions.** `backend-deploy.yml`/`frontend-deploy.yml` run
+under the `production` GitHub Environment and `backend-deploy-staging.yml`
+under `staging` — add these repository/environment variables (Settings →
 Secrets and variables → Actions → Variables; set per-environment if you
 want staging pushing with a narrower role, or as plain repository variables
 to share one set — `Nettle-CI`'s deploy role is already scoped to any ref
 in this repo, so sharing is fine):
 
-| Variable | Value |
-|---|---|
-| `AWS_REGION` | the region you deployed to |
-| `AWS_DEPLOY_ROLE_ARN` | `Nettle-CI` stack's `DeployRoleArn` output |
-| `ECR_REPOSITORY_URI` | `Nettle-Ecr` stack's `RepositoryUri` output (same repo for both — only the image tag differs) |
+| Variable | Used by | Value |
+|---|---|---|
+| `AWS_REGION` | all three workflows | the region you deployed to |
+| `AWS_DEPLOY_ROLE_ARN` | all three workflows | `Nettle-CI` stack's `DeployRoleArn` output |
+| `ECR_REPOSITORY_URI` | backend workflows | `Nettle-Ecr` stack's `RepositoryUri` output (same repo for both — only the image tag differs) |
+| `FRONTEND_BUCKET_NAME` | `frontend-deploy.yml` | `Nettle-Frontend` stack's `BucketName` output |
+| `FRONTEND_DISTRIBUTION_ID` | `frontend-deploy.yml` | `Nettle-Frontend` stack's `DistributionId` output |
+| `API_BASE_URL` | `frontend-deploy.yml` | `Nettle-Api` stack's `ServiceUrl` output — baked into the Vite build at build time (`VITE_API_BASE_URL`), not read at runtime |
 
-**9. (Recommended)** Add a `production` GitHub Environment with required
+**10. (Recommended)** Add a `production` GitHub Environment with required
 reviewers, so a push to `main` pauses for approval before it touches AWS —
-`backend-deploy.yml` already targets the `production` environment.
+`backend-deploy.yml`/`frontend-deploy.yml` already target the `production`
+environment.
 
 From here on, every push to `main` touching `backend/**` builds a new image
 and pushes `:latest` — App Runner's `autoDeploymentsEnabled: true` picks it
-up automatically, no separate deploy step needed. Every push to `develop`
-does the same for `:staging`, once step 10 below exists to consume it.
+up automatically, no separate deploy step needed. A push to `main` touching
+`frontend/**` builds and syncs the SPA into the bucket, then invalidates
+`/index.html`. Every push to `develop` does the backend's equivalent for
+`:staging`, once step 11 below exists to consume it.
 
-**10. (Optional) Deploy staging** — a second, independent environment (its
+**11. (Optional) Deploy staging** — a second, independent environment (its
 own database, its own App Runner service, its own Stripe-secret slot)
 tracking the `:staging` tag `backend-deploy-staging.yml` already pushes on
 every merge to `develop`:
@@ -268,7 +312,12 @@ Then populate `nettle/application-staging` (step 5's command, with
 `--secret-id nettle/application-staging`) — with Stripe **test-mode** keys,
 never the live keys from step 5. Skip this step entirely if there's no need
 for a separate pre-production environment yet; nothing else here depends on
-it existing.
+it existing. There is no separate staging frontend target — `Nettle-Frontend`
+is a single production distribution; the frontend is a static SPA with no
+server-side state, so a staging frontend build (pointed at
+`Nettle-Api-Staging`'s URL via `VITE_API_BASE_URL`) can be served from any
+static host (even just `npx serve dist` locally) without needing its own
+CDK-managed S3/CloudFront stack.
 
 ## Cost notes (estimates, not sourced pricing — check AWS's current pricing page)
 
@@ -287,6 +336,11 @@ real recurring costs:
   what one large scan needs.
 - ECR image storage, Secrets Manager, the VPC endpoint, IAM, the OIDC
   provider: a few dollars/month combined at most.
+- **S3 + CloudFront (`Nettle-Frontend`)**: at low/zero traffic, effectively
+  a few cents to a dollar or two/month — S3 storage for a few MB of static
+  assets, CloudFront's free tier (1 TB/month egress, 10M requests) covers
+  most early usage entirely. Scales with actual visitor traffic, unlike the
+  fixed NAT/App Runner/RDS costs above.
 
 Rough total: **$90-130/month** at low/zero traffic. The two big line items
 (NAT, App Runner sizing) are both direct consequences of real product
@@ -326,10 +380,18 @@ guard, so this is a clean, complete teardown.
   cleanup job (EventBridge Scheduler → Lambda/ECS task, matching the
   reasoning in `../docs/DATABASE.md`'s rate-limit-table section, which
   explains why *that* table doesn't need one) is still open.
-- **A frontend deployment.** `frontend/` is real and browser-tested, but
-  isn't part of this CDK app yet — needs its own static hosting
-  (S3+CloudFront) and a `VITE_API_BASE_URL` pointed at the `ServiceUrl`
-  above.
+- **A custom domain for the frontend.** `Nettle-Frontend`'s distribution is
+  real and serves over the default `*.cloudfront.net` domain, but there's no
+  ACM certificate or Route 53/DNS wiring here — that needs a real domain
+  this sandbox doesn't have. Add a `viewerCertificate`/`domainNames` on the
+  `Distribution` construct and a validated ACM cert (must be in `us-east-1`
+  regardless of the app's own region — a CloudFront requirement) once a
+  domain exists.
+- **A WAF in front of the frontend or the API.** Neither `Nettle-Frontend`
+  nor `Nettle-Api` has AWS WAF attached — CloudFront and App Runner both
+  support it, but it's a real ongoing cost/complexity with no concrete rule
+  set justified yet at zero traffic. Revisit once there's actual abuse
+  traffic to write rules against.
 - **SES delivery is implemented but not live-verified.** Password-reset and
   organization-invitation emails both go through the shared
   `backend/src/notifications/email.ts` (SES v2 SDK) — real code, exercised
@@ -360,8 +422,16 @@ guard, so this is a clean, complete teardown.
 ## Tearing it down
 
 ```bash
-npx cdk destroy Nettle-CI Nettle-Api Nettle-Ecr Nettle-Database Nettle-Network
+npx cdk destroy Nettle-CI Nettle-Frontend Nettle-Api Nettle-Ecr Nettle-Database Nettle-Network
 ```
+
+`Nettle-Frontend` must come after `Nettle-CI` (whose deploy role policy
+references the frontend bucket/distribution ARNs) and before `Nettle-Api`
+(whose `ServiceUrl` the frontend's CSP imports) — CloudFormation refuses to
+delete a stack while another stack still imports one of its outputs, so
+this order isn't optional. `Nettle-Frontend`'s bucket has
+`autoDeleteObjects: true`, so this actually empties and deletes it, unlike
+`Nettle-Database` below.
 
 If the staging pair was deployed, tear it down first (no dependents, so
 order relative to the above doesn't matter) — unlike `Nettle-Database`, it
