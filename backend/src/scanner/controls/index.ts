@@ -16,6 +16,12 @@ import "./library/pathTraversal";
 import "./library/transportSecurity";
 import "./library/jwtExpiry";
 import "./library/cors";
+import "./library/cookieSecurity";
+import "./library/csrf";
+import "./library/inputValidation";
+import "./library/requestSize";
+import "./library/fileUpload";
+import "./library/deserialization";
 
 export { getControl, listControls, listControlsByCategory, getControlLibraryVersion, getControlVersionsSnapshot } from "./registry";
 export { hydrateCheckResult, hydrateCheckResults, type HydratedFinding } from "./hydrate";
