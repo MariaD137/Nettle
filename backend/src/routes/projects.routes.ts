@@ -6,7 +6,8 @@ import { listScans, getLatestScan, type StoredScan } from "../patrol/scans";
 import { computeBadgeState } from "../patrol/badge";
 import { hashFinding, upsertFindingStatus, listFindingStatuses } from "../patrol/findingStatuses";
 import { requireAuth } from "../auth/middleware";
-import { requireSubscription, requireProtect, entitledPlan } from "../billing/subscription";
+import { entitledPlan } from "../billing/subscription";
+import { resolvePlanForProject, requireProjectPlan } from "../billing/orgSubscription";
 import { canCreateProject, canUseFixCenter, getMaxProjects } from "../billing/entitlements";
 import { getUserById } from "../auth/users";
 import { getQuotaState } from "../billing/scanQuota";
@@ -38,9 +39,16 @@ const dashboardLimiter = rateLimit({
 //   dashboardAccess — requireAuth only. Basic project management (create up
 //     to your plan's limit, list, view, edit, archive, delete) is something
 //     every signed-in account gets, FREE included.
-//   paywalled — requireAuth + requireSubscription (BUILD or PROTECT). Stays
-//     on the routes the pricing model marks BUILD+ specifically: Fix Center
+//   paywalled — requireAuth + requireProjectPlan("build"). Stays on the
+//     routes the pricing model marks BUILD+ specifically: Fix Center
 //     findings, scan history, comparisons, exports, alert management.
+//
+// requireProjectPlan (billing/orgSubscription.ts), not requireSubscription/
+// requireProtect: every route these two gate is scoped to one project
+// (:id), and requireProjectPlan resolves that project's entitlement —
+// the organization's own subscription if it belongs to one that's actively
+// subscribed, else the caller's personal plan (requireSubscription's exact
+// prior behavior). Both are project-aware for that reason, not account-only.
 //
 // Both run per-route rather than as router-level middleware, for the same
 // two reasons as before this split: this router is mounted at the app root
@@ -50,12 +58,12 @@ const dashboardLimiter = rateLimit({
 // embeds behind auth. Every route below therefore states its gate
 // explicitly — new routes must too.
 const dashboardAccess = [requireAuth, dashboardLimiter];
-const paywalled = [...dashboardAccess, requireSubscription];
-// Continuous monitoring's alerts — PROTECT-only (see billing/subscription.ts's requireProtect).
-const protectOnly = [...dashboardAccess, requireProtect];
+const paywalled = [...dashboardAccess, requireProjectPlan("build")];
+// Continuous monitoring's alerts — PROTECT-only, project-aware (see requireProjectPlan above).
+const protectOnly = [...dashboardAccess, requireProjectPlan("protect")];
 
 /**
- * Every route here sits behind requireSubscription, so unlike
+ * Every route here sits behind requireProjectPlan("build"), so unlike
  * routes/scans.routes.ts's respondWithScan there's no free-tier trimming to
  * apply — a caller who reaches this route is already entitled to the full
  * report. What's still missing without this is hydration: a scan stored via
@@ -156,7 +164,7 @@ projectsRouter.get("/api/projects/:id", ...dashboardAccess, async (req, res) => 
   const project = await accessibleProjectOr404(req, res);
   if (!project) return;
   const requester = await getUserById(req.userId!);
-  const plan = entitledPlan(requester);
+  const plan = await resolvePlanForProject(project, entitledPlan(requester));
   const badge = await computeBadgeState(project.id);
   const latestScan = canUseFixCenter(plan) ? hydrateStoredScan(await getLatestScan(project.id)) : null;
   const alertCounts = await countAlertsByStatus(project.id);

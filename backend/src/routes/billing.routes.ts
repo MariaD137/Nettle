@@ -3,6 +3,11 @@ import { getStripeClient, priceIdForPlan, planForPriceId } from "../billing/stri
 import { requireAuth } from "../auth/middleware";
 import { getUserById, setStripeCustomerId, setSubscriptionStatus, getUserByStripeCustomerId } from "../auth/users";
 import { hasActiveSubscription } from "../billing/subscription";
+import {
+  setOrgStripeCustomerId,
+  setOrgSubscriptionStatus,
+  getOrganizationByStripeCustomerId,
+} from "../organizations/organizations";
 import { recordWebhookEventOnce } from "../billing/webhookLedger";
 import { rateLimit } from "../middleware/rateLimit";
 import type Stripe from "stripe";
@@ -97,10 +102,18 @@ billingWebhookRouter.post("/api/billing/webhook", raw({ type: "application/json"
     case "checkout.session.completed": {
       const session = event.data.object as Stripe.Checkout.Session;
       const userId = session.metadata?.userId;
+      const organizationId = session.metadata?.organizationId;
       const plan = session.metadata?.plan;
       if (userId && plan && typeof session.customer === "string") {
         await setStripeCustomerId(userId, session.customer);
         await setSubscriptionStatus(userId, plan, "active", eventCreatedAt);
+      } else if (organizationId && plan && typeof session.customer === "string") {
+        // Additive per-organization billing (routes/organizations.routes.ts's
+        // checkout-session route) — a completely separate customer/
+        // subscription from any personal one, routed here by which metadata
+        // key the checkout session was created with, never both at once.
+        await setOrgStripeCustomerId(organizationId, session.customer);
+        await setOrgSubscriptionStatus(organizationId, plan, "active", eventCreatedAt);
       }
       break;
     }
@@ -108,20 +121,29 @@ billingWebhookRouter.post("/api/billing/webhook", raw({ type: "application/json"
     case "customer.subscription.deleted": {
       const subscription = event.data.object as Stripe.Subscription;
       if (typeof subscription.customer === "string") {
+        const status = event.type === "customer.subscription.deleted" ? "canceled" : subscription.status;
+        // Derived from what Stripe says is actually being billed, not from
+        // this app's own possibly-stale DB plan — a plan change made
+        // outside this app's own checkout flow (the Stripe dashboard, a
+        // missed earlier webhook) must not desync quota/access from what
+        // the customer is actually paying for. Falls back to the existing
+        // DB plan only if the subscription's price doesn't map to a known
+        // plan (e.g. a price not yet wired into PLAN_PRICE_ENV_VARS) —
+        // never invents a plan the app doesn't recognize.
+        const priceId = subscription.items.data[0]?.price?.id;
+        const derivedPlan = priceId ? planForPriceId(priceId) : null;
+
         const user = await getUserByStripeCustomerId(subscription.customer);
         if (user) {
-          const status = event.type === "customer.subscription.deleted" ? "canceled" : subscription.status;
-          // Derived from what Stripe says is actually being billed, not from
-          // this app's own possibly-stale DB plan — a plan change made
-          // outside this app's own checkout flow (the Stripe dashboard, a
-          // missed earlier webhook) must not desync quota/access from what
-          // the customer is actually paying for. Falls back to the existing
-          // DB plan only if the subscription's price doesn't map to a known
-          // plan (e.g. a price not yet wired into PLAN_PRICE_ENV_VARS) —
-          // never invents a plan the app doesn't recognize.
-          const priceId = subscription.items.data[0]?.price?.id;
-          const derivedPlan = priceId ? planForPriceId(priceId) : null;
           await setSubscriptionStatus(user.id, derivedPlan ?? user.plan, status, eventCreatedAt);
+          break;
+        }
+        // A Stripe customer id belongs to exactly one of a user or an
+        // organization, never both — this only runs when the personal
+        // lookup above found nothing.
+        const org = await getOrganizationByStripeCustomerId(subscription.customer);
+        if (org) {
+          await setOrgSubscriptionStatus(org.id, derivedPlan ?? org.plan, status, eventCreatedAt);
         }
       }
       break;

@@ -13,7 +13,9 @@ import {
 } from "../organizations/organizations";
 import { getUserByEmail, getUserById } from "../auth/users";
 import { entitledPlan } from "../billing/subscription";
+import { resolveTeamPlan, hasActiveOrgSubscription } from "../billing/orgSubscription";
 import { getTeamMemberLimit } from "../billing/entitlements";
+import { getStripeClient, priceIdForPlan } from "../billing/stripeClient";
 import { requireAuth } from "../auth/middleware";
 import { rateLimit } from "../middleware/rateLimit";
 import {
@@ -125,12 +127,12 @@ organizationsRouter.post("/api/organizations/:id/members", ...guarded, async (re
     return res.status(404).json({ error: "No Nettle account exists for that email address" });
   }
 
-  // Team size is entitled by the organization owner's plan (Phase D scoped
-  // MVP keeps billing per-user, not per-org — same precedent as the project
-  // count limit above). The caller here IS the owner (checked above), so
-  // this is their own plan, not a lookup of someone else's.
+  // Team size is entitled by the organization's own subscription if it has
+  // one, else the owner's personal plan (resolveTeamPlan — see
+  // billing/orgSubscription.ts). The caller here IS the owner (checked
+  // above), so the fallback is their own plan, not a lookup of someone else's.
   const owner = await getUserById(loaded.org.ownerId);
-  const plan = entitledPlan(owner);
+  const plan = resolveTeamPlan(loaded.org, entitledPlan(owner));
   const limit = getTeamMemberLimit(plan);
   const currentMembers = await listMembers(loaded.org.id);
   if (currentMembers.length >= limit) {
@@ -198,12 +200,12 @@ organizationsRouter.post("/api/organizations/:id/invitations", ...guarded, async
     return res.status(400).json({ error: 'role must be "member"' });
   }
 
-  // Team size is entitled by the organization owner's plan — checked at
-  // invite time (a clear, immediate error for the owner) and re-checked at
-  // accept time (organizations/invitations.ts), since the owner's plan can
-  // change in between.
+  // Team size is entitled by the organization's own subscription if it has
+  // one, else the owner's personal plan — checked at invite time (a clear,
+  // immediate error for the owner) and re-checked at accept time
+  // (organizations/invitations.ts), since either can change in between.
   const owner = await getUserById(loaded.org.ownerId);
-  const plan = entitledPlan(owner);
+  const plan = resolveTeamPlan(loaded.org, entitledPlan(owner));
   const limit = getTeamMemberLimit(plan);
   const currentMembers = await listMembers(loaded.org.id);
   if (currentMembers.length >= limit) {
@@ -289,5 +291,72 @@ organizationsRouter.post("/api/invitations/accept", requireAuth, orgLimiter, asy
     if (err instanceof InvitationEmailMismatchError) return res.status(403).json({ error: err.message });
     if (err instanceof TeamMemberLimitError) return res.status(403).json({ error: err.message, teamLimitReached: true });
     throw err;
+  }
+});
+
+// --- Organization billing (additive, no migration of existing per-user
+// billing) --------------------------------------------------------------
+//
+// An organization's Stripe customer/subscription is entirely separate from
+// any member's personal one — subscribing an organization never touches
+// users.plan/stripe_customer_id/subscription_status for anyone, and an
+// organization that's never subscribed behaves exactly as it did before
+// this route existed (see billing/orgSubscription.ts's resolvePlanForProject/
+// resolveTeamPlan, which both fall back to the pre-existing per-user model).
+//
+// Owner-only, same reasoning as rename/invite/remove above: billing is an
+// organization-wide decision, not something any member can trigger.
+
+const orgCheckoutLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  maxRequests: 10,
+  message: "Too many checkout attempts — try again shortly",
+  scope: "organizations:billing:checkout",
+  keyFn: (req) => (req.userId ? `user:${req.userId}` : null),
+});
+
+organizationsRouter.post("/api/organizations/:id/billing/checkout-session", requireAuth, orgCheckoutLimiter, async (req, res) => {
+  const loaded = await accessibleOrgOr404(req, res);
+  if (!loaded) return;
+  if (loaded.membership.role !== "owner") {
+    return res.status(403).json({ error: "Only the organization's owner can manage its billing" });
+  }
+
+  const plan = req.body?.plan;
+  if (plan !== "build" && plan !== "protect") {
+    return res.status(400).json({ error: 'plan must be "build" or "protect"' });
+  }
+
+  // Same double-subscription guard as the personal checkout flow
+  // (routes/billing.routes.ts) — a retried/double-clicked checkout must not
+  // create two Stripe subscriptions for the same organization.
+  if (hasActiveOrgSubscription(loaded.org)) {
+    return res.status(409).json({ error: "This organization already has an active subscription", plan: loaded.org.plan });
+  }
+
+  const requester = await getUserById(req.userId!);
+  if (!requester) return res.status(401).json({ error: "Invalid session" });
+
+  try {
+    const stripe = getStripeClient();
+    const priceId = priceIdForPlan(plan);
+
+    const session = await stripe.checkout.sessions.create({
+      mode: "subscription",
+      line_items: [{ price: priceId, quantity: 1 }],
+      customer: loaded.org.stripeCustomerId ?? undefined,
+      customer_email: loaded.org.stripeCustomerId ? undefined : requester.email,
+      client_reference_id: loaded.org.id,
+      // organizationId, not userId — this is what routes the webhook (see
+      // routes/billing.routes.ts) to setOrgStripeCustomerId/
+      // setOrgSubscriptionStatus instead of the personal-account path.
+      metadata: { organizationId: loaded.org.id, plan },
+      success_url: process.env.BILLING_SUCCESS_URL ?? "http://localhost:5173/billing/success",
+      cancel_url: process.env.BILLING_CANCEL_URL ?? "http://localhost:5173/billing/cancelled",
+    });
+
+    res.json({ url: session.url });
+  } catch (err) {
+    res.status(503).json({ error: "Billing is not available", detail: (err as Error).message });
   }
 });

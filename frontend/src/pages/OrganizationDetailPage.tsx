@@ -10,6 +10,7 @@ import {
 } from "../api";
 import { useAuth } from "../AuthContext";
 import NettleLogo from "../components/NettleLogo";
+import { PLAN_LABELS } from "../plans";
 
 interface Loaded {
   organization: Organization;
@@ -86,6 +87,8 @@ export default function OrganizationDetailPage() {
             organizationId={loaded.organization.id}
             onChanged={refresh}
           />
+
+          {isOwner && <BillingCard organization={loaded.organization} />}
 
           {isOwner && (
             <InvitationsCard
@@ -188,6 +191,63 @@ function MembersCard({
           )}
         </div>
       ))}
+    </div>
+  );
+}
+
+// Mirrors backend/src/billing/orgSubscription.ts's hasActiveOrgSubscription
+// — UI framing only, never an access decision (every route this gates is
+// independently enforced server-side, same relationship as subscription.ts's
+// personal-account equivalent).
+function orgHasActiveSubscription(organization: Organization): boolean {
+  return (
+    (organization.plan === "build" || organization.plan === "protect") &&
+    (organization.subscriptionStatus === "active" || organization.subscriptionStatus === "trialing")
+  );
+}
+
+function BillingCard({ organization }: { organization: Organization }) {
+  const [starting, setStarting] = useState<"build" | "protect" | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const active = orgHasActiveSubscription(organization);
+
+  async function subscribe(plan: "build" | "protect") {
+    setError(null);
+    setStarting(plan);
+    try {
+      const { url } = await api.createOrgCheckoutSession(organization.id, plan);
+      window.location.href = url;
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Couldn't start checkout");
+      setStarting(null);
+    }
+  }
+
+  return (
+    <div className="card">
+      <h2>Organization billing</h2>
+      <p className="muted" style={{ marginTop: -4 }}>
+        Optional — subscribing the organization itself unlocks its plan for every member's access to its
+        projects, independent of each member's own personal plan.
+      </p>
+      {error && <div className="error-banner">{error}</div>}
+      <div className="settings-row">
+        <span className="settings-label">Current plan</span>
+        <span>
+          <span className="plan-badge">{PLAN_LABELS[organization.plan] ?? organization.plan}</span>
+          {!active && <span className="muted" style={{ marginLeft: 8 }}>not subscribed</span>}
+        </span>
+      </div>
+      {!active && (
+        <div style={{ display: "flex", gap: 10, marginTop: 12 }}>
+          <button onClick={() => subscribe("build")} disabled={starting !== null}>
+            {starting === "build" ? "Starting…" : "Subscribe to Build"}
+          </button>
+          <button className="secondary" onClick={() => subscribe("protect")} disabled={starting !== null}>
+            {starting === "protect" ? "Starting…" : "Subscribe to Protect"}
+          </button>
+        </div>
+      )}
     </div>
   );
 }

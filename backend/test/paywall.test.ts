@@ -41,6 +41,15 @@ async function signUp(base: string, email: string, password: string): Promise<st
   return (await res.json()).token;
 }
 
+async function login(base: string, email: string, password: string): Promise<string> {
+  const res = await fetch(`${base}/api/auth/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email, password }),
+  });
+  return (await res.json()).token;
+}
+
 const PASSWORD = "correct horse battery staple";
 
 test("hasActiveSubscription requires both a paid plan and an active status", () => {
@@ -121,7 +130,7 @@ test("BUILD+ routes stay paywalled behind a real subscription", async () => {
   try {
     const user = await createUser("paywall-routes@example.com", PASSWORD);
     const project = await createProject(user.id, "Unreachable");
-    const token = await signUp(base, "paywall-other@example.com", PASSWORD);
+    const ownerToken = await login(base, "paywall-routes@example.com", PASSWORD);
 
     const routes: [string, string][] = [
       ["GET", `/api/projects/${project.id}/scans`],
@@ -130,13 +139,26 @@ test("BUILD+ routes stay paywalled behind a real subscription", async () => {
       ["GET", `/api/projects/${project.id}/scans/anything/export`],
     ];
 
+    // The project's own owner, still on FREE (never subscribed) — the
+    // actual paywall case: reachable, but not entitled.
     for (const [method, path] of routes) {
       const res = await fetch(`${base}${path}`, {
         method,
-        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        headers: { Authorization: `Bearer ${ownerToken}`, "Content-Type": "application/json" },
       });
       assert.equal(res.status, 402, `${method} ${path} should stay paywalled behind BUILD/PROTECT`);
     }
+
+    // A total stranger — not the owner, not an organization member — gets
+    // 404, not 402: requireProjectPlan (billing/orgSubscription.ts) checks
+    // accessibility before entitlement, same "don't confirm the project
+    // exists to someone with no relationship to it" rule accessibleProjectOr404
+    // already applies to every other project route.
+    const strangerToken = await signUp(base, "paywall-other@example.com", PASSWORD);
+    const strangerRes = await fetch(`${base}${routes[0][1]}`, {
+      headers: { Authorization: `Bearer ${strangerToken}` },
+    });
+    assert.equal(strangerRes.status, 404);
   } finally {
     server.close();
   }
@@ -147,28 +169,30 @@ test("PROTECT-only routes (continuous monitoring's alerts) reject a FREE or BUIL
   try {
     const user = await createUser("paywall-alerts-owner@example.com", PASSWORD);
     const project = await createProject(user.id, "Alert Target");
-    const freeToken = await signUp(base, "paywall-alerts-free@example.com", PASSWORD);
+    const ownerToken = await login(base, "paywall-alerts-owner@example.com", PASSWORD);
 
+    // The project's own owner, still FREE — the real paywall case.
     const freeRes = await fetch(`${base}/api/projects/${project.id}/alerts`, {
-      headers: { Authorization: `Bearer ${freeToken}` },
+      headers: { Authorization: `Bearer ${ownerToken}` },
     });
     assert.equal(freeRes.status, 402);
     assert.equal((await freeRes.json()).requiredPlan, "protect");
 
-    const buildUser = await createUser("paywall-alerts-build@example.com", PASSWORD);
-    await setSubscriptionStatus(buildUser.id, "build", "active");
-    const buildToken = await (async () => {
-      const res = await fetch(`${base}/api/auth/login`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email: "paywall-alerts-build@example.com", password: PASSWORD }),
-      });
-      return (await res.json()).token;
-    })();
+    // Same owner, upgraded to BUILD — still not enough, alerts need PROTECT specifically.
+    await setSubscriptionStatus(user.id, "build", "active");
+    const buildToken = await login(base, "paywall-alerts-owner@example.com", PASSWORD);
     const buildRes = await fetch(`${base}/api/projects/${project.id}/alerts`, {
       headers: { Authorization: `Bearer ${buildToken}` },
     });
     assert.equal(buildRes.status, 402, "BUILD alone is not enough — alerts need PROTECT specifically");
+
+    // A total stranger gets 404, not 402 — see the equivalent case in
+    // "BUILD+ routes stay paywalled behind a real subscription" above.
+    const strangerToken = await signUp(base, "paywall-alerts-stranger@example.com", PASSWORD);
+    const strangerRes = await fetch(`${base}/api/projects/${project.id}/alerts`, {
+      headers: { Authorization: `Bearer ${strangerToken}` },
+    });
+    assert.equal(strangerRes.status, 404);
   } finally {
     server.close();
   }

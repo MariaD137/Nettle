@@ -6,6 +6,7 @@ import type { IncomingEvent } from "../patrol/types";
 import { rateLimit } from "../middleware/rateLimit";
 import { getUserById } from "../auth/users";
 import { entitledPlan } from "../billing/subscription";
+import { resolvePlanForProject } from "../billing/orgSubscription";
 import { canUseContinuousMonitoring } from "../billing/entitlements";
 
 export const eventsRouter = Router();
@@ -64,10 +65,12 @@ eventsRouter.post("/api/events", eventsLimiter, async (req, res) => {
   }
 
   // Continuous monitoring/event ingestion is PROTECT-only (§8). Gated on the
-  // project owner's entitled plan, same as everything else per-project —
-  // Phase D scoped MVP keeps billing per-user, not per-org.
+  // project's resolved entitlement: the organization's own subscription if
+  // this project belongs to one that's actively subscribed, else the
+  // project owner's personal plan (the prior, still-default behavior — see
+  // billing/orgSubscription.ts's resolvePlanForProject).
   const owner = await getUserById(project.userId);
-  const plan = entitledPlan(owner);
+  const plan = await resolvePlanForProject(project, entitledPlan(owner));
   if (!canUseContinuousMonitoring(plan)) {
     return res.status(402).json({
       error: "Continuous monitoring requires an active PROTECT subscription",

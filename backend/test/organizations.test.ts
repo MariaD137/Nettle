@@ -8,10 +8,11 @@ import { createSession } from "../src/auth/sessions";
 import { organizationsRouter } from "../src/routes/organizations.routes";
 import { projectsRouter } from "../src/routes/projects.routes";
 
-// Phase D scoped MVP: organizations with owner/member roles, and a project
-// can optionally belong to one instead of just a user. No invitations (a
-// member is added directly by email, must already have a Nettle account),
-// no per-organization billing (plan/subscription stay on the user row).
+// Organizations with owner/member roles, and a project can optionally
+// belong to one instead of just a user. This file covers the direct
+// add-by-email flow from the original Phase D scoped MVP; invitations
+// (organizationInvitations.test.ts) and per-organization billing
+// (organizationBilling.test.ts) are covered separately.
 
 function listen(app: express.Express): Promise<{ server: Server; base: string }> {
   return new Promise((resolve) => {

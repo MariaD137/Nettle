@@ -2,6 +2,7 @@ import crypto from "crypto";
 import { db, newId } from "../db";
 import { hashToken } from "../auth/tokenHash";
 import { entitledPlan } from "../billing/subscription";
+import { resolveTeamPlan } from "../billing/orgSubscription";
 import { getTeamMemberLimit } from "../billing/entitlements";
 import { getUserById } from "../auth/users";
 import { getOrganization, listMembers, isMember } from "./organizations";
@@ -183,7 +184,7 @@ export async function acceptInvitation(token: string, acceptingUserId: string, a
     if (!org) throw new InvitationNotFoundError(); // organization deleted since the invite was sent
 
     const owner = await getUserById(org.ownerId);
-    const plan = entitledPlan(owner);
+    const plan = resolveTeamPlan(org, entitledPlan(owner));
     const limit = getTeamMemberLimit(plan);
     const currentMembers = await listMembers(org.id);
     if (!(await isMember(org.id, acceptingUserId)) && currentMembers.length >= limit) {

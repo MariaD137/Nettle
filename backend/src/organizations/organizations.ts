@@ -5,6 +5,9 @@ interface OrganizationRow {
   id: string;
   name: string;
   owner_id: string;
+  plan: string;
+  stripe_customer_id: string | null;
+  subscription_status: string;
   created_at: string;
 }
 
@@ -18,7 +21,15 @@ interface MemberRow {
 }
 
 function toOrganization(row: OrganizationRow): Organization {
-  return { id: row.id, name: row.name, ownerId: row.owner_id, createdAt: row.created_at };
+  return {
+    id: row.id,
+    name: row.name,
+    ownerId: row.owner_id,
+    plan: row.plan,
+    stripeCustomerId: row.stripe_customer_id,
+    subscriptionStatus: row.subscription_status,
+    createdAt: row.created_at,
+  };
 }
 
 function toMember(row: MemberRow): OrganizationMember {
@@ -34,7 +45,15 @@ function toMember(row: MemberRow): OrganizationMember {
 
 /** Creates the organization and its owner's membership row in one transaction — a crash between the two must never leave an organization with no owner-role member. */
 export async function createOrganization(ownerId: string, name: string): Promise<Organization> {
-  const org: Organization = { id: newId(), name, ownerId, createdAt: new Date().toISOString() };
+  const org: Organization = {
+    id: newId(),
+    name,
+    ownerId,
+    plan: "free",
+    stripeCustomerId: null,
+    subscriptionStatus: "none",
+    createdAt: new Date().toISOString(),
+  };
   await db.transaction(async (tx) => {
     await tx.run("INSERT INTO organizations (id, name, owner_id, created_at) VALUES (?, ?, ?, ?)", [org.id, org.name, org.ownerId, org.createdAt]);
     await tx.run("INSERT INTO organization_members (id, organization_id, user_id, role, created_at) VALUES (?, ?, ?, ?, ?)", [
@@ -128,4 +147,46 @@ export async function removeMember(organizationId: string, userId: string): Prom
   const org = await getOrganization(organizationId);
   if (org?.ownerId === userId) throw new CannotRemoveOwnerError();
   await db.run("DELETE FROM organization_members WHERE organization_id = ? AND user_id = ?", [organizationId, userId]);
+}
+
+// --- Organization billing (additive, per-organization Stripe subscription) -
+// Mirrors auth/users.ts's own setStripeCustomerId/setSubscriptionStatus/
+// getUserByStripeCustomerId — same shape, same out-of-order-webhook guard,
+// applied to the organizations table instead. See billing/orgSubscription.ts
+// for how this is resolved into an actual entitlement.
+
+export async function setOrgStripeCustomerId(organizationId: string, stripeCustomerId: string): Promise<void> {
+  await db.run("UPDATE organizations SET stripe_customer_id = ? WHERE id = ?", [stripeCustomerId, organizationId]);
+}
+
+/**
+ * Applies a subscription plan/status change to an organization. `eventCreatedAt`
+ * (Stripe's own event timestamp) is passed only by the webhook handler and
+ * guards against out-of-order delivery, exactly as setSubscriptionStatus does
+ * for users — see that function's comment for the full reasoning.
+ */
+export async function setOrgSubscriptionStatus(
+  organizationId: string,
+  plan: string,
+  status: string,
+  eventCreatedAt?: string
+): Promise<void> {
+  await db.transaction(async (tx) => {
+    if (eventCreatedAt !== undefined) {
+      const row = await tx.get<{ last_subscription_event_at: string | null }>(
+        "SELECT last_subscription_event_at FROM organizations WHERE id = ?",
+        [organizationId]
+      );
+      if (row?.last_subscription_event_at && eventCreatedAt < row.last_subscription_event_at) {
+        return; // stale/out-of-order event — a newer state is already applied
+      }
+      await tx.run("UPDATE organizations SET last_subscription_event_at = ? WHERE id = ?", [eventCreatedAt, organizationId]);
+    }
+    await tx.run("UPDATE organizations SET plan = ?, subscription_status = ? WHERE id = ?", [plan, status, organizationId]);
+  });
+}
+
+export async function getOrganizationByStripeCustomerId(stripeCustomerId: string): Promise<Organization | null> {
+  const row = await db.get<OrganizationRow>("SELECT * FROM organizations WHERE stripe_customer_id = ?", [stripeCustomerId]);
+  return row ? toOrganization(row) : null;
 }

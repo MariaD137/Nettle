@@ -44,6 +44,10 @@ export interface Organization {
   id: string;
   name: string;
   ownerId: string;
+  /** The organization's own, optional Stripe subscription — independent of any member's personal plan. "free"/"none" means it's never been subscribed. */
+  plan: string;
+  stripeCustomerId: string | null;
+  subscriptionStatus: string;
   createdAt: string;
 }
 
@@ -549,6 +553,12 @@ export const api = {
     request<{ member: OrganizationMember; organization: Organization | null }>("/api/invitations/accept", {
       method: "POST",
       body: JSON.stringify({ token }),
+    }),
+
+  createOrgCheckoutSession: (id: string, plan: "build" | "protect") =>
+    request<{ url: string }>(`/api/organizations/${id}/billing/checkout-session`, {
+      method: "POST",
+      body: JSON.stringify({ plan }),
     }),
 };
 
