@@ -1,11 +1,23 @@
 import { getToken, getApiUrl } from "./config.js";
 
 /**
+ * Every call site still passes a literal "/api/..." path — this rewrites it
+ * to the versioned "/api/v1/..." surface at the one place requests actually
+ * go out, so none of them needed touching individually. The backend keeps
+ * serving the unversioned path unchanged indefinitely (see backend's
+ * middleware/apiVersion.ts), so an older CLI build talking to a newer
+ * server still works.
+ */
+function apiPath(path) {
+  return path.startsWith("/api/") ? `/api/v1/${path.slice("/api/".length)}` : path;
+}
+
+/**
  * Make an authenticated JSON request to the Nettle API.
  */
 export async function request(method, path, { body, apiUrl, headers: extraHeaders } = {}) {
   const baseUrl = getApiUrl(apiUrl);
-  const url = `${baseUrl}${path}`;
+  const url = `${baseUrl}${apiPath(path)}`;
 
   const headers = { ...extraHeaders };
 

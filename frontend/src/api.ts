@@ -1,5 +1,21 @@
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8080";
 
+/**
+ * Every call site below still writes a literal "/api/..." path — this
+ * rewrites it to the versioned "/api/v1/..." surface at the one place
+ * requests actually go out, so none of them needed touching individually.
+ * The backend keeps serving the unversioned path unchanged indefinitely
+ * (see backend's middleware/apiVersion.ts), so this is a one-way upgrade,
+ * not something either side depends on for correctness.
+ *
+ * Deliberately NOT applied to badgeSvgUrl below: a badge URL gets pasted
+ * into a customer's own README as a long-lived embed, and must never
+ * change once published.
+ */
+function apiPath(path: string): string {
+  return path.startsWith("/api/") ? `/api/v1/${path.slice("/api/".length)}` : path;
+}
+
 export interface User {
   id: string;
   email: string;
@@ -259,7 +275,7 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   if (token) headers.Authorization = `Bearer ${token}`;
   if (options.body && !(options.body instanceof FormData)) headers["Content-Type"] = "application/json";
 
-  const res = await fetch(`${API_BASE}${path}`, { ...options, headers });
+  const res = await fetch(`${API_BASE}${apiPath(path)}`, { ...options, headers });
   if (res.status === 204) return undefined as T;
   const isJson = res.headers.get("content-type")?.includes("application/json");
   const body = isJson ? await res.json() : null;
@@ -388,7 +404,7 @@ export const api = {
   // a JSON error into a new tab.
   downloadScanReport: async (projectId: string, scanId: string): Promise<void> => {
     const token = getToken();
-    const res = await fetch(`${API_BASE}/api/projects/${projectId}/scans/${scanId}/export`, {
+    const res = await fetch(`${API_BASE}${apiPath(`/api/projects/${projectId}/scans/${scanId}/export`)}`, {
       headers: token ? { Authorization: `Bearer ${token}` } : {},
     });
     if (!res.ok) {

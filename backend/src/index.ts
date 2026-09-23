@@ -12,6 +12,7 @@ import { billingRouter, billingWebhookRouter } from "./routes/billing.routes";
 import { initializeScanner } from "./scanner/initialization";
 import { initializeDatabase, assertProductionPersistence } from "./db";
 import { startRateLimitCleanup } from "./middleware/rateLimit";
+import { apiVersioning } from "./middleware/apiVersion";
 
 const app = express();
 const PORT = process.env.PORT || 8080;
@@ -46,6 +47,11 @@ const PORT = process.env.PORT || 8080;
  * would let anything behind the new hop spoof its origin again.
  */
 app.set("trust proxy", 1);
+
+// Rewrites /api/v1/<rest> to /api/<rest> before any router sees the
+// request — see middleware/apiVersion.ts for why this is a rewrite rather
+// than a second mount point for every router.
+app.use(apiVersioning);
 
 // The dashboard is a separate origin from the API (see frontend/) — CORS is
 // a real production need here, not just a dev convenience. Wide open for
