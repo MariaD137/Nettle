@@ -6,7 +6,7 @@ import type { Server } from "http";
 import { AddressInfo } from "net";
 import { billingRouter, billingWebhookRouter } from "../src/routes/billing.routes";
 import { authRouter } from "../src/routes/auth.routes";
-import { createUser, getUserById } from "../src/auth/users";
+import { createUser, getUserById, setSubscriptionStatus } from "../src/auth/users";
 
 function listen(app: express.Express): Promise<{ server: Server; base: string }> {
   return new Promise((resolve) => {
@@ -166,4 +166,208 @@ test("a genuinely, correctly-signed checkout.session.completed webhook activates
   } finally {
     server.close();
   }
+});
+
+test("checkout-session rejects an account that already has an active subscription", async (t) => {
+  process.env.STRIPE_SECRET_KEY = "sk_test_fake_key_for_local_tests_only";
+  const { server, base } = await listen(buildApp());
+  t.after(() => server.close());
+
+  const signup = await fetch(`${base}/api/auth/signup`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email: "billing-already-subscribed@example.com", password: "correct horse battery staple" }),
+  });
+  const { token, user } = (await signup.json()) as any;
+  await setSubscriptionStatus(user.id, "tier1", "active");
+
+  const res = await fetch(`${base}/api/billing/checkout-session`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ plan: "tier2" }),
+  });
+  // 409, not a call to Stripe: an account already paid up must not be able
+  // to create a second subscription by retrying/double-clicking checkout.
+  assert.equal(res.status, 409);
+});
+
+test("a redelivered webhook (same event id) is a no-op the second time", async (t) => {
+  const webhookSecret = "whsec_test_secret_for_local_tests_only";
+  process.env.STRIPE_SECRET_KEY = "sk_test_fake_key_for_local_tests_only";
+  process.env.STRIPE_WEBHOOK_SECRET = webhookSecret;
+
+  const user = await createUser("webhook-redelivered@example.com", "correct horse battery staple");
+
+  const payload = JSON.stringify({
+    id: "evt_redelivered_1",
+    object: "event",
+    api_version: "2025-01-01",
+    created: Math.floor(Date.now() / 1000),
+    type: "checkout.session.completed",
+    data: {
+      object: {
+        id: "cs_redelivered",
+        object: "checkout.session",
+        customer: "cus_redelivered",
+        metadata: { userId: user.id, plan: "tier1" },
+      },
+    },
+  });
+
+  const { server, base } = await listen(buildApp());
+  t.after(() => server.close());
+
+  const send = () =>
+    fetch(`${base}/api/billing/webhook`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Stripe-Signature": signStripePayload(payload, webhookSecret) },
+      body: payload,
+    });
+
+  const first = await send();
+  assert.equal(first.status, 200);
+  const firstBody = await first.json();
+  assert.equal(firstBody.duplicate, undefined);
+
+  // Simulate Stripe retrying the exact same event id (e.g. the first
+  // delivery's 200 was lost in transit) after the account was separately
+  // downgraded some other way — if this were re-applied, it would
+  // incorrectly resurrect the "active" state the first delivery set.
+  await setSubscriptionStatus(user.id, "tier1", "canceled");
+
+  const second = await send();
+  assert.equal(second.status, 200);
+  const secondBody = await second.json();
+  assert.equal(secondBody.duplicate, true);
+
+  const afterReplay = (await getUserById(user.id))!;
+  assert.equal(afterReplay.subscriptionStatus, "canceled", "a replayed event must not re-apply and overwrite the separately-made change");
+});
+
+test("an out-of-order webhook does not overwrite a more recent applied state", async (t) => {
+  const webhookSecret = "whsec_test_secret_for_local_tests_only";
+  process.env.STRIPE_SECRET_KEY = "sk_test_fake_key_for_local_tests_only";
+  process.env.STRIPE_WEBHOOK_SECRET = webhookSecret;
+  process.env.STRIPE_PRICE_TIER1 = "price_tier1_test";
+  process.env.STRIPE_PRICE_TIER2 = "price_tier2_test";
+
+  const user = await createUser("webhook-out-of-order@example.com", "correct horse battery staple");
+  await setSubscriptionStatus(user.id, "tier1", "active");
+
+  function subscriptionUpdatedPayload(eventId: string, createdAt: number, priceId: string, status: string) {
+    return JSON.stringify({
+      id: eventId,
+      object: "event",
+      api_version: "2025-01-01",
+      created: createdAt,
+      type: "customer.subscription.updated",
+      data: {
+        object: {
+          id: "sub_ooo_test",
+          object: "subscription",
+          customer: "cus_ooo_test",
+          status,
+          items: { data: [{ price: { id: priceId } }] },
+        },
+      },
+    });
+  }
+
+  const { server, base } = await listen(buildApp());
+  t.after(() => server.close());
+
+  // checkout.session.completed first, to attach the Stripe customer id.
+  const checkoutPayload = JSON.stringify({
+    id: "evt_ooo_checkout",
+    object: "event",
+    api_version: "2025-01-01",
+    created: Math.floor(Date.now() / 1000) - 100,
+    type: "checkout.session.completed",
+    data: { object: { id: "cs_ooo", object: "checkout.session", customer: "cus_ooo_test", metadata: { userId: user.id, plan: "tier1" } } },
+  });
+  await fetch(`${base}/api/billing/webhook`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "Stripe-Signature": signStripePayload(checkoutPayload, webhookSecret) },
+    body: checkoutPayload,
+  });
+
+  const now = Math.floor(Date.now() / 1000);
+
+  // The newer event (an upgrade to tier2) arrives first...
+  const newer = subscriptionUpdatedPayload("evt_ooo_newer", now, "price_tier2_test", "active");
+  const newerRes = await fetch(`${base}/api/billing/webhook`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "Stripe-Signature": signStripePayload(newer, webhookSecret) },
+    body: newer,
+  });
+  assert.equal(newerRes.status, 200);
+  assert.equal((await getUserById(user.id))!.plan, "tier2");
+
+  // ...and the OLDER event (still tier1) is delivered late, after it.
+  const older = subscriptionUpdatedPayload("evt_ooo_older", now - 3600, "price_tier1_test", "active");
+  const olderRes = await fetch(`${base}/api/billing/webhook`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "Stripe-Signature": signStripePayload(older, webhookSecret) },
+    body: older,
+  });
+  assert.equal(olderRes.status, 200);
+
+  const afterLateDelivery = (await getUserById(user.id))!;
+  assert.equal(afterLateDelivery.plan, "tier2", "an older, late-arriving event must not downgrade a subscription that was already updated by a newer one");
+});
+
+test("subscription.updated derives the plan from Stripe's own price, not the account's stale DB plan", async (t) => {
+  const webhookSecret = "whsec_test_secret_for_local_tests_only";
+  process.env.STRIPE_SECRET_KEY = "sk_test_fake_key_for_local_tests_only";
+  process.env.STRIPE_WEBHOOK_SECRET = webhookSecret;
+  process.env.STRIPE_PRICE_TIER1 = "price_tier1_test";
+  process.env.STRIPE_PRICE_TIER2 = "price_tier2_test";
+
+  const user = await createUser("webhook-derived-plan@example.com", "correct horse battery staple");
+  await setSubscriptionStatus(user.id, "tier1", "active");
+
+  const { server, base } = await listen(buildApp());
+  t.after(() => server.close());
+
+  const checkoutPayload = JSON.stringify({
+    id: "evt_derived_checkout",
+    object: "event",
+    api_version: "2025-01-01",
+    created: Math.floor(Date.now() / 1000) - 100,
+    type: "checkout.session.completed",
+    data: { object: { id: "cs_derived", object: "checkout.session", customer: "cus_derived_test", metadata: { userId: user.id, plan: "tier1" } } },
+  });
+  await fetch(`${base}/api/billing/webhook`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "Stripe-Signature": signStripePayload(checkoutPayload, webhookSecret) },
+    body: checkoutPayload,
+  });
+
+  // The DB still says "tier1" (set above), but Stripe's own subscription
+  // object says the price is tier2 — e.g. a plan change made directly in
+  // the Stripe dashboard, or an earlier webhook that never arrived.
+  const payload = JSON.stringify({
+    id: "evt_derived_updated",
+    object: "event",
+    api_version: "2025-01-01",
+    created: Math.floor(Date.now() / 1000),
+    type: "customer.subscription.updated",
+    data: {
+      object: {
+        id: "sub_derived",
+        object: "subscription",
+        customer: "cus_derived_test",
+        status: "active",
+        items: { data: [{ price: { id: "price_tier2_test" } }] },
+      },
+    },
+  });
+  const res = await fetch(`${base}/api/billing/webhook`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "Stripe-Signature": signStripePayload(payload, webhookSecret) },
+    body: payload,
+  });
+  assert.equal(res.status, 200);
+
+  assert.equal((await getUserById(user.id))!.plan, "tier2", "the plan must come from Stripe's actual price, not the previously-stored DB value");
 });

@@ -14,6 +14,8 @@ import { authRouter } from "../src/routes/auth.routes";
 import { scansRouter } from "../src/routes/scans.routes";
 import { eventsRouter } from "../src/routes/events.routes";
 import { badgeRouter } from "../src/routes/badge.routes";
+import { projectsRouter } from "../src/routes/projects.routes";
+import { billingRouter, billingWebhookRouter } from "../src/routes/billing.routes";
 import { createUser } from "../src/auth/users";
 import { createSession } from "../src/auth/sessions";
 import { createProject } from "../src/patrol/projects";
@@ -297,11 +299,14 @@ function buildFullApp() {
   // Mirrors the mount order in src/index.ts.
   const app = express();
   app.set("trust proxy", 1);
+  app.use(billingWebhookRouter); // must precede express.json(), same reasoning as index.ts
   app.use(express.json());
   app.use(scansRouter);
+  app.use(projectsRouter);
   app.use(eventsRouter);
   app.use(authRouter);
   app.use(badgeRouter);
+  app.use(billingRouter);
   return app;
 }
 
@@ -490,4 +495,38 @@ test("GET /api/projects/:id/badge.svg and badge.json are rate limited per IP, sh
     last = await fetch(`${base}/api/projects/nonexistent-project/${path}`);
   }
   assert.equal(last!.status, 429, "the 61st badge request within the window must be blocked (limit is 60)");
+});
+
+test("GET /api/projects is rate limited per account, ahead of the subscription check", async (t) => {
+  const { server, base } = await listen(buildFullApp());
+  t.after(() => server.close());
+
+  const user = await createUser("rl-dashboard@example.com", PASSWORD);
+  const token = await createSession(user.id);
+  // No subscription on this account — same "ahead of the paywall" proof as
+  // the /api/scans/repo coverage test above: reaching 429 here (not a wall
+  // of 402s) shows the limiter runs before requireSubscription.
+  let last: Response | undefined;
+  for (let i = 0; i < 121; i++) {
+    last = await fetch(`${base}/api/projects`, { headers: { Authorization: `Bearer ${token}` } });
+  }
+  assert.equal(last!.status, 429, "the 121st dashboard request within the window must be blocked (limit is 120)");
+});
+
+test("POST /api/billing/checkout-session is rate limited per account", async (t) => {
+  process.env.STRIPE_SECRET_KEY = "sk_test_fake_key_for_local_tests_only";
+  const { server, base } = await listen(buildFullApp());
+  t.after(() => server.close());
+
+  const user = await createUser("rl-checkout@example.com", PASSWORD);
+  const token = await createSession(user.id);
+  let last: Response | undefined;
+  for (let i = 0; i < 11; i++) {
+    last = await fetch(`${base}/api/billing/checkout-session`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ plan: "tier1" }),
+    });
+  }
+  assert.equal(last!.status, 429, "the 11th checkout attempt within the window must be blocked (limit is 10)");
 });

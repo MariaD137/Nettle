@@ -78,6 +78,55 @@ function inspectArchiveEntries(zipPath: string, opts: Required<ExtractionConfig>
       throw new Error(`Archive contains a path traversal entry, which is not allowed: ${name}`);
     }
   }
+
+  // Decompression-bomb check, before a single byte is written to disk: sum
+  // every entry's uncompressed size straight from the archive's own
+  // directory listing (no extraction needed to know this) and compare both
+  // the raw total and its ratio against the compressed file on disk. The
+  // post-extraction byte count in verifyExtractedArchive is real defense in
+  // depth (it catches an extractor lying about its own listing), but on its
+  // own it runs only after `unzip` has already written a bomb's full
+  // expansion to disk — which is the resource exhaustion this exists to
+  // prevent in the first place.
+  const totalUncompressed = sumUncompressedBytes(zipPath);
+  if (totalUncompressed > opts.maxUncompressedBytes) {
+    throw new Error(`Uncompressed size exceeds limit (max ${opts.maxUncompressedBytes / (1024 * 1024)} MB)`);
+  }
+  const compressedBytes = fs.statSync(zipPath).size;
+  if (compressedBytes > 0 && totalUncompressed / compressedBytes > opts.maxRatio) {
+    throw new Error(`Compression ratio exceeds limit (max ${opts.maxRatio}:1) — likely a decompression bomb`);
+  }
+}
+
+/**
+ * Sums every entry's uncompressed length from `unzip -l`'s own listing.
+ * Parsed from the numeric data rows between the two `---------` separator
+ * lines rather than trusting the summary row's wording, which varies by
+ * unzip version/locale ("1 file" vs "1 files", etc.) — the per-row lengths
+ * are stable across versions.
+ */
+function sumUncompressedBytes(zipPath: string): number {
+  let listing: string;
+  try {
+    listing = execFileSync("unzip", ["-l", zipPath], { encoding: "utf8", maxBuffer: 10 * 1024 * 1024 });
+  } catch {
+    return 0; // let the extraction step below produce the real error
+  }
+
+  let total = 0;
+  let dashCount = 0;
+  for (const rawLine of listing.split("\n")) {
+    const line = rawLine.trim();
+    if (/^-{9,}/.test(line)) {
+      dashCount++;
+      continue;
+    }
+    if (dashCount === 1) {
+      const match = line.match(/^(\d+)\s/);
+      if (match) total += parseInt(match[1], 10);
+    }
+  }
+  return total;
 }
 
 /**
@@ -93,7 +142,6 @@ export function safeExtractZip(zipPath: string, destDir: string, config: Extract
   inspectArchiveEntries(zipPath, opts);
 
   // Phase 2: Extract with timeout, then validate
-  const startTime = Date.now();
   try {
     // -j would exclude paths; we keep structure but will validate it below
     execFileSync("unzip", ["-q", "-o", zipPath, "-d", destDir], {
@@ -108,16 +156,12 @@ export function safeExtractZip(zipPath: string, destDir: string, config: Extract
     throw err;
   }
 
-  const elapsedMs = Date.now() - startTime;
-
-  // Phase 3: Verify extracted contents
+  // Phase 3: Verify extracted contents. The uncompressed-size/ratio bomb
+  // checks already ran pre-extraction (see inspectArchiveEntries); this pass
+  // is the defense-in-depth re-check against what was actually written to
+  // disk, plus symlink/depth/path verification that can only be done
+  // post-extraction.
   verifyExtractedArchive(destDir, opts);
-
-  // Phase 4: Check ratio heuristic (rough, based on elapsed time)
-  // A legitimate 25MB should extract in < 2s on modern hardware
-  // A decompression bomb might hit timeout, but if it doesn't, the ratio of
-  // (items extracted / elapsed time) signals suspicious behavior
-  // This is a secondary check; the byte/count/depth limits are primary
 }
 
 /**

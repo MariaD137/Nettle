@@ -7,20 +7,37 @@ import { hashFinding, upsertFindingStatus, listFindingStatuses } from "../patrol
 import { requireAuth } from "../auth/middleware";
 import { requireSubscription } from "../billing/subscription";
 import { getQuotaState } from "../billing/scanQuota";
+import { rateLimit } from "../middleware/rateLimit";
 import { hydrateCheckResult, hydrateCheckResults } from "../scanner/controls";
 import { compareScans, ScanComparisonError, type ComparisonFinding } from "../scanner/scanComparison";
 import type { AlertStatus, AlertSeverity, FindingStatus } from "../patrol/types";
 
 export const projectsRouter = Router();
 
-// The paywall runs per-route rather than as router-level middleware. Two
-// reasons it has to: this router is mounted at the app root, so a bare
-// .use() would intercept every request in the app (signup included), and the
-// public badge endpoints in badge.routes.ts share the /api/projects prefix,
-// so even a path-scoped .use() would lock those embeds behind the paywall.
-// Every route below therefore states the gate explicitly — new routes must
-// too.
-const paywalled = [requireAuth, requireSubscription];
+// Dashboard CRUD had no rate limiting at all before this — scans, badge and
+// event-ingestion did. Keyed by account (available here since this always
+// runs after requireAuth), not IP: these are all authenticated routes, and
+// account-keying keeps unrelated customers behind the same corporate NAT
+// from throttling each other, matching the pattern scans.routes.ts already
+// uses. Generous, since this covers ordinary dashboard usage (loading
+// projects, scans, alerts), not an expensive operation like a scan.
+const dashboardLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  maxRequests: 120,
+  message: "Too many requests — try again shortly",
+  scope: "projects:dashboard",
+  keyFn: (req) => (req.userId ? `user:${req.userId}` : null),
+});
+
+// The paywall (and now the dashboard rate limiter) runs per-route rather
+// than as router-level middleware. Two reasons it has to: this router is
+// mounted at the app root, so a bare .use() would intercept every request in
+// the app (signup included, and it would run before requireAuth has even
+// set req.userId), and the public badge endpoints in badge.routes.ts share
+// the /api/projects prefix, so even a path-scoped .use() would lock those
+// embeds behind the paywall. Every route below therefore states the gate
+// explicitly — new routes must too.
+const paywalled = [requireAuth, dashboardLimiter, requireSubscription];
 
 const PLAN_LIMITS: Record<string, number> = { free: 3, tier1: 10, tier2: 50 };
 

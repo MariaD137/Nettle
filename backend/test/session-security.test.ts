@@ -6,7 +6,7 @@ import { AddressInfo } from "net";
 import { db } from "../src/db";
 import { authRouter } from "../src/routes/auth.routes";
 import { createSession, resolveSession, destroyOtherSessions } from "../src/auth/sessions";
-import { createUser, createPasswordResetToken, resolvePasswordResetToken } from "../src/auth/users";
+import { createUser, createPasswordResetToken, resolvePasswordResetToken, getUserById } from "../src/auth/users";
 import { hashToken } from "../src/auth/tokenHash";
 
 function listen(app: express.Express): Promise<{ server: Server; base: string }> {
@@ -101,6 +101,29 @@ test("changing a password revokes other sessions but not the current one", async
   assert.equal(await resolveSession(stolen), null, "a pre-existing session must not survive a password change");
 });
 
+test("changing the account email revokes other sessions but not the current one", async (t) => {
+  const { server, base } = await listen(buildApp());
+  t.after(() => server.close());
+
+  const signup = await fetch(`${base}/api/auth/signup`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email: "change-email@example.com", password: "correct horse battery" }),
+  });
+  const { token: current, user } = (await signup.json()) as any;
+  const stolen = await createSession(user.id);
+
+  const res = await fetch(`${base}/api/auth/email`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${current}` },
+    body: JSON.stringify({ email: "changed-email@example.com", password: "correct horse battery" }),
+  });
+  assert.equal(res.status, 200, JSON.stringify(await res.clone().json()));
+
+  assert.ok(await resolveSession(current), "the session that made the change stays signed in");
+  assert.equal(await resolveSession(stolen), null, "a pre-existing session must not survive an email change — it is a credential change just like a password change");
+});
+
 test("resetting a password revokes every session, including the attacker's", async (t) => {
   const { server, base } = await listen(buildApp());
   t.after(() => server.close());
@@ -186,4 +209,47 @@ test("the session label carries no ellipsis — the UI adds exactly one", async 
   assert.ok(!session.tokenPrefix.includes("…"), "backend must not append an ellipsis");
   assert.match(session.tokenPrefix, /^[0-9a-f]{8}$/);
   assert.equal(session.current, true);
+});
+
+// --- account deletion ---
+
+test("account deletion with no Stripe customer on file deletes immediately, no billing call attempted", async (t) => {
+  const { server, base } = await listen(buildApp());
+  t.after(() => server.close());
+
+  const signup = await fetch(`${base}/api/auth/signup`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email: "delete-no-stripe@example.com", password: "correct horse battery" }),
+  });
+  const { token, user } = (await signup.json()) as any;
+  assert.equal((await getUserById(user.id))!.stripeCustomerId, null);
+
+  const res = await fetch(`${base}/api/auth/account`, {
+    method: "DELETE",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ password: "correct horse battery" }),
+  });
+  assert.equal(res.status, 204);
+  assert.equal(await getUserById(user.id), null);
+});
+
+test("account deletion requires the correct password and does not delete on failure", async (t) => {
+  const { server, base } = await listen(buildApp());
+  t.after(() => server.close());
+
+  const signup = await fetch(`${base}/api/auth/signup`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email: "delete-wrong-pw@example.com", password: "correct horse battery" }),
+  });
+  const { token, user } = (await signup.json()) as any;
+
+  const res = await fetch(`${base}/api/auth/account`, {
+    method: "DELETE",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ password: "wrong password entirely" }),
+  });
+  assert.equal(res.status, 401);
+  assert.ok(await getUserById(user.id), "account must still exist after a failed deletion attempt");
 });

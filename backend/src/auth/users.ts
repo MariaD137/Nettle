@@ -75,17 +75,47 @@ export async function setStripeCustomerId(userId: string, stripeCustomerId: stri
   await db.run("UPDATE users SET stripe_customer_id = ? WHERE id = ?", [stripeCustomerId, userId]);
 }
 
-export async function setSubscriptionStatus(userId: string, plan: string, status: string): Promise<void> {
+/**
+ * Applies a subscription plan/status change.
+ *
+ * `eventCreatedAt` is Stripe's own event timestamp (event.created, as an ISO
+ * string), passed only by the webhook handler — every other caller (tests,
+ * manual/admin tooling) omits it and gets the previous unconditional-update
+ * behavior. When provided, it guards against out-of-order webhook delivery:
+ * Stripe does not guarantee delivery order, so an older event arriving after
+ * a newer one has already been applied must not overwrite it. Compared
+ * strictly less-than against the last-applied timestamp — not <=, since
+ * Stripe commonly fires several related events (checkout.session.completed,
+ * customer.subscription.updated, ...) within the same second, and a same-
+ * second event is not stale.
+ */
+export async function setSubscriptionStatus(
+  userId: string,
+  plan: string,
+  status: string,
+  eventCreatedAt?: string
+): Promise<void> {
   // One transaction: the plan/status change and the billing-anchor stamp must
   // not be separable, or a crash between them leaves an active subscription
   // with no period to meter usage against.
   await db.transaction(async (tx) => {
+    if (eventCreatedAt !== undefined) {
+      const row = await tx.get<{ last_subscription_event_at: string | null }>(
+        "SELECT last_subscription_event_at FROM users WHERE id = ?",
+        [userId]
+      );
+      if (row?.last_subscription_event_at && eventCreatedAt < row.last_subscription_event_at) {
+        return; // stale/out-of-order event — a newer state is already applied
+      }
+      await tx.run("UPDATE users SET last_subscription_event_at = ? WHERE id = ?", [eventCreatedAt, userId]);
+    }
+
     await tx.run("UPDATE users SET plan = ?, subscription_status = ? WHERE id = ?", [plan, status, userId]);
 
-  // Stamp the billing anchor the first time this account becomes active. It
-  // is deliberately never overwritten: the monthly scan period is derived by
-  // rolling this date forward, so moving it would silently reset someone's
-  // usage mid-cycle.
+    // Stamp the billing anchor the first time this account becomes active. It
+    // is deliberately never overwritten: the monthly scan period is derived by
+    // rolling this date forward, so moving it would silently reset someone's
+    // usage mid-cycle.
     if (status === "active" || status === "trialing") {
       await tx.run("UPDATE users SET billing_anchor = ? WHERE id = ? AND billing_anchor IS NULL", [
         new Date().toISOString(),

@@ -95,16 +95,52 @@ test("C-3: extraction timeout on decompression bomb", () => {
 
     const extractDir = fs.mkdtempSync(path.join(os.tmpdir(), "extract-"));
     try {
-      // Extract with very short timeout (100ms) — will fail
+      // The pre-extraction ratio check (see the next test) now catches this
+      // exact bomb before extraction even starts — so to isolate and still
+      // verify the timeout path specifically, maxRatio is set permissive
+      // enough here that this bomb passes that earlier check and actually
+      // reaches extraction, where the 100ms timeout is what stops it.
       assert.throws(
         () =>
           safeExtractZip(zipPath, extractDir, {
             timeoutMs: 100,
             maxUncompressedBytes: 500 * 1024 * 1024,
+            maxRatio: 1_000_000,
           }),
         /timeout/i,
         "Extraction timeout should be enforced"
       );
+    } finally {
+      fs.rmSync(extractDir, { recursive: true, force: true });
+    }
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
+test("C-3: compression-ratio bomb rejected pre-extraction, no disk write needed", () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "ratio-test-"));
+  try {
+    const largeFile = path.join(tmpDir, "zeros.bin");
+    fs.writeFileSync(largeFile, Buffer.alloc(100 * 1024 * 1024)); // 100 MB of zeros
+    fs.chmodSync(largeFile, 0o644);
+
+    const zipPath = path.join(tmpDir, "bomb.zip");
+    execFileSync("zip", ["-q", "-9", zipPath, largeFile], { cwd: tmpDir });
+
+    const extractDir = fs.mkdtempSync(path.join(os.tmpdir(), "extract-"));
+    try {
+      // Default maxRatio (10:1) and a generous timeout: this must be
+      // rejected by the ratio check itself, not by timing out — proving the
+      // check actually fires rather than merely existing as dead code.
+      assert.throws(
+        () => safeExtractZip(zipPath, extractDir, { timeoutMs: 30_000 }),
+        /ratio/i,
+        "A highly compressible archive should be rejected on its compression ratio"
+      );
+      // Nothing should have been written — the ratio check runs before
+      // `unzip` is ever invoked.
+      assert.deepEqual(fs.readdirSync(extractDir), []);
     } finally {
       fs.rmSync(extractDir, { recursive: true, force: true });
     }

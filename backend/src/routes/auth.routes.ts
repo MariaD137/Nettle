@@ -17,6 +17,7 @@ import { createSession, destroySession, listSessions, destroyAllSessions, destro
 import { deliverPasswordResetLink } from "../notifications/passwordResetDelivery";
 import { requireAuth } from "../auth/middleware";
 import { rateLimit } from "../middleware/rateLimit";
+import { cancelAllSubscriptions } from "../billing/stripeClient";
 
 export const authRouter = Router();
 
@@ -235,6 +236,13 @@ authRouter.patch("/api/auth/email", requireAuth, async (req, res) => {
 
   try {
     const updated = await updateEmail(req.userId!, newEmail);
+    // Same reasoning as change-password: an account credential just changed,
+    // so any other session — potentially an attacker's, potentially just an
+    // old device — should not stay trusted on the old identity. The caller's
+    // own session (the one that just proved the current password) is kept.
+    const header = req.header("authorization") || "";
+    const currentToken = header.startsWith("Bearer ") ? header.slice("Bearer ".length) : "";
+    if (currentToken) await destroyOtherSessions(req.userId!, currentToken);
     res.json({ user: updated });
   } catch (err) {
     if (err instanceof EmailAlreadyRegisteredError) {
@@ -271,6 +279,22 @@ authRouter.delete("/api/auth/account", requireAuth, async (req, res) => {
   const valid = await verifyCredentials(user.email, password);
   if (!valid) {
     return res.status(401).json({ error: "Password is incorrect" });
+  }
+
+  // Cancel billing before the account row disappears — a customer id that no
+  // longer resolves to a user can still be billed by Stripe indefinitely,
+  // with no webhook able to reach an account that no longer exists to
+  // reconcile it. A cancellation failure blocks the deletion rather than
+  // proceeding and leaving that orphaned subscription behind.
+  if (user.stripeCustomerId) {
+    try {
+      await cancelAllSubscriptions(user.stripeCustomerId);
+    } catch (err) {
+      return res.status(502).json({
+        error: "Couldn't cancel your subscription with our billing provider — your account has not been deleted. Please try again or contact support.",
+        detail: (err as Error).message,
+      });
+    }
   }
 
   await deleteUser(req.userId!);
