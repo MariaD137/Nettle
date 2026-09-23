@@ -1,7 +1,7 @@
 import { CfnOutput, RemovalPolicy, SecretValue, Stack, type StackProps } from "aws-cdk-lib";
 import type { IRepository } from "aws-cdk-lib/aws-ecr";
 import { CfnVpcConnector, CfnService } from "aws-cdk-lib/aws-apprunner";
-import { Role, ServicePrincipal, ManagedPolicy } from "aws-cdk-lib/aws-iam";
+import { Role, ServicePrincipal, ManagedPolicy, PolicyStatement } from "aws-cdk-lib/aws-iam";
 import { SubnetType, type Vpc, type SecurityGroup } from "aws-cdk-lib/aws-ec2";
 import { Secret, type ISecret } from "aws-cdk-lib/aws-secretsmanager";
 import type { Construct } from "constructs";
@@ -102,10 +102,28 @@ export class NettleApiStack extends Stack {
     // nothing else, so the grants are per-secret rather than a wildcard policy.
     const instanceRole = new Role(this, "ApiInstanceRole", {
       assumedBy: new ServicePrincipal("tasks.apprunner.amazonaws.com"),
-      description: "Nettle API runtime role - reads its own secrets, nothing more",
+      description: "Nettle API runtime role - reads its own secrets, sends transactional email, nothing more",
     });
     props.databaseSecret.grantRead(instanceRole);
     appSecret.grantRead(instanceRole);
+
+    // notifications/email.ts (password-reset and organization-invitation
+    // delivery) sends through SES using this role's credentials via the
+    // SDK's default provider chain — no access key is ever configured.
+    // ses:SendEmail/SendRawEmail only; no permission to manage identities,
+    // read other mail, or touch anything else in the account. Scoped to
+    // this account/region rather than "*" — SES resources are addressed by
+    // ARN pattern (identity, configuration set), not by a resource this
+    // role owns, so a full wildcard would be needed to send at all;
+    // account+region scoping is what keeps this from also being able to
+    // send AS a completely different verified identity if one is ever
+    // added to this account for an unrelated purpose.
+    instanceRole.addToPolicy(
+      new PolicyStatement({
+        actions: ["ses:SendEmail", "ses:SendRawEmail"],
+        resources: [`arn:aws:ses:${this.region}:${this.account}:identity/*`],
+      })
+    );
 
     const vpcConnector = new CfnVpcConnector(this, "ApiVpcConnector", {
       // The egress subnets, not the isolated ones: the service needs a route

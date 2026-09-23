@@ -258,12 +258,22 @@ and `lib/api-stack.ts`.
   isn't part of this CDK app yet — needs its own static hosting
   (S3+CloudFront) and a `VITE_API_BASE_URL` pointed at the `ServiceUrl`
   above.
-- **SES / real password-reset email delivery.** Reset tokens are generated
-  and stored securely (see `backend/src/notifications/passwordResetDelivery.ts`)
-  but nothing sends the email yet — `PASSWORD_RESET_FROM_ADDRESS` and
-  `APP_PASSWORD_RESET_URL` mark where a real provider gets wired in.
-  Requires a verified SES sending identity, which is itself a deployment
-  prerequisite this CDK app doesn't set up.
+- **SES delivery is implemented but not live-verified.** Password-reset and
+  organization-invitation emails both go through the shared
+  `backend/src/notifications/email.ts` (SES v2 SDK) — real code, exercised
+  in tests against a mocked SES client, IAM-role/credential-chain
+  authenticated like every other AWS SDK client in this codebase. What
+  cannot be verified from this sandbox: a real send, because that needs a
+  **verified SES sending identity** (an address or domain) in the target
+  AWS account/region — an unverified `EMAIL_FROM_ADDRESS` will have every
+  send rejected by SES itself. Verify a sending identity (and, if the
+  account is still in the SES sandbox, verify each recipient too, or
+  request production access) before trusting this in production. Set
+  `EMAIL_FROM_ADDRESS`, `APP_PASSWORD_RESET_URL`, and
+  `APP_ORGANIZATION_INVITE_URL` to enable delivery; the API's own IAM
+  instance role also needs `ses:SendEmail` — not yet added to
+  `lib/api-stack.ts`'s `ApiInstanceRole`, so add that policy statement
+  alongside verifying the sending identity before deploying this.
 - **A working staging deploy target.** `backend-deploy-staging.yml` pushes
   an image tagged `:staging` to the same ECR repo, but there's only one App
   Runner service (watching `:latest`) — nothing currently reads that tag. A

@@ -1,20 +1,25 @@
+import { sendEmail } from "./email";
+
 /**
  * Delivery boundary for password-reset links.
  *
- * There is no email provider integrated in this codebase. Rather than pretend
- * otherwise, this module is the single seam where one gets wired in, and it
- * reports honestly when nothing is configured.
+ * Real delivery now goes through notifications/email.ts (SES). This module
+ * stays the single seam that decides *what* the reset email says and
+ * *whether* delivery was even configured — it reports honestly when it
+ * wasn't, rather than pretending.
  *
  * What it must never do — and what it replaces — is the previous behaviour of
  * writing the reset token to stdout. On App Runner that goes straight to
  * CloudWatch, so anyone with log read access could take over any account by
  * requesting a reset for its address and reading the token out of the logs.
  *
- * To enable real delivery, implement `sendEmail` against a provider (SES is
- * the AWS-native fit for this stack) and set PASSWORD_RESET_FROM_ADDRESS plus
- * APP_PASSWORD_RESET_URL. Until then `deliverPasswordResetLink` returns
- * `false` and the caller still responds generically, so the API's behaviour
- * does not reveal whether an address is registered.
+ * Set EMAIL_FROM_ADDRESS and APP_PASSWORD_RESET_URL to enable this. Until
+ * both are set, deliverPasswordResetLink resolves to `delivered: false` and
+ * the caller still responds generically, so the API's behaviour does not
+ * reveal whether an address is registered. IMPLEMENTED — LIVE DELIVERY
+ * UNVERIFIED: the SES call itself is real code, exercised in tests against
+ * a mocked SES client, but no verified sending identity or live AWS
+ * credentials exist in this sandbox to send an actual email through.
  */
 
 export interface PasswordResetDelivery {
@@ -23,27 +28,34 @@ export interface PasswordResetDelivery {
 }
 
 function isDeliveryConfigured(): boolean {
-  return Boolean(process.env.PASSWORD_RESET_FROM_ADDRESS && process.env.APP_PASSWORD_RESET_URL);
+  return Boolean(process.env.EMAIL_FROM_ADDRESS && process.env.APP_PASSWORD_RESET_URL);
 }
 
-export function deliverPasswordResetLink(email: string, token: string): PasswordResetDelivery {
+export async function deliverPasswordResetLink(email: string, token: string): Promise<PasswordResetDelivery> {
   if (!isDeliveryConfigured()) {
     // Deliberately logs neither the token nor the address: the token is a
     // credential, and the address would leak who holds an account.
     console.warn(
       "[password-reset] delivery skipped: no email provider configured " +
-        "(set PASSWORD_RESET_FROM_ADDRESS and APP_PASSWORD_RESET_URL, and implement sendEmail)"
+        "(set EMAIL_FROM_ADDRESS and APP_PASSWORD_RESET_URL)"
     );
     return { delivered: false, reason: "no_provider_configured" };
   }
 
-  // A provider is configured but no transport is implemented yet. Failing
-  // loudly here is correct: silently returning `delivered: true` would make
-  // the reset flow look healthy while no mail is ever sent.
-  void email;
-  void token;
-  throw new Error(
-    "Password-reset delivery is configured but no email transport is implemented. " +
-      "Implement sendEmail() in src/notifications/passwordResetDelivery.ts."
-  );
+  const resetUrl = `${process.env.APP_PASSWORD_RESET_URL}?token=${encodeURIComponent(token)}`;
+
+  await sendEmail({
+    to: email,
+    subject: "Reset your Nettle password",
+    text:
+      `A password reset was requested for your Nettle account.\n\n` +
+      `Reset your password: ${resetUrl}\n\n` +
+      `This link expires in 1 hour and can only be used once. If you didn't request this, you can ignore this email — your password will not change.`,
+    html:
+      `<p>A password reset was requested for your Nettle account.</p>` +
+      `<p><a href="${resetUrl}">Reset your password</a></p>` +
+      `<p>This link expires in 1 hour and can only be used once. If you didn't request this, you can ignore this email — your password will not change.</p>`,
+  });
+
+  return { delivered: true };
 }

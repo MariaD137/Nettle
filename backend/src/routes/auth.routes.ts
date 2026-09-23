@@ -150,7 +150,7 @@ authRouter.post("/api/auth/forgot-password", forgotPasswordLimiter, forgotPasswo
     // logged and never returned in the response: doing either would hand
     // account takeover to anyone who can read logs or guess an address.
     try {
-      deliverPasswordResetLink(email, resetToken);
+      await deliverPasswordResetLink(email, resetToken);
     } catch (err) {
       // A delivery failure must not change the response, or the difference
       // becomes an account-enumeration oracle.

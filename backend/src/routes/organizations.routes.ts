@@ -16,6 +16,19 @@ import { entitledPlan } from "../billing/subscription";
 import { getTeamMemberLimit } from "../billing/entitlements";
 import { requireAuth } from "../auth/middleware";
 import { rateLimit } from "../middleware/rateLimit";
+import {
+  createInvitation,
+  listPendingInvitations,
+  getInvitationById,
+  acceptInvitation,
+  revokeInvitation,
+  InvitationNotFoundError,
+  InvitationExpiredError,
+  InvitationAlreadyAcceptedError,
+  InvitationEmailMismatchError,
+  TeamMemberLimitError,
+} from "../organizations/invitations";
+import { deliverInvitationLink } from "../notifications/invitationDelivery";
 
 export const organizationsRouter = Router();
 
@@ -153,6 +166,128 @@ organizationsRouter.delete("/api/organizations/:id/members/:userId", ...guarded,
     if (err instanceof CannotRemoveOwnerError) {
       return res.status(400).json({ error: err.message });
     }
+    throw err;
+  }
+});
+
+// --- Invitations -----------------------------------------------------------
+//
+// Alongside, not replacing, the direct-add-by-email flow above: that path
+// stays for an owner adding someone who already has a Nettle session handy
+// (e.g. a teammate in the same call). Invitations are for the normal case
+// — the invited person doesn't need an account yet, and gets a real email
+// with a link. Neither the organization nor the role for an invitation
+// accept ever comes from the client: both are looked up server-side from
+// the token (see organizations/invitations.ts's acceptInvitation).
+
+const VALID_ROLES = new Set(["member"]); // owner is never assignable via invitation — there is exactly one owner, set at creation
+
+organizationsRouter.post("/api/organizations/:id/invitations", ...guarded, async (req, res) => {
+  const loaded = await accessibleOrgOr404(req, res);
+  if (!loaded) return;
+  if (loaded.membership.role !== "owner") {
+    return res.status(403).json({ error: "Only the organization's owner can invite members" });
+  }
+
+  const email = typeof req.body?.email === "string" ? req.body.email.trim().toLowerCase() : "";
+  if (!email) {
+    return res.status(400).json({ error: "Provide an invitee 'email'" });
+  }
+  const role = typeof req.body?.role === "string" ? req.body.role : "member";
+  if (!VALID_ROLES.has(role)) {
+    return res.status(400).json({ error: 'role must be "member"' });
+  }
+
+  // Team size is entitled by the organization owner's plan — checked at
+  // invite time (a clear, immediate error for the owner) and re-checked at
+  // accept time (organizations/invitations.ts), since the owner's plan can
+  // change in between.
+  const owner = await getUserById(loaded.org.ownerId);
+  const plan = entitledPlan(owner);
+  const limit = getTeamMemberLimit(plan);
+  const currentMembers = await listMembers(loaded.org.id);
+  if (currentMembers.length >= limit) {
+    return res.status(403).json({
+      error: `Team member limit reached (${limit}). Upgrade your plan to add more.`,
+      teamLimitReached: true,
+      limit,
+      plan,
+    });
+  }
+  if (currentMembers.some((m) => m.email === email)) {
+    return res.status(409).json({ error: "That email is already a member of this organization" });
+  }
+
+  const inviter = await getUserById(req.userId!);
+  const { invitation, token } = await createInvitation(loaded.org.id, email, role as "member", req.userId!);
+
+  // Delivery failure must not fail invitation creation — the invitation and
+  // its token are real either way; the owner can relay it manually if email
+  // isn't configured in this environment (see notifications/invitationDelivery.ts).
+  let delivered = false;
+  try {
+    const result = await deliverInvitationLink(email, token, loaded.org.name, inviter?.email ?? "A Nettle user");
+    delivered = result.delivered;
+  } catch (err) {
+    console.error(`[org-invitation] delivery failed: ${(err as Error).message}`);
+  }
+
+  res.status(201).json({
+    invitation: { id: invitation.id, email: invitation.email, role: invitation.role, expiresAt: invitation.expiresAt },
+    delivered,
+  });
+});
+
+organizationsRouter.get("/api/organizations/:id/invitations", ...guarded, async (req, res) => {
+  const loaded = await accessibleOrgOr404(req, res);
+  if (!loaded) return;
+  if (loaded.membership.role !== "owner") {
+    return res.status(403).json({ error: "Only the organization's owner can view pending invitations" });
+  }
+  const invitations = await listPendingInvitations(loaded.org.id);
+  res.json({ invitations: invitations.map((i) => ({ id: i.id, email: i.email, role: i.role, createdAt: i.createdAt, expiresAt: i.expiresAt })) });
+});
+
+organizationsRouter.delete("/api/organizations/:id/invitations/:invitationId", ...guarded, async (req, res) => {
+  const loaded = await accessibleOrgOr404(req, res);
+  if (!loaded) return;
+  if (loaded.membership.role !== "owner") {
+    return res.status(403).json({ error: "Only the organization's owner can revoke invitations" });
+  }
+  const invitation = await getInvitationById(req.params.invitationId);
+  if (!invitation || invitation.organizationId !== loaded.org.id) {
+    return res.status(404).json({ error: "Invitation not found" });
+  }
+  await revokeInvitation(req.params.invitationId, loaded.org.id);
+  res.status(204).end();
+});
+
+/**
+ * Accepting an invitation is deliberately not scoped under
+ * /api/organizations/:id — the token alone determines which organization,
+ * so there is no :id for the client to (correctly or incorrectly) supply.
+ * requireAuth, not the org-scoped `guarded`/accessibleOrgOr404 pattern
+ * above: the accepting user isn't a member yet, so there's nothing for
+ * that helper to load.
+ */
+organizationsRouter.post("/api/invitations/accept", requireAuth, orgLimiter, async (req, res) => {
+  const token = typeof req.body?.token === "string" ? req.body.token : "";
+  if (!token) {
+    return res.status(400).json({ error: "Provide an invitation 'token'" });
+  }
+  const user = await getUserById(req.userId!);
+  if (!user) return res.status(401).json({ error: "Invalid session" });
+
+  try {
+    const member = await acceptInvitation(token, req.userId!, user.email);
+    const org = await getOrganization(member.organizationId);
+    res.status(200).json({ member, organization: org });
+  } catch (err) {
+    if (err instanceof InvitationNotFoundError) return res.status(404).json({ error: err.message });
+    if (err instanceof InvitationExpiredError) return res.status(410).json({ error: err.message });
+    if (err instanceof InvitationAlreadyAcceptedError) return res.status(409).json({ error: err.message });
+    if (err instanceof InvitationEmailMismatchError) return res.status(403).json({ error: err.message });
+    if (err instanceof TeamMemberLimitError) return res.status(403).json({ error: err.message, teamLimitReached: true });
     throw err;
   }
 });
