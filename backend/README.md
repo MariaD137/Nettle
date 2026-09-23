@@ -217,7 +217,8 @@ See the full system diagram (this Tier 1 piece plus the Tier 2 "Open Water"
 continuous monitoring, trust badge, and platform core) in the published
 artifact from the design pass. Tier 2 is no longer "doesn't exist yet" —
 the diagram's boxes for intake -> event queue -> detection -> alerting are
-now real code, just without the queue in between yet (see known gaps).
+now real code, including the queue between intake and detection (an
+in-process one — see known gaps for what that does and doesn't cover).
 
 ## Known gaps
 
@@ -243,13 +244,22 @@ Sign up and log in only — worth closing both gaps before this is reachable
 by real, hostile internet traffic (an unrate-limited login endpoint is a
 brute-force target in its own right).
 
-**Tier 2 processes events synchronously, in-process, with no queue.**
-The architecture diagram shows an event queue between intake and detection;
-today, `POST /api/events` runs detection inline on the request itself. Fine
-at low volume, but a burst of traffic to a monitored app becomes a burst of
-synchronous SQLite writes on the Nettle API itself. Add the queue (Kinesis,
-per the AWS architecture notes) once there's real traffic to justify it —
-not speculatively now.
+**Tier 2's queue is in-process, not a durable/distributed one.**
+`POST /api/events` used to run detection inline on the request itself, so a
+burst of traffic to a monitored app became a burst of synchronous SQLite
+work blocking the ingestion endpoint's own response. That's fixed:
+`patrol/detectionQueue.ts` decouples detection from the request — the
+response returns as soon as the event is durably recorded, and detection
+for that event runs afterward, off the critical path, one job at a time (see
+that file's comment for why serial rather than concurrent). What this
+*doesn't* give you is durability across a restart (an enqueued-but-not-yet-
+processed job is only in memory — the event itself is safe, already written
+to `events` before it's enqueued, so a lost job only means a missed
+detection pass for that one event) or fan-out across more than one API
+instance. Both of those need a real queue (Kinesis/SQS, per the AWS
+architecture notes) — still deliberately not added speculatively, since
+`node:sqlite` being single-instance today (see below) means a durable
+cross-instance queue wouldn't change anything until that's solved too.
 
 **`node:sqlite` is single-file, single-instance.** It doesn't work if the
 API ever runs as more than one container (App Runner today runs one). That's

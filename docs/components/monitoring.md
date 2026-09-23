@@ -17,6 +17,7 @@ Continuous monitoring of customer applications. Customer apps embed a middleware
 |------|---------|
 | `patrol/projects.ts` | Project CRUD (each project gets an API key) |
 | `patrol/events.ts` | Event storage and queries |
+| `patrol/detectionQueue.ts` | In-process async queue decoupling detection from ingestion |
 | `patrol/detection.ts` | Rule-based anomaly detection |
 | `patrol/alerts.ts` | Alert creation and queries |
 | `patrol/badge.ts` | Trust badge state computation |
@@ -40,7 +41,11 @@ Continuous monitoring of customer applications. Customer apps embed a middleware
 
 ## Detection Rules
 
-Defined in `patrol/detection.ts`. Current rules detect:
+Defined in `patrol/detection.ts`, run asynchronously via
+`patrol/detectionQueue.ts` (jobs process serially, one at a time, to avoid a
+cooldown race — see that file's comment). `POST /api/events` records the
+event synchronously and returns immediately; detection runs afterward, off
+the request's critical path. Current rules detect:
 - Brute-force login attempts
 - Credential stuffing patterns
 - Unusual request volumes
@@ -54,17 +59,18 @@ Defined in `patrol/detection.ts`. Current rules detect:
 ## Tests
 
 - `backend/test/patrol.test.ts` — Alert creation, project isolation
+- `backend/test/detectionQueue.test.ts` — Async queue: non-blocking enqueue, serial processing, cooldown-race safety, failure isolation
 - `backend/test/nettleMonitor.test.ts` — End-to-end middleware test
 
 ## Common Failures
 
 - Events not being recorded: Wrong API key or rate limit exceeded
-- Alerts not firing: Detection rules require minimum event volume
+- Alerts not firing: Detection rules require minimum event volume, or haven't been processed by the queue yet (async — poll, don't assume immediately-after-ingest)
 - Badge not updating: Badge reads from both scans and alerts tables
 
 ## How to Repair
 
 ```bash
 git checkout -b fix/monitoring-<problem>
-NETTLE_DB_PATH=:memory: node --import tsx --test test/patrol.test.ts test/nettleMonitor.test.ts
+NETTLE_DB_PATH=:memory: node --import tsx --test test/patrol.test.ts test/detectionQueue.test.ts test/nettleMonitor.test.ts
 ```

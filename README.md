@@ -42,9 +42,11 @@ priority order:
   code directly on the API host. Real isolation (an ECS Fargate task per
   scan, or e2b/Modal) is the next real hardening step before this touches
   untrusted traffic at scale.
-- **No password reset, no rate limiting on auth endpoints, no queue
-  between Tier 2 intake and detection, `node:sqlite` doesn't work past one
-  container instance.**
+- **Tier 2's intake-to-detection queue is in-process, not durable or
+  distributed** — real (async, off the request path), but an
+  enqueued-but-unprocessed job is memory-only, and `node:sqlite` doesn't
+  work past one container instance, so neither is worth upgrading to a
+  real queue (Kinesis/SQS) until the other is solved too.
 
 See `backend/README.md`'s "Known gaps" section and `infra/README.md`'s
 "what's deliberately not here yet" for the full list and reasoning on each.

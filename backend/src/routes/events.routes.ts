@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { findProjectByApiKey } from "../patrol/projects";
 import { recordEvent } from "../patrol/events";
-import { runDetection } from "../patrol/detection";
+import { enqueueDetection } from "../patrol/detectionQueue";
 import type { IncomingEvent } from "../patrol/types";
 import { rateLimit } from "../middleware/rateLimit";
 
@@ -64,7 +64,14 @@ eventsRouter.post("/api/events", eventsLimiter, async (req, res) => {
   }
 
   const stored = await recordEvent(project.id, req.body);
-  const alerts = await runDetection(project.id, stored);
 
-  res.status(202).json({ recorded: true, newAlerts: alerts });
+  // Detection runs off the request's critical path (see
+  // patrol/detectionQueue.ts) — the response no longer waits on it, so it
+  // can't report newAlerts synchronously here. The nettleMonitor SDK never
+  // read that field anyway (it's fire-and-forget on the customer's side);
+  // alerts are visible via GET /api/projects/:id/alerts once detection has
+  // run.
+  enqueueDetection(project.id, stored);
+
+  res.status(202).json({ recorded: true });
 });
