@@ -75,10 +75,19 @@ test("POST /api/scans returns hydrated recommendations for migrated controls", a
   assert.equal(secretFail.releaseImpact, "BLOCK_RELEASE");
 
   // A check not yet migrated onto the control library must come back with
-  // recommendation: null, never a fabricated one.
+  // recommendation: null, never a fabricated one. This fixture produced one
+  // from every scanner module up through osvVulnerabilities.ts's migration;
+  // as each remaining legacy module (codeQuality.ts, frontendSecurity.ts)
+  // gets migrated in turn, this fixture will eventually stop producing any
+  // unmigrated FAIL at all — that's expected, not a regression, so this
+  // assertion only checks the invariant when the condition still applies.
+  // The invariant itself is covered unconditionally by "hydration never
+  // fabricates a recommendation for a result with no controlKey" in
+  // controls-engine.test.ts.
   const unmigrated = body.checkResults.find((r: any) => r.status === "FAIL" && !r.controlKey);
-  assert.ok(unmigrated, "fixture must still have at least one FAIL from an unmigrated legacy scanner module");
-  assert.equal(unmigrated.recommendation, null);
+  if (unmigrated) {
+    assert.equal(unmigrated.recommendation, null);
+  }
 });
 
 test("a free-tier preview still gets hydrated recommendations on the few findings it does show", async (t) => {
