@@ -1,7 +1,6 @@
 import path from "path";
 import { walk } from "./walk";
 import { scanSecretsControl } from "./secrets";
-import { scanDependencies } from "./dependencies";
 import { scanLegalPolicy } from "./legalPolicy";
 import { scanAIDisclosure } from "./aiDisclosure";
 import { scanWithSemgrep } from "./semgrepScanner";
@@ -34,9 +33,10 @@ import { scanLogoutInvalidationControl } from "./controls/checks/logoutInvalidat
 import { scanAiCostLimitsControl } from "./controls/checks/aiCostLimitsControl";
 import { scanAiToolExecutionControl } from "./controls/checks/aiToolExecutionControl";
 import { scanAiOutputValidationControl } from "./controls/checks/aiOutputValidationControl";
+import { scanDependencyLockfileControl } from "./controls/checks/dependencyLockfileControl";
 import { detectFrameworks } from "./frameworkDetection";
 import { mapFrameworkToTechnology } from "./controls/technologyMap";
-import "./controls"; // registers the control library (AUTH-001..008, SECRET-001, API-001..006, DB-001..003, BROWSER-001, CRYPTO-001, AI-001..004, INPUT-001..002, NET-001, ...)
+import "./controls"; // registers the control library (AUTH-001..008, SECRET-001, API-001..006, DB-001..003, BROWSER-001, CRYPTO-001, AI-001..004, INPUT-001..002, NET-001, DEPS-001, ...)
 import { getControlLibraryVersion, getControlVersionsSnapshot } from "./controls";
 import { SCANNER_VERSION, type CheckResult, type Finding, type Pass, type ScanReport } from "./types";
 import { getSemgrepVersion } from "./initialization";
@@ -80,15 +80,16 @@ export function runScan(targetPath: string): ScanReport {
     ...scanAiCostLimitsControl(files, targetRoot),
     ...scanAiToolExecutionControl(files, targetRoot),
     ...scanAiOutputValidationControl(files, targetRoot),
+    ...scanDependencyLockfileControl(targetRoot),
   ];
 
   // Every other scanner module still speaks the legacy Finding/Pass shape.
   // Not yet migrated onto a Control definition — see the gap report for
   // what that migration involves per module. apiSecurity.ts,
-  // databaseSecurity.ts, sessionJwt.ts, and aiSecurity.ts are fully migrated
-  // (every check each made now lives above) and have been deleted.
+  // databaseSecurity.ts, sessionJwt.ts, aiSecurity.ts, and dependencies.ts
+  // are fully migrated (every check each made now lives above) and have
+  // been deleted.
   const legacyResults = [
-    scanDependencies(targetRoot),
     scanLegalPolicy(targetRoot),
     scanAIDisclosure(files),
     scanWithSemgrep(targetRoot),
