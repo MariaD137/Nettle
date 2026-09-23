@@ -41,8 +41,19 @@ costs more than `db.t4g.micro` at this workload. The upgrade path stays open.
 
 Running the test suite needs no database server. **Production cannot silently
 fall back**: `assertProductionPersistence()` refuses to start when
-`NODE_ENV=production` and `DATABASE_URL` is unset, rather than booting onto
-storage that is about to be discarded.
+`NODE_ENV=production` and `resolveDatabaseUrl()` can't produce a connection
+string, rather than booting onto storage that is about to be discarded.
+
+In production, `DATABASE_URL` is never actually set as a literal
+environment variable — App Runner can't put a composite value like that
+through its Secrets Manager integration without the resolved RDS password
+ending up stored in the service's own configuration (see
+`infra/lib/api-stack.ts`). Instead it sets plain `DB_HOST`/`DB_PORT`/
+`DB_NAME` plus `DB_USERNAME`/`DB_PASSWORD` resolved from Secrets Manager
+inside the container, and `resolveDatabaseUrl()` in `backend/src/db/index.ts`
+assembles the connection string from those. `DATABASE_URL` set directly
+still works and takes priority — that's what local development, Docker
+Compose, and the examples below use.
 
 CI runs the suite against **both** engines (`.github/workflows/ci.yml`), because
 they differ in ways that matter:

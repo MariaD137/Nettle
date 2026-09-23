@@ -14,14 +14,59 @@ import { migrateLegacyTokenColumns } from "./legacyTokenMigration";
  * every deployment, so a SQLite file there loses every user, session, project,
  * scan and billing anchor each time the service is redeployed or scaled.
  *
- * DATABASE_URL decides: set it and PostgreSQL is used; leave it unset and the
- * SQLite file at NETTLE_DB_PATH is used. That means a developer needs no
- * database server to run the tests, and production cannot accidentally fall
- * back to SQLite — see assertProductionPersistence() below.
+ * DATABASE_URL decides: set it (directly, or assembled from DB_HOST/
+ * DB_USERNAME/DB_PASSWORD — see resolveDatabaseUrl below) and PostgreSQL is
+ * used; leave both unset and the SQLite file at NETTLE_DB_PATH is used. That
+ * means a developer needs no database server to run the tests, and
+ * production cannot accidentally fall back to SQLite — see
+ * assertProductionPersistence() below.
  */
 
-const DATABASE_URL = process.env.DATABASE_URL;
 const SQLITE_PATH = process.env.NETTLE_DB_PATH || path.join(process.cwd(), "nettle.db");
+
+/**
+ * Resolves the PostgreSQL connection string, either directly from
+ * DATABASE_URL or assembled from discrete DB_HOST/DB_PORT/DB_NAME/
+ * DB_USERNAME/DB_PASSWORD parts.
+ *
+ * The discrete-parts path exists specifically for infra/lib/api-stack.ts:
+ * App Runner has two separate mechanisms for configuration —
+ * runtimeEnvironmentVariables (plain values, visible in the console and via
+ * DescribeService) and runtimeEnvironmentSecrets (a Secrets Manager/SSM ARN,
+ * resolved by App Runner only inside the running container, never stored in
+ * App Runner's own service configuration). A single composite DATABASE_URL
+ * containing the RDS password can only go through the first mechanism,
+ * because runtimeEnvironmentSecrets substitutes one whole env var with one
+ * whole secret JSON key's value — it can't interpolate a literal
+ * "postgresql://" prefix and a hostname around two separate secret fields.
+ * Accepting the credentials as discrete parts lets the CDK stack put
+ * DB_USERNAME and DB_PASSWORD through runtimeEnvironmentSecrets (the RDS
+ * secret's own "username"/"password" keys, same native mechanism already
+ * used for the Stripe secrets) and assemble the actual connection string
+ * here, inside the container, where it's never visible to anything with
+ * apprunner:DescribeService but no secretsmanager:GetSecretValue on this
+ * specific secret.
+ *
+ * DATABASE_URL still wins when set directly — local development,
+ * docker-compose, and the test suite all keep working exactly as before.
+ */
+export function resolveDatabaseUrl(env: NodeJS.ProcessEnv = process.env): string | undefined {
+  if (env.DATABASE_URL) return env.DATABASE_URL;
+
+  const { DB_HOST, DB_USERNAME, DB_PASSWORD } = env;
+  if (!DB_HOST || !DB_USERNAME || !DB_PASSWORD) return undefined;
+
+  const port = env.DB_PORT || "5432";
+  const name = env.DB_NAME || "nettle";
+  // encodeURIComponent defensively, in case a credential ever contains a
+  // URL-significant character (RDS's generated password excludes those by
+  // default, but this constructor shouldn't rely on that holding forever).
+  const user = encodeURIComponent(DB_USERNAME);
+  const pass = encodeURIComponent(DB_PASSWORD);
+  return `postgresql://${user}:${pass}@${DB_HOST}:${port}/${name}`;
+}
+
+const DATABASE_URL = resolveDatabaseUrl();
 
 /**
  * Refuses to start a production process on ephemeral storage.
@@ -33,12 +78,12 @@ const SQLITE_PATH = process.env.NETTLE_DB_PATH || path.join(process.cwd(), "nett
 export function assertProductionPersistence(
   env: NodeJS.ProcessEnv = process.env
 ): void {
-  if (env.NODE_ENV === "production" && !env.DATABASE_URL) {
+  if (env.NODE_ENV === "production" && !resolveDatabaseUrl(env)) {
     throw new Error(
-      "DATABASE_URL is not set. Nettle refuses to run in production on SQLite: " +
-        "the container filesystem is ephemeral, so all users, sessions, projects, " +
-        "scans and billing state would be destroyed on the next deployment. " +
-        "Point DATABASE_URL at the RDS instance."
+      "DATABASE_URL is not set (directly, or via DB_HOST/DB_USERNAME/DB_PASSWORD). " +
+        "Nettle refuses to run in production on SQLite: the container filesystem " +
+        "is ephemeral, so all users, sessions, projects, scans and billing state " +
+        "would be destroyed on the next deployment. Point it at the RDS instance."
     );
   }
 }

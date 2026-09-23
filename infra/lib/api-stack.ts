@@ -128,23 +128,31 @@ export class NettleApiStack extends Stack {
             runtimeEnvironmentVariables: [
               { name: "NODE_ENV", value: "production" },
               { name: "PORT", value: "8080" },
-              // Assembled from the RDS secret's discrete fields rather than
-              // stored as a URL, so the password never exists as a separate
-              // copy that could drift from the one RDS rotates.
-              {
-                name: "DATABASE_URL",
-                value: [
-                  "postgresql://",
-                  props.databaseSecret.secretValueFromJson("username").unsafeUnwrap(),
-                  ":",
-                  props.databaseSecret.secretValueFromJson("password").unsafeUnwrap(),
-                  "@",
-                  props.databaseEndpoint,
-                  ":5432/nettle",
-                ].join(""),
-              },
+              // Non-sensitive connection parts only. The credentials
+              // themselves go through runtimeEnvironmentSecrets below — see
+              // that block's comment for why they can't be combined into a
+              // single composite DATABASE_URL here.
+              { name: "DB_HOST", value: props.databaseEndpoint },
+              { name: "DB_PORT", value: "5432" },
+              { name: "DB_NAME", value: "nettle" },
             ],
             runtimeEnvironmentSecrets: [
+              // App Runner resolves these itself, inside the running
+              // container, from the RDS-generated secret's own "username"/
+              // "password" JSON keys — never stored in this template, in App
+              // Runner's own service configuration, or anywhere DescribeService
+              // or the console would surface it. backend/src/db/index.ts
+              // assembles the actual connection string from these plus the
+              // DB_HOST/DB_PORT/DB_NAME above once it's running.
+              //
+              // A composite DATABASE_URL can't go through this same
+              // mechanism: each entry here substitutes one whole env var
+              // with one whole secret JSON key's value, so there's no way
+              // to interpolate a "postgresql://" prefix and a hostname
+              // around two separate secret fields — hence two entries
+              // instead of one.
+              { name: "DB_USERNAME", value: `${props.databaseSecret.secretArn}:username::` },
+              { name: "DB_PASSWORD", value: `${props.databaseSecret.secretArn}:password::` },
               { name: "STRIPE_SECRET_KEY", value: `${appSecret.secretArn}:STRIPE_SECRET_KEY::` },
               { name: "STRIPE_WEBHOOK_SECRET", value: `${appSecret.secretArn}:STRIPE_WEBHOOK_SECRET::` },
               { name: "STRIPE_PRICE_TIER1", value: `${appSecret.secretArn}:STRIPE_PRICE_TIER1::` },
