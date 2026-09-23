@@ -56,29 +56,29 @@ async function userWith(email: string, plan: string, status: string) {
 // --- the rule itself, across every state the billing model can be in ---
 
 test("entitledPlan: an active paid subscription keeps its plan", async () => {
-  const { user } = await userWith("ent-active@example.com", "tier1", "active");
-  assert.equal(entitledPlan(user), "tier1");
+  const { user } = await userWith("ent-active@example.com", "build", "active");
+  assert.equal(entitledPlan(user), "build");
   assert.equal(hasActiveSubscription(user), true);
 });
 
 test("entitledPlan: a trialing subscription keeps its plan", async () => {
-  const { user } = await userWith("ent-trialing@example.com", "tier2", "trialing");
-  assert.equal(entitledPlan(user), "tier2");
+  const { user } = await userWith("ent-trialing@example.com", "protect", "trialing");
+  assert.equal(entitledPlan(user), "protect");
 });
 
 test("entitledPlan: a canceled subscription drops to free", async () => {
-  const { user } = await userWith("ent-canceled@example.com", "tier1", "canceled");
-  assert.equal(user.plan, "tier1", "the purchased plan is still recorded for reconciliation");
+  const { user } = await userWith("ent-canceled@example.com", "build", "canceled");
+  assert.equal(user.plan, "build", "the purchased plan is still recorded for reconciliation");
   assert.equal(entitledPlan(user), "free", "but it no longer grants anything");
 });
 
 test("entitledPlan: a past_due subscription drops to free", async () => {
-  const { user } = await userWith("ent-pastdue@example.com", "tier2", "past_due");
+  const { user } = await userWith("ent-pastdue@example.com", "protect", "past_due");
   assert.equal(entitledPlan(user), "free");
 });
 
 test("entitledPlan: an unpaid/incomplete subscription drops to free", async () => {
-  const { user } = await userWith("ent-unpaid@example.com", "tier1", "unpaid");
+  const { user } = await userWith("ent-unpaid@example.com", "build", "unpaid");
   assert.equal(entitledPlan(user), "free");
 });
 
@@ -92,6 +92,13 @@ test("entitledPlan: an anonymous caller is free", () => {
 });
 
 // --- the same rule as observed through POST /api/scans ---
+//
+// Pricing rework: FREE named accounts (including a lapsed BUILD/PROTECT
+// subscription, which drops to FREE entitlement — same rule as above) can
+// no longer get a real scan at all, preview included. Only a fully
+// anonymous caller (no account identified at all) still gets the
+// pre-existing preview-scan behavior — see billing/scanQuota.ts's
+// scanBlocked() in routes/scans.routes.ts for why anonymous stays separate.
 
 test("POST /api/scans enforces entitlement, not the recorded plan", async (t) => {
   const app = express();
@@ -100,9 +107,9 @@ test("POST /api/scans enforces entitlement, not the recorded plan", async (t) =>
   const { server, base } = await listen(app);
   t.after(() => server.close());
 
-  const active = await userWith("scan-active@example.com", "tier1", "active");
-  const canceled = await userWith("scan-canceled@example.com", "tier1", "canceled");
-  const pastDue = await userWith("scan-pastdue@example.com", "tier2", "past_due");
+  const active = await userWith("scan-active@example.com", "build", "active");
+  const canceled = await userWith("scan-canceled@example.com", "build", "canceled");
+  const pastDue = await userWith("scan-pastdue@example.com", "protect", "past_due");
   const free = await userWith("scan-free@example.com", "free", "none");
 
   const activeRes = await scanAs(base, active.token);
@@ -112,21 +119,24 @@ test("POST /api/scans enforces entitlement, not the recorded plan", async (t) =>
   const totalFindings = activeRes.body.access.totalFindings;
   assert.ok(totalFindings > 3, "fixture must produce more findings than a preview shows");
 
-  // The regression: same plan string as the active user, no longer paying.
+  // The regression this suite guards against, updated for the pricing
+  // rework: same plan string as the active user, no longer paying — must be
+  // blocked outright now (FREE never gets a real scan), not just downgraded
+  // to a preview the way it used to be.
   const canceledRes = await scanAs(base, canceled.token);
-  assert.equal(canceledRes.status, 200);
-  assert.equal(canceledRes.body.access.tier, "preview", "canceled must not receive the full report");
-  assert.equal(canceledRes.body.access.fullReport, false);
-  assert.ok(canceledRes.body.access.lockedFindings > 0);
-  assert.ok(canceledRes.body.findings.length < totalFindings);
+  assert.equal(canceledRes.status, 402, "a lapsed subscription drops to FREE entitlement, which cannot scan at all");
+  assert.equal(canceledRes.body.subscriptionRequired, true);
+  assert.equal(canceledRes.body.plan, "free");
 
   const pastDueRes = await scanAs(base, pastDue.token);
-  assert.equal(pastDueRes.body.access.tier, "preview", "a failed payment must not keep paid output");
+  assert.equal(pastDueRes.status, 402, "a failed payment must not keep any scan access, preview included");
 
   const freeRes = await scanAs(base, free.token);
-  assert.equal(freeRes.body.access.tier, "preview");
+  assert.equal(freeRes.status, 402);
+  assert.equal(freeRes.body.subscriptionRequired, true);
+  assert.equal(freeRes.body.requiredPlan, "build");
 
   const anonRes = await scanAs(base);
-  assert.equal(anonRes.status, 200, "anonymous one-off scans stay supported");
+  assert.equal(anonRes.status, 200, "anonymous one-off scans stay supported — a different thing from the FREE named plan");
   assert.equal(anonRes.body.access.tier, "preview");
 });

@@ -37,7 +37,7 @@ const STEPS: { title: string; detail: string }[] = [
   { title: "Understand", detail: "Every finding explains what was checked, what was found, and why it matters." },
   { title: "Fix", detail: "Recommendations are technology-aware: a fix for your actual stack, not a generic checklist." },
   { title: "Verify", detail: "Rescan to confirm the fix landed — the same check, the same evidence standard." },
-  { title: "Monitor", detail: "Tier 2 keeps watching after launch, with live alerts on suspicious traffic." },
+  { title: "Monitor", detail: "PROTECT keeps watching after launch, with live alerts on suspicious traffic." },
 ];
 
 export default function MarketingPage() {
@@ -122,7 +122,7 @@ export default function MarketingPage() {
         <div className="plan-grid">
           {PLANS.map((plan) => (
             <div key={plan.id} className={`plan-card ${plan.highlight ? "plan-card-highlight" : ""}`}>
-              {plan.highlight && <span className="plan-flag">Most complete</span>}
+              {plan.badge && <span className="plan-flag">{plan.badge}</span>}
               <h2>{plan.name}</h2>
               <p className="plan-tagline">{plan.tagline}</p>
               <div className="plan-price">
@@ -136,13 +136,19 @@ export default function MarketingPage() {
                     <span>{f}</span>
                   </li>
                 ))}
+                {plan.excluded?.map((f) => (
+                  <li key={f} className="muted">
+                    <span aria-hidden="true">&#10005;</span>
+                    <span>{f}</span>
+                  </li>
+                ))}
               </ul>
               <Link
                 to="/login"
                 className={plan.highlight ? "button" : "button secondary"}
                 style={{ width: "100%", textAlign: "center" }}
               >
-                Get started
+                {plan.cta}
               </Link>
             </div>
           ))}

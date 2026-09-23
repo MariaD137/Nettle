@@ -40,11 +40,11 @@ test("POST /api/scans returns hydrated recommendations for migrated controls", a
   const { server, base } = await listen(app);
   t.after(() => server.close());
 
-  // A paid (tier1) session, so the response is the full, untrimmed report —
+  // A paid (build) session, so the response is the full, untrimmed report —
   // this test is about hydration across multiple controls, not about the
   // preview's severity-ranked top-3 truncation (that's the next test).
   const user = await createUser("hydration-full@example.com", "correct horse battery staple");
-  await setSubscriptionStatus(user.id, "tier1", "active");
+  await setSubscriptionStatus(user.id, "build", "active");
   const token = await createSession(user.id);
 
   const form = new FormData();

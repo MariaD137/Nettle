@@ -26,8 +26,8 @@ const checkoutLimiter = rateLimit({
 
 billingRouter.post("/api/billing/checkout-session", requireAuth, checkoutLimiter, async (req, res) => {
   const plan = req.body?.plan;
-  if (plan !== "tier1" && plan !== "tier2") {
-    return res.status(400).json({ error: 'plan must be "tier1" or "tier2"' });
+  if (plan !== "build" && plan !== "protect") {
+    return res.status(400).json({ error: 'plan must be "build" or "protect"' });
   }
 
   const user = await getUserById(req.userId!);

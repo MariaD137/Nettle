@@ -43,7 +43,7 @@ function buildApp() {
 
 async function subscribedUser(base: string, email: string) {
   const user = await createUser(email, PASSWORD);
-  await setSubscriptionStatus(user.id, "tier2", "active");
+  await setSubscriptionStatus(user.id, "protect", "active");
   const res = await fetch(`${base}/api/auth/login`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },

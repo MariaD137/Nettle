@@ -4,6 +4,9 @@ import { recordEvent } from "../patrol/events";
 import { enqueueDetection } from "../patrol/detectionQueue";
 import type { IncomingEvent } from "../patrol/types";
 import { rateLimit } from "../middleware/rateLimit";
+import { getUserById } from "../auth/users";
+import { entitledPlan } from "../billing/subscription";
+import { canUseContinuousMonitoring } from "../billing/entitlements";
 
 export const eventsRouter = Router();
 
@@ -59,6 +62,21 @@ eventsRouter.post("/api/events", eventsLimiter, async (req, res) => {
   if (!project) {
     return res.status(401).json({ error: "Invalid API key" });
   }
+
+  // Continuous monitoring/event ingestion is PROTECT-only (§8). Gated on the
+  // project owner's entitled plan, same as everything else per-project —
+  // Phase D scoped MVP keeps billing per-user, not per-org.
+  const owner = await getUserById(project.userId);
+  const plan = entitledPlan(owner);
+  if (!canUseContinuousMonitoring(plan)) {
+    return res.status(402).json({
+      error: "Continuous monitoring requires an active PROTECT subscription",
+      subscriptionRequired: true,
+      requiredPlan: "protect",
+      plan,
+    });
+  }
+
   if (!isValidEvent(req.body)) {
     return res.status(400).json({ error: "Expected { ip, method, path, statusCode, userAgent? }" });
   }

@@ -7,6 +7,7 @@ import NettleLogo from "../components/NettleLogo";
 import { AppBar, BottomNav, Icons, type TabItem } from "../components/MobileChrome";
 import { useIsMobile } from "../useIsMobile";
 import { useNavigate } from "react-router-dom";
+import { scanUsageCopy } from "../scanUsage";
 
 function scoreLabel(score: number): string {
   if (score >= 90) return "READY";
@@ -84,8 +85,8 @@ export default function DashboardPage() {
           {overview && (
             <div className="m-statstrip">
               <div className="m-stat">
-                <span className={`m-stat-value ${overview.quota?.exhausted ? "stat-critical" : ""}`}>
-                  {overview.quota ? overview.quota.remaining : "—"}
+                <span className={`m-stat-value ${overview.quota && scanUsageCopy(overview.quota).critical ? "stat-critical" : ""}`}>
+                  {overview.quota ? scanUsageCopy(overview.quota).headline : "—"}
                 </span>
                 <span className="m-stat-label">Scans left</span>
               </div>
@@ -173,6 +174,8 @@ export default function DashboardPage() {
       <div className="topbar">
         <span className="brand"><NettleLogo size={22} title="" />nettle</span>
         <div className="topbar-right">
+          <Link to="/explore" className="settings-link">Explore</Link>
+          <Link to="/subscribe" className="settings-link">Upgrade</Link>
           <Link to="/settings" className="settings-link">Settings</Link>
           <span>{user?.email}</span>
           <button className="secondary" onClick={() => logout()}>
@@ -217,18 +220,23 @@ export default function DashboardPage() {
                 : "No scans yet"}
             </span>
           </div>
-          {overview.quota && (
-            <div className="stat-card">
-              <span className={`stat-value ${overview.quota.exhausted ? "stat-critical" : ""}`}>
-                {overview.quota.remaining}
-              </span>
-              <span className="stat-label">Scans remaining</span>
-              <span className="stat-sublabel">
-                {overview.quota.used} of {overview.quota.limit} used · resets{" "}
-                {new Date(overview.quota.periodEnd).toLocaleDateString()}
-              </span>
-            </div>
-          )}
+          {overview.quota && (() => {
+            const usage = scanUsageCopy(overview.quota!);
+            return (
+              <div className="stat-card">
+                <span className={`stat-value ${usage.critical ? "stat-critical" : ""}`}>{usage.headline}</span>
+                <span className="stat-label">
+                  {overview.quota!.limit === null ? "Scanning" : overview.quota!.limit === 0 ? "Scanning" : "Scans remaining"}
+                </span>
+                <span className="stat-sublabel">
+                  {usage.detail}
+                  {overview.quota!.limit !== null && overview.quota!.limit > 0
+                    ? ` · resets ${new Date(overview.quota!.periodEnd).toLocaleDateString()}`
+                    : ""}
+                </span>
+              </div>
+            );
+          })()}
         </div>
       )}
 

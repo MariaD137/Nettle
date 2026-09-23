@@ -32,7 +32,7 @@ async function setUp() {
 
 async function userAndToken(email: string, tier = true) {
   const user = await createUser(email, "correct horse battery staple");
-  if (tier) await setSubscriptionStatus(user.id, "tier1", "active");
+  if (tier) await setSubscriptionStatus(user.id, "build", "active");
   const token = await createSession(user.id);
   return { user, token };
 }
@@ -93,7 +93,10 @@ test("owner can add a member by email; the member then sees the org", async (t) 
   const { server, base } = await setUp();
   t.after(() => server.close());
 
-  const { token: ownerToken } = await userAndToken("org-add-owner@example.com", false);
+  // The owner needs a paid plan here specifically: FREE's team-member limit
+  // is 1 (the owner alone), so adding any member at all requires BUILD or
+  // PROTECT — see billing/entitlements.ts's getTeamMemberLimit.
+  const { token: ownerToken } = await userAndToken("org-add-owner@example.com", true);
   const { user: member, token: memberToken } = await userAndToken("org-add-member@example.com", false);
 
   const createRes = await fetch(`${base}/api/organizations`, {
@@ -124,7 +127,8 @@ test("adding a member requires an existing Nettle account (404), and rejects a d
   const { server, base } = await setUp();
   t.after(() => server.close());
 
-  const { token: ownerToken } = await userAndToken("org-add2-owner@example.com", false);
+  // Paid owner — see the "owner can add a member" test above for why.
+  const { token: ownerToken } = await userAndToken("org-add2-owner@example.com", true);
   await userAndToken("org-add2-member@example.com", false);
 
   const createRes = await fetch(`${base}/api/organizations`, {
@@ -160,7 +164,8 @@ test("a member (not owner) cannot add members, remove members, or rename the org
   const { server, base } = await setUp();
   t.after(() => server.close());
 
-  const { token: ownerToken } = await userAndToken("org-perm-owner@example.com", false);
+  // Paid owner — see the "owner can add a member" test above for why.
+  const { token: ownerToken } = await userAndToken("org-perm-owner@example.com", true);
   const { user: member, token: memberToken } = await userAndToken("org-perm-member@example.com", false);
 
   const createRes = await fetch(`${base}/api/organizations`, {

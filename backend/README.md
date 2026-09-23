@@ -131,6 +131,24 @@ random tokens in a `sessions` table (30-day expiry), not JWTs — simpler to
 revoke (`POST /api/auth/logout` just deletes the row) and nothing to get
 wrong cryptographically.
 
+**Pricing & entitlements** (`src/billing/entitlements.ts`): three plans —
+FREE ($0, 1 project, no real scans — control-library preview and sample
+findings only), BUILD ($49/mo, 10 scans/billing-period, 3 projects, Fix
+Center, scan history, 3 team members), PROTECT ($199/mo, unlimited/fair-use
+scans and projects, continuous monitoring, live alerts, API access, 10 team
+members). `entitlements.ts` is the single source of truth every route asks
+(`canRunScan`, `canUseFixCenter`, `canUseContinuousMonitoring`, ...) rather
+than hardcoding plan checks per-route. FREE is a real, capped dashboard
+tier now, not a walled-off pre-payment state — see `billing/subscription.ts`'s
+`requireSubscription` (BUILD+) and `requireProtect` (PROTECT-only) for the
+two gate levels layered on top of plain `requireAuth`. Scan quota
+enforcement (`billing/scanQuota.ts`) reserves each scan atomically via a
+single `INSERT ... ON CONFLICT DO UPDATE ... RETURNING` against the same
+`rate_limit_buckets` table the rate limiter uses, specifically so two
+concurrent requests near the monthly limit can't both win the last slot —
+see `test/scanQuota.test.ts` and `test/pricingEntitlements.test.ts` for
+that race actually exercised, not just asserted.
+
 **Billing** (`src/routes/billing.routes.ts`) is real Stripe integration code
 — `POST /api/billing/checkout-session` creates a real Checkout Session,
 `POST /api/billing/webhook` verifies Stripe's signature and activates the
@@ -139,8 +157,8 @@ account** — no test-mode keys available in this sandbox — but the signature
 verification itself is tested for real: `test/billing.test.ts` constructs a
 genuinely, correctly HMAC-signed webhook payload using Stripe's actual
 signing scheme (not a mock) and confirms the handler updates the user's
-plan. Set `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_PRICE_TIER1`,
-`STRIPE_PRICE_TIER2` to actually use this. Note in `src/index.ts`: the
+plan. Set `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_PRICE_BUILD`,
+`STRIPE_PRICE_PROTECT` to actually use this. Note in `src/index.ts`: the
 webhook route is mounted *before* `express.json()` — Stripe signs the exact
 raw request bytes, and parsing the body first would break every real
 signature check.

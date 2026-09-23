@@ -41,7 +41,7 @@ test("GET /api/overview returns real per-project badges and real aggregate total
   t.after(() => server.close());
 
   const user = await createUser("overview-agg@example.com", "correct horse battery staple");
-  await setSubscriptionStatus(user.id, "tier1", "active");
+  await setSubscriptionStatus(user.id, "build", "active");
   const token = await createSession(user.id);
   const project = await createProject(user.id, "Overview Aggregation Test");
 

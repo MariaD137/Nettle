@@ -44,23 +44,27 @@ async function signUp(base: string, email: string, password: string): Promise<st
 const PASSWORD = "correct horse battery staple";
 
 test("hasActiveSubscription requires both a paid plan and an active status", () => {
-  assert.equal(hasActiveSubscription({ plan: "tier1", subscriptionStatus: "active" }), true);
-  assert.equal(hasActiveSubscription({ plan: "tier2", subscriptionStatus: "active" }), true);
-  assert.equal(hasActiveSubscription({ plan: "tier1", subscriptionStatus: "trialing" }), true);
+  assert.equal(hasActiveSubscription({ plan: "build", subscriptionStatus: "active" }), true);
+  assert.equal(hasActiveSubscription({ plan: "protect", subscriptionStatus: "active" }), true);
+  assert.equal(hasActiveSubscription({ plan: "build", subscriptionStatus: "trialing" }), true);
 
   // A brand new account.
   assert.equal(hasActiveSubscription({ plan: "free", subscriptionStatus: "none" }), false);
   // Plan set but payment never completed, or the subscription ended.
-  assert.equal(hasActiveSubscription({ plan: "tier1", subscriptionStatus: "none" }), false);
-  assert.equal(hasActiveSubscription({ plan: "tier1", subscriptionStatus: "canceled" }), false);
+  assert.equal(hasActiveSubscription({ plan: "build", subscriptionStatus: "none" }), false);
+  assert.equal(hasActiveSubscription({ plan: "build", subscriptionStatus: "canceled" }), false);
   // A failed payment stops access rather than coasting.
-  assert.equal(hasActiveSubscription({ plan: "tier1", subscriptionStatus: "past_due" }), false);
+  assert.equal(hasActiveSubscription({ plan: "build", subscriptionStatus: "past_due" }), false);
   // A status alone is not enough.
   assert.equal(hasActiveSubscription({ plan: "free", subscriptionStatus: "active" }), false);
   assert.equal(hasActiveSubscription(null), false);
 });
 
-test("a newly signed up account is paywalled out of the dashboard", async () => {
+// FREE is a real, usable dashboard tier now (pricing rework — see
+// billing/entitlements.ts): a signed-up account with no subscription can
+// reach the dashboard itself. What actually requires BUILD/PROTECT is real
+// scan execution and the BUILD+/PROTECT-only routes covered below.
+test("a newly signed up FREE account can reach the dashboard, with FREE-shaped limits", async () => {
   const { server, base } = await listen(buildApp());
   try {
     const token = await signUp(base, "paywall-new@example.com", PASSWORD);
@@ -69,16 +73,50 @@ test("a newly signed up account is paywalled out of the dashboard", async () => 
     const res = await fetch(`${base}/api/overview`, {
       headers: { Authorization: `Bearer ${token}` },
     });
-    assert.equal(res.status, 402);
+    assert.equal(res.status, 200);
     const body = await res.json();
-    assert.equal(body.subscriptionRequired, true);
-    assert.equal(body.plan, "free");
+    assert.equal(body.totalProjects, 0);
+    assert.equal(body.quota.limit, 0, "FREE has no scan allowance at all");
   } finally {
     server.close();
   }
 });
 
-test("every dashboard route is paywalled, not just the entry point", async () => {
+test("basic project management is open to every signed-in account, FREE included", async () => {
+  const { server, base } = await listen(buildApp());
+  try {
+    const token = await signUp(base, "paywall-free-crud@example.com", PASSWORD);
+
+    const createRes = await fetch(`${base}/api/projects`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "My First Project" }),
+    });
+    assert.equal(createRes.status, 201, "FREE gets its one project");
+    const project = await createRes.json();
+
+    const listRes = await fetch(`${base}/api/projects`, { headers: { Authorization: `Bearer ${token}` } });
+    assert.equal(listRes.status, 200);
+
+    const detailRes = await fetch(`${base}/api/projects/${project.id}`, { headers: { Authorization: `Bearer ${token}` } });
+    assert.equal(detailRes.status, 200);
+    const detail = await detailRes.json();
+    assert.equal(detail.latestScan, null, "FREE never has Fix Center content — no scan ever ran");
+
+    // A second project is over FREE's limit of 1.
+    const secondRes = await fetch(`${base}/api/projects`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "Second Project" }),
+    });
+    assert.equal(secondRes.status, 403);
+    assert.equal((await secondRes.json()).projectLimitReached, true);
+  } finally {
+    server.close();
+  }
+});
+
+test("BUILD+ routes stay paywalled behind a real subscription", async () => {
   const { server, base } = await listen(buildApp());
   try {
     const user = await createUser("paywall-routes@example.com", PASSWORD);
@@ -86,15 +124,6 @@ test("every dashboard route is paywalled, not just the entry point", async () =>
     const token = await signUp(base, "paywall-other@example.com", PASSWORD);
 
     const routes: [string, string][] = [
-      ["GET", "/api/overview"],
-      ["GET", "/api/projects"],
-      ["POST", "/api/projects"],
-      ["GET", `/api/projects/${project.id}`],
-      ["PATCH", `/api/projects/${project.id}`],
-      ["DELETE", `/api/projects/${project.id}`],
-      ["POST", `/api/projects/${project.id}/archive`],
-      ["POST", `/api/projects/${project.id}/rotate-key`],
-      ["GET", `/api/projects/${project.id}/alerts`],
       ["GET", `/api/projects/${project.id}/scans`],
       ["GET", `/api/projects/${project.id}/scans/compare`],
       ["GET", `/api/projects/${project.id}/findings`],
@@ -105,10 +134,41 @@ test("every dashboard route is paywalled, not just the entry point", async () =>
       const res = await fetch(`${base}${path}`, {
         method,
         headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-        body: method === "GET" || method === "DELETE" ? undefined : "{}",
       });
-      assert.equal(res.status, 402, `${method} ${path} should be paywalled`);
+      assert.equal(res.status, 402, `${method} ${path} should stay paywalled behind BUILD/PROTECT`);
     }
+  } finally {
+    server.close();
+  }
+});
+
+test("PROTECT-only routes (continuous monitoring's alerts) reject a FREE or BUILD caller", async () => {
+  const { server, base } = await listen(buildApp());
+  try {
+    const user = await createUser("paywall-alerts-owner@example.com", PASSWORD);
+    const project = await createProject(user.id, "Alert Target");
+    const freeToken = await signUp(base, "paywall-alerts-free@example.com", PASSWORD);
+
+    const freeRes = await fetch(`${base}/api/projects/${project.id}/alerts`, {
+      headers: { Authorization: `Bearer ${freeToken}` },
+    });
+    assert.equal(freeRes.status, 402);
+    assert.equal((await freeRes.json()).requiredPlan, "protect");
+
+    const buildUser = await createUser("paywall-alerts-build@example.com", PASSWORD);
+    await setSubscriptionStatus(buildUser.id, "build", "active");
+    const buildToken = await (async () => {
+      const res = await fetch(`${base}/api/auth/login`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: "paywall-alerts-build@example.com", password: PASSWORD }),
+      });
+      return (await res.json()).token;
+    })();
+    const buildRes = await fetch(`${base}/api/projects/${project.id}/alerts`, {
+      headers: { Authorization: `Bearer ${buildToken}` },
+    });
+    assert.equal(buildRes.status, 402, "BUILD alone is not enough — alerts need PROTECT specifically");
   } finally {
     server.close();
   }
@@ -124,41 +184,47 @@ test("the paywall does not mask a missing session — unauthenticated still 401s
   }
 });
 
-test("an active subscription opens the dashboard", async () => {
+test("an active subscription opens the BUILD+ routes", async () => {
   const { server, base } = await listen(buildApp());
   try {
     const token = await signUp(base, "paywall-paid@example.com", PASSWORD);
+    const userId = await findUserId(base, token);
+    const project = await createProject(userId, "Paid Project");
 
-    let res = await fetch(`${base}/api/overview`, { headers: { Authorization: `Bearer ${token}` } });
+    let res = await fetch(`${base}/api/projects/${project.id}/scans`, { headers: { Authorization: `Bearer ${token}` } });
     assert.equal(res.status, 402);
 
     // What the Stripe checkout.session.completed webhook does.
-    await setSubscriptionStatus(await findUserId(base, token), "tier1", "active");
+    await setSubscriptionStatus(userId, "build", "active");
 
-    res = await fetch(`${base}/api/overview`, { headers: { Authorization: `Bearer ${token}` } });
+    res = await fetch(`${base}/api/projects/${project.id}/scans`, { headers: { Authorization: `Bearer ${token}` } });
     assert.equal(res.status, 200);
-    const body = await res.json();
-    assert.equal(body.totalProjects, 0);
   } finally {
     server.close();
   }
 });
 
-test("cancelling a subscription closes the dashboard again", async () => {
+test("cancelling a subscription closes the BUILD+ routes again, but not the dashboard itself", async () => {
   const { server, base } = await listen(buildApp());
   try {
     const token = await signUp(base, "paywall-lapse@example.com", PASSWORD);
     const id = await findUserId(base, token);
+    const project = await createProject(id, "Lapsing Project");
 
-    await setSubscriptionStatus(id, "tier1", "active");
-    let res = await fetch(`${base}/api/projects`, { headers: { Authorization: `Bearer ${token}` } });
+    await setSubscriptionStatus(id, "build", "active");
+    let res = await fetch(`${base}/api/projects/${project.id}/scans`, { headers: { Authorization: `Bearer ${token}` } });
     assert.equal(res.status, 200);
 
     // Mirrors the customer.subscription.deleted webhook path.
-    await setSubscriptionStatus(id, "tier1", "canceled");
-    res = await fetch(`${base}/api/projects`, { headers: { Authorization: `Bearer ${token}` } });
+    await setSubscriptionStatus(id, "build", "canceled");
+    res = await fetch(`${base}/api/projects/${project.id}/scans`, { headers: { Authorization: `Bearer ${token}` } });
     assert.equal(res.status, 402);
     assert.equal((await res.json()).subscriptionRequired, true);
+
+    // The dashboard itself (basic project access) stays open — data is
+    // preserved on downgrade, never walled off entirely.
+    res = await fetch(`${base}/api/projects`, { headers: { Authorization: `Bearer ${token}` } });
+    assert.equal(res.status, 200);
   } finally {
     server.close();
   }

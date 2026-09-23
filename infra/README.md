@@ -158,8 +158,8 @@ aws secretsmanager put-secret-value \
   --secret-string '{
     "STRIPE_SECRET_KEY": "sk_live_...",
     "STRIPE_WEBHOOK_SECRET": "whsec_...",
-    "STRIPE_PRICE_TIER1": "price_...",
-    "STRIPE_PRICE_TIER2": "price_..."
+    "STRIPE_PRICE_BUILD": "price_...",
+    "STRIPE_PRICE_PROTECT": "price_..."
   }'
 ```
 

@@ -59,7 +59,7 @@ export class NettleApiStack extends Stack {
      * an operator knows exactly what to fill in:
      *
      *   STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET,
-     *   STRIPE_PRICE_TIER1, STRIPE_PRICE_TIER2
+     *   STRIPE_PRICE_BUILD, STRIPE_PRICE_PROTECT
      *
      * Populate with:
      *   aws secretsmanager put-secret-value \
@@ -83,13 +83,13 @@ export class NettleApiStack extends Stack {
       secretName: "nettle/application",
       description:
         "Nettle application secrets. Keys: STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET, " +
-        "STRIPE_PRICE_TIER1, STRIPE_PRICE_TIER2. Populate out of band; never in source control.",
+        "STRIPE_PRICE_BUILD, STRIPE_PRICE_PROTECT. Populate out of band; never in source control.",
       removalPolicy: RemovalPolicy.RETAIN,
       secretObjectValue: {
         STRIPE_SECRET_KEY: SecretValue.unsafePlainText("unset"),
         STRIPE_WEBHOOK_SECRET: SecretValue.unsafePlainText("unset"),
-        STRIPE_PRICE_TIER1: SecretValue.unsafePlainText("unset"),
-        STRIPE_PRICE_TIER2: SecretValue.unsafePlainText("unset"),
+        STRIPE_PRICE_BUILD: SecretValue.unsafePlainText("unset"),
+        STRIPE_PRICE_PROTECT: SecretValue.unsafePlainText("unset"),
       },
     });
 
@@ -155,8 +155,8 @@ export class NettleApiStack extends Stack {
               { name: "DB_PASSWORD", value: `${props.databaseSecret.secretArn}:password::` },
               { name: "STRIPE_SECRET_KEY", value: `${appSecret.secretArn}:STRIPE_SECRET_KEY::` },
               { name: "STRIPE_WEBHOOK_SECRET", value: `${appSecret.secretArn}:STRIPE_WEBHOOK_SECRET::` },
-              { name: "STRIPE_PRICE_TIER1", value: `${appSecret.secretArn}:STRIPE_PRICE_TIER1::` },
-              { name: "STRIPE_PRICE_TIER2", value: `${appSecret.secretArn}:STRIPE_PRICE_TIER2::` },
+              { name: "STRIPE_PRICE_BUILD", value: `${appSecret.secretArn}:STRIPE_PRICE_BUILD::` },
+              { name: "STRIPE_PRICE_PROTECT", value: `${appSecret.secretArn}:STRIPE_PRICE_PROTECT::` },
             ],
           },
         },

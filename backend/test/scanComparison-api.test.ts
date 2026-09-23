@@ -30,7 +30,7 @@ function listen(app: express.Express): Promise<{ server: Server; base: string }>
 
 async function subscribedUser(email: string) {
   const user = await createUser(email, "correct horse battery staple");
-  await setSubscriptionStatus(user.id, "tier1", "active");
+  await setSubscriptionStatus(user.id, "build", "active");
   const token = await createSession(user.id);
   return { user, token };
 }

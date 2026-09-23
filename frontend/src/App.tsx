@@ -8,8 +8,16 @@ import BillingResultPage from "./pages/BillingResultPage";
 import SettingsPage from "./pages/SettingsPage";
 import ResetPasswordPage from "./pages/ResetPasswordPage";
 import SubscribePage from "./pages/SubscribePage";
-import { hasActiveSubscription } from "./subscription";
 
+/**
+ * Every signed-in account gets a real (if capped) dashboard now — FREE
+ * included (pricing rework: 1 project, sample content, no real scans, no
+ * Fix Center). There is no separate "unpaid -> /subscribe" redirect
+ * anymore; individual dashboard/project features that are actually BUILD+
+ * or PROTECT-only are gated where they live (DashboardPage, ProjectPage),
+ * driven by what the API actually returns — the API enforces the real rule
+ * independently, so this is UX framing, not the security boundary.
+ */
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { user, loading } = useAuth();
   if (loading) return <div className="shell muted">Loading…</div>;
@@ -18,31 +26,13 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
 }
 
 /**
- * The paywall guard. Signed in but unpaid accounts get the plan picker
- * instead of the dashboard — there is no partial dashboard to fall back to.
- * The API enforces the same rule independently, so this is the UX half of
- * the gate, not the security half.
- */
-function PaidRoute({ children }: { children: React.ReactNode }) {
-  const { user, loading } = useAuth();
-  if (loading) return <div className="shell muted">Loading…</div>;
-  if (!user) return <Navigate to="/login" replace />;
-  if (!hasActiveSubscription(user)) return <Navigate to="/subscribe" replace />;
-  return <>{children}</>;
-}
-
-/**
  * "/" specifically: the one route a signed-out visitor can land on without
- * being bounced straight to a login form. Same gating as PaidRoute for
- * anyone who *is* signed in (unpaid still goes to /subscribe, paid gets the
- * dashboard) — only the signed-out case changes, from an immediate redirect
- * to the public marketing page.
+ * being bounced straight to a login form.
  */
 function HomeRoute() {
   const { user, loading } = useAuth();
   if (loading) return <div className="shell muted">Loading…</div>;
   if (!user) return <MarketingPage />;
-  if (!hasActiveSubscription(user)) return <Navigate to="/subscribe" replace />;
   return <DashboardPage />;
 }
 
@@ -60,12 +50,17 @@ export default function App() {
         }
       />
       <Route path="/" element={<HomeRoute />} />
+      {/* Same content as the signed-out "/" page, but reachable regardless
+          of auth state — FREE accounts need a real, in-app way to see the
+          control-library preview and sample findings the pricing model
+          promises them, not just whatever they saw before signing up. */}
+      <Route path="/explore" element={<MarketingPage />} />
       <Route
         path="/projects/:id"
         element={
-          <PaidRoute>
+          <ProtectedRoute>
             <ProjectPage />
-          </PaidRoute>
+          </ProtectedRoute>
         }
       />
       {/* Account settings stay reachable unpaid, so a lapsed customer can

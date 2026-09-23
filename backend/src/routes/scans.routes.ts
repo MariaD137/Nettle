@@ -10,11 +10,12 @@ import { findProjectByApiKey } from "../patrol/projects";
 import { recordScan } from "../patrol/scans";
 import { requireAuth, optionalAuth } from "../auth/middleware";
 import { requireSubscription, entitledPlan } from "../billing/subscription";
+import { canRunScan, getMonthlyScanLimit } from "../billing/entitlements";
 import { getUserById } from "../auth/users";
 import { applyScanAccess } from "../billing/scanAccess";
 import { hydrateCheckResults } from "../scanner/controls";
 import type { ScanReport } from "../scanner/types";
-import { getQuotaState, recordScanUsage } from "../billing/scanQuota";
+import { getQuotaState, recordScanUsage, reserveScanSlot } from "../billing/scanQuota";
 import { safeExtractZip } from "../scanner/safeExtraction";
 import { rateLimit } from "../middleware/rateLimit";
 import type { Request as ExpressRequest } from "express";
@@ -46,24 +47,72 @@ function respondWithScan(res: Response, report: ScanReport, plan: string): void 
 }
 
 /**
- * Refuses the scan when the billing account has used its monthly allowance.
- * Returns true when the caller should stop. Anonymous, unauthenticated scans
- * have no account to meter and are preview-only, so they pass through.
+ * The entitlement gate in front of real scan execution. Returns true when
+ * the caller should stop (a response has already been sent).
+ *
+ * Anonymous, unauthenticated scans (billedUserId undefined — no bearer
+ * token and no API key resolving to a project owner) have no account to
+ * gate and stay preview-only, exactly as before: that pre-existing "try it
+ * without an account" flow is a different thing from the FREE named plan
+ * this pricing model governs, and is deliberately left untouched here.
+ *
+ * For an identified account (bearer token, or an API key whose project
+ * resolves to an owner — so a CI run authenticated only by a project key is
+ * gated the same as a browser session):
+ *   - FREE (canRunScan false): blocked outright. This is the absolute rule
+ *     the pricing model requires — FREE never gets a real scan, CLI/CI
+ *     included, since both paths call this same route.
+ *   - BUILD (a finite monthly limit): the slot is reserved atomically via
+ *     reserveScanSlot before any expensive work runs, so two concurrent
+ *     requests near the limit cannot both read "9 used, 10 allowed" and
+ *     both proceed — see that function's comment for how the atomicity
+ *     works. A rejected reservation still costs nothing extra; the bucket
+ *     it increments is enforcement-only, not the accurate usage figure
+ *     shown in the UI (that's scan_usage/getQuotaState, updated separately
+ *     on an actually-completed scan via recordScanUsage below).
+ *   - PROTECT (getMonthlyScanLimit returns null): unlimited/fair-use, no
+ *     reservation needed. Still subject to scanUploadLimiter/scanRepoLimiter
+ *     below — that's deliberately a separate concern (abuse/burst
+ *     protection) from the subscription entitlement (unmetered), not a
+ *     hidden numeric cap standing in for "unlimited".
  */
-async function quotaExceeded(userId: string | undefined, res: Response): Promise<boolean> {
-  if (!userId) return false;
-  const quota = await getQuotaState(userId);
-  if (!quota || !quota.exhausted) return false;
+async function scanBlocked(billedUserId: string | undefined, res: Response): Promise<boolean> {
+  if (!billedUserId) return false;
 
-  res.status(402).json({
-    error: `You have used all ${quota.limit} scans in this billing period. Your allowance resets on ${new Date(quota.periodEnd).toLocaleDateString("en-GB")}.`,
-    quotaExceeded: true,
-    limit: quota.limit,
-    used: quota.used,
-    remaining: 0,
-    periodEnd: quota.periodEnd,
-  });
-  return true;
+  const owner = await getUserById(billedUserId);
+  const plan = entitledPlan(owner);
+
+  if (!canRunScan(plan)) {
+    res.status(402).json({
+      error:
+        "Scanning requires an active BUILD or PROTECT subscription. FREE accounts can explore Nettle's control library and sample findings, but never run a real scan.",
+      subscriptionRequired: true,
+      requiredPlan: "build",
+      plan,
+    });
+    return true;
+  }
+
+  const limit = getMonthlyScanLimit(plan);
+  if (limit === null) return false; // PROTECT: unlimited/fair-use
+
+  const reserved = await reserveScanSlot(billedUserId, limit);
+  if (!reserved) {
+    const quota = await getQuotaState(billedUserId);
+    res.status(402).json({
+      error: `You have used all ${limit} scans in this billing period.${
+        quota ? ` Your allowance resets on ${new Date(quota.periodEnd).toLocaleDateString("en-GB")}.` : ""
+      } Upgrade to PROTECT for unlimited, fair-use scanning.`,
+      quotaExceeded: true,
+      requiredPlan: "protect",
+      limit,
+      used: quota?.used ?? limit,
+      remaining: 0,
+      periodEnd: quota?.periodEnd ?? null,
+    });
+    return true;
+  }
+  return false;
 }
 
 /**
@@ -119,7 +168,7 @@ async function scanUploadIdentity(req: Request): Promise<string> {
 
 /**
  * Anonymous, unauthenticated uploads bypass the monthly scan quota entirely
- * (quotaExceeded() only meters known accounts), so this is the main thing
+ * (scanBlocked() only gates known accounts), so this is the main thing
  * standing between the public upload endpoint and someone scripting
  * repeated Semgrep runs against it. Authenticated/API-key callers are
  * already metered monthly by billing/scanQuota — this is a second, much
@@ -164,7 +213,7 @@ scansRouter.post("/api/scans", optionalAuth, scanUploadLimiter, upload.single("c
   const upfrontKey = req.header("x-nettle-api-key");
   const upfrontProject = upfrontKey ? await findProjectByApiKey(upfrontKey) : null;
   const billedUserId = req.userId ?? upfrontProject?.userId;
-  if (await quotaExceeded(billedUserId, res)) {
+  if (await scanBlocked(billedUserId, res)) {
     fs.unlinkSync(req.file.path);
     return;
   }
@@ -237,7 +286,7 @@ scansRouter.post("/api/scans/repo", requireAuth, scanRepoLimiter, requireSubscri
 
   const repoProject = apiKey ? await findProjectByApiKey(apiKey) : null;
   const billedUserId = req.userId ?? repoProject?.userId;
-  if (await quotaExceeded(billedUserId, res)) return;
+  if (await scanBlocked(billedUserId, res)) return;
 
   const cloneDir = fs.mkdtempSync(path.join(os.tmpdir(), "nettle-repo-"));
   try {

@@ -23,7 +23,10 @@ export default function SettingsPage() {
         </div>
         <div className="settings-row">
           <span className="settings-label">Plan</span>
-          <span className="plan-badge">{PLAN_LABELS[user?.plan ?? "free"] ?? user?.plan}</span>
+          <span>
+            <span className="plan-badge">{PLAN_LABELS[user?.plan ?? "free"] ?? user?.plan}</span>{" "}
+            <Link to="/subscribe" className="link-btn" style={{ marginLeft: 8 }}>Upgrade</Link>
+          </span>
         </div>
         <div className="settings-row">
           <span className="settings-label">Member since</span>

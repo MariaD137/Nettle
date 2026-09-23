@@ -35,6 +35,24 @@ describe("App routing", () => {
     expect(screen.getAllByText("Get started").length).toBeGreaterThan(0);
   });
 
+  it("a signed-in FREE account reaches the dashboard at / — no more forced redirect to /subscribe", async () => {
+    const { __setMockUser } = await import("./AuthContext") as any;
+    __setMockUser({ id: "u1", email: "free@example.com", plan: "free", subscriptionStatus: "none", createdAt: new Date().toISOString() });
+
+    renderAt("/");
+    // Dashboard chrome, not the marketing page and not bounced to /subscribe.
+    // "New project" is part of the dashboard's static structure (unlike the
+    // "Loading…" text also present here, which stays up while the overview
+    // fetch to a real backend that isn't running in this test never
+    // resolves), so it's there as soon as the component mounts.
+    await waitFor(() => {
+      expect(screen.getByText("New project")).toBeInTheDocument();
+    });
+    expect(screen.getByText("Upgrade")).toBeInTheDocument();
+
+    __setMockUser(null); // don't leak into later tests in this file
+  });
+
   it("renders the login page at /login", () => {
     renderAt("/login");
     expect(document.body.querySelector('[class]')).toBeTruthy();

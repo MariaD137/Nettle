@@ -1,8 +1,9 @@
 import type { CheckResult, Finding, ScanReport, ScanAccess, Severity } from "../scanner/types";
 
-// Plans that unlock the complete report. Everything else — including
-// logged-out one-off scans — gets the preview.
-const FULL_ACCESS_PLANS = new Set(["tier1", "tier2"]);
+// Plans that unlock the complete report. Everything else — FREE accounts
+// (never reach here: scans.routes.ts's scanBlocked() refuses them before a
+// scan ever runs) and logged-out one-off scans — gets the preview.
+const FULL_ACCESS_PLANS = new Set(["build", "protect"]);
 
 // How many findings a preview reveals in full. Deliberately small but not
 // zero: the point is to prove the scan found real, specific problems, not to
@@ -41,7 +42,7 @@ function previewAccess(total: number, visible: number): ScanAccess {
     visibleFindings: visible,
     lockedFindings: locked,
     message: locked > 0
-      ? `${locked} more ${locked === 1 ? "finding is" : "findings are"} in the full report. Upgrade to Tier 1 or Tier 2 to see every finding, its location, and how to fix it.`
+      ? `${locked} more ${locked === 1 ? "finding is" : "findings are"} in the full report. Upgrade to BUILD or PROTECT to see every finding, its location, and how to fix it.`
       : null,
   };
 }

@@ -8,11 +8,12 @@ import {
   recordScanUsage,
   countScanUsage,
   getQuotaState,
+  reserveScanSlot,
 } from "../src/billing/scanQuota";
 
 const PASSWORD = "correct horse battery staple";
 
-async function subscriber(email: string, plan: "tier1" | "tier2" = "tier1") {
+async function subscriber(email: string, plan: "build" | "protect" = "build") {
   const user = await createUser(email, PASSWORD);
   await setSubscriptionStatus(user.id, plan, "active");
   return user.id;
@@ -54,7 +55,7 @@ test("subscribing stamps a billing anchor, and it never moves afterwards", async
 
   // A later webhook (renewal, plan change) must not reset the anchor —
   // doing so would silently wipe the customer's usage mid-cycle.
-  await setSubscriptionStatus(id, "tier2", "active");
+  await setSubscriptionStatus(id, "protect", "active");
   assert.equal((await getUserById(id))!.billingAnchor, first);
 });
 
@@ -76,12 +77,12 @@ test("one account's scans never count against another's allowance", async () => 
 
   assert.equal((await getQuotaState(alice))!.used, 5);
   assert.equal((await getQuotaState(bob))!.used, 0);
-  assert.equal((await getQuotaState(bob))!.remaining, SCAN_QUOTAS.tier1);
+  assert.equal((await getQuotaState(bob))!.remaining, SCAN_QUOTAS.build);
 });
 
 test("quota state reports remaining and flips to exhausted at the limit", async () => {
   const id = await subscriber("quota-exhaust@example.com");
-  const limit = SCAN_QUOTAS.tier1;
+  const limit = SCAN_QUOTAS.build;
 
   let state = (await getQuotaState(id))!;
   assert.equal(state.limit, limit);
@@ -104,17 +105,35 @@ test("quota state reports remaining and flips to exhausted at the limit", async 
   assert.equal((await getQuotaState(id))!.remaining, 0);
 });
 
-test("the two tiers carry different allowances", async () => {
-  const one = await subscriber("quota-t1@example.com", "tier1");
-  const two = await subscriber("quota-t2@example.com", "tier2");
-  assert.equal((await getQuotaState(one))!.limit, SCAN_QUOTAS.tier1);
-  assert.equal((await getQuotaState(two))!.limit, SCAN_QUOTAS.tier2);
-  assert.notEqual(SCAN_QUOTAS.tier1, SCAN_QUOTAS.tier2);
+test("BUILD has a finite allowance, PROTECT is unlimited/fair-use, FREE has none", async () => {
+  const build = await subscriber("quota-build@example.com", "build");
+  const protect = await subscriber("quota-protect@example.com", "protect");
+  const free = await createUser("quota-free-named@example.com", PASSWORD);
+
+  const buildState = (await getQuotaState(build))!;
+  assert.equal(buildState.limit, SCAN_QUOTAS.build);
+  assert.equal(buildState.exhausted, false);
+
+  const protectState = (await getQuotaState(protect))!;
+  assert.equal(protectState.limit, null, "unlimited/fair-use is represented as null, never a large number");
+  assert.equal(protectState.remaining, null);
+  assert.equal(protectState.exhausted, false);
+
+  const freeState = (await getQuotaState(free.id))!;
+  assert.equal(freeState.limit, 0, "FREE has no scan access at all");
+  assert.equal(freeState.remaining, 0);
+  assert.equal(freeState.exhausted, true, "0 used out of a limit of 0 is still exhausted — FREE can never scan");
 });
 
-test("an unsubscribed account has no metered quota", async () => {
-  const user = await createUser("quota-free@example.com", PASSWORD);
-  assert.equal(await getQuotaState(user.id), null);
+test("a named account always has a quota state — FREE included, not just paid plans", async () => {
+  const user = await createUser("quota-free-real@example.com", PASSWORD);
+  const state = await getQuotaState(user.id);
+  assert.notEqual(state, null, "FREE is a real reachable dashboard state now, not turned away before reaching here");
+  assert.equal(state!.limit, 0);
+});
+
+test("getQuotaState returns null only for a user that doesn't exist", async () => {
+  assert.equal(await getQuotaState("00000000-0000-0000-0000-000000000000"), null);
 });
 
 test("usage is recorded even when no project is attached", async () => {
@@ -126,7 +145,7 @@ test("usage is recorded even when no project is attached", async () => {
   assert.equal((await getQuotaState(id))!.used, 1);
 });
 
-test("the paywall copy quotes the allowance the API actually enforces", () => {
+test("the paywall copy quotes the BUILD allowance the API actually enforces", () => {
   // These two live in different packages, so nothing but this check stops
   // them drifting — and drift here means quoting a customer one number and
   // charging them for another.
@@ -137,23 +156,22 @@ test("the paywall copy quotes the allowance the API actually enforces", () => {
     "utf8"
   );
 
-  for (const [plan, limit] of Object.entries(SCAN_QUOTAS)) {
-    assert.ok(
-      copy.includes(`${limit} scans per month`),
-      `frontend/src/plans.ts should advertise "${limit} scans per month" for ${plan}`
-    );
-  }
-
-  // And must not still be advertising an unmetered plan.
   assert.ok(
-    !/unlimited\s+(launch-readiness\s+)?scans/i.test(copy),
-    "paywall copy must not promise unlimited scans while a quota is enforced"
+    copy.includes(`${SCAN_QUOTAS.build} scans per month`),
+    `frontend/src/plans.ts should advertise "${SCAN_QUOTAS.build} scans per month" for BUILD`
+  );
+
+  // PROTECT is genuinely unlimited/fair-use now — unlike the old two-finite-
+  // tiers model, the copy SHOULD say so.
+  assert.ok(
+    /unlimited.{0,20}fair-use scans/i.test(copy),
+    "paywall copy must advertise PROTECT's unlimited/fair-use scanning"
   );
 });
 
 test("deleting a user leaves no orphaned scan_usage rows", async () => {
   const user = await createUser("orphan-usage@example.com", "correct horse battery staple");
-  await setSubscriptionStatus(user.id, "tier1", "active");
+  await setSubscriptionStatus(user.id, "build", "active");
   await recordScanUsage(user.id, null, "upload");
   await recordScanUsage(user.id, null, "repo");
 
@@ -176,4 +194,47 @@ test("deleting a user leaves no orphaned scan_usage rows", async () => {
     [user.id]
   );
   assert.equal(Number(after?.n), 0);
+});
+
+// --- reserveScanSlot: the atomic enforcement primitive ---------------------
+
+test("reserveScanSlot allows exactly up to the limit and rejects beyond it", async () => {
+  const id = await subscriber("reserve-basic@example.com");
+  const limit = 3;
+
+  assert.equal(await reserveScanSlot(id, limit), true);
+  assert.equal(await reserveScanSlot(id, limit), true);
+  assert.equal(await reserveScanSlot(id, limit), true);
+  assert.equal(await reserveScanSlot(id, limit), false, "the 4th reservation against a limit of 3 must fail");
+  assert.equal(await reserveScanSlot(id, limit), false, "still rejected on further attempts, not just the first overage");
+});
+
+test("reserveScanSlot: concurrent requests near the limit cannot both win the final slot", async () => {
+  const id = await subscriber("reserve-race@example.com");
+  const limit = 5;
+
+  // 4 reservations up front, leaving exactly one slot.
+  for (let i = 0; i < 4; i++) assert.equal(await reserveScanSlot(id, limit), true);
+
+  // Fire 10 concurrent reservation attempts at the single remaining slot —
+  // the scenario the master spec calls out explicitly: two (or more)
+  // simultaneous scan requests must not both consume the final available
+  // scan. Exactly one of these must win.
+  const results = await Promise.all(Array.from({ length: 10 }, () => reserveScanSlot(id, limit)));
+  const wins = results.filter(Boolean).length;
+  assert.equal(wins, 1, `expected exactly 1 of 10 concurrent requests to win the last slot, got ${wins}`);
+});
+
+test("reserveScanSlot is scoped per account — one account racing never affects another's allowance", async () => {
+  const alice = await subscriber("reserve-alice@example.com");
+  const bob = await subscriber("reserve-bob@example.com");
+  const limit = 2;
+
+  const aliceResults = await Promise.all(Array.from({ length: 5 }, () => reserveScanSlot(alice, limit)));
+  assert.equal(aliceResults.filter(Boolean).length, 2);
+
+  // Bob's allowance is untouched by Alice's burst.
+  assert.equal(await reserveScanSlot(bob, limit), true);
+  assert.equal(await reserveScanSlot(bob, limit), true);
+  assert.equal(await reserveScanSlot(bob, limit), false);
 });

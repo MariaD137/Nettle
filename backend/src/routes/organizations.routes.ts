@@ -11,7 +11,9 @@ import {
   AlreadyMemberError,
   CannotRemoveOwnerError,
 } from "../organizations/organizations";
-import { getUserByEmail } from "../auth/users";
+import { getUserByEmail, getUserById } from "../auth/users";
+import { entitledPlan } from "../billing/subscription";
+import { getTeamMemberLimit } from "../billing/entitlements";
 import { requireAuth } from "../auth/middleware";
 import { rateLimit } from "../middleware/rateLimit";
 
@@ -109,6 +111,24 @@ organizationsRouter.post("/api/organizations/:id/members", ...guarded, async (re
   if (!user) {
     return res.status(404).json({ error: "No Nettle account exists for that email address" });
   }
+
+  // Team size is entitled by the organization owner's plan (Phase D scoped
+  // MVP keeps billing per-user, not per-org — same precedent as the project
+  // count limit above). The caller here IS the owner (checked above), so
+  // this is their own plan, not a lookup of someone else's.
+  const owner = await getUserById(loaded.org.ownerId);
+  const plan = entitledPlan(owner);
+  const limit = getTeamMemberLimit(plan);
+  const currentMembers = await listMembers(loaded.org.id);
+  if (currentMembers.length >= limit) {
+    return res.status(403).json({
+      error: `Team member limit reached (${limit}). Upgrade your plan to add more.`,
+      teamLimitReached: true,
+      limit,
+      plan,
+    });
+  }
+
   try {
     const member = await addMember(loaded.org.id, user.id);
     res.status(201).json({ member });

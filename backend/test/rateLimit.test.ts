@@ -16,7 +16,7 @@ import { eventsRouter } from "../src/routes/events.routes";
 import { badgeRouter } from "../src/routes/badge.routes";
 import { projectsRouter } from "../src/routes/projects.routes";
 import { billingRouter, billingWebhookRouter } from "../src/routes/billing.routes";
-import { createUser } from "../src/auth/users";
+import { createUser, setSubscriptionStatus } from "../src/auth/users";
 import { createSession } from "../src/auth/sessions";
 import { createProject } from "../src/patrol/projects";
 
@@ -463,6 +463,7 @@ test("POST /api/events carries the configured, generous rate-limit headers", asy
   t.after(() => server.close());
 
   const user = await createUser("rl-events@example.com", PASSWORD);
+  await setSubscriptionStatus(user.id, "protect", "active"); // event ingestion is PROTECT-only
   const project = await createProject(user.id, "Rate Limit Events Project");
 
   // 600/min is deliberately generous — this endpoint receives one call per
@@ -525,7 +526,7 @@ test("POST /api/billing/checkout-session is rate limited per account", async (t)
     last = await fetch(`${base}/api/billing/checkout-session`, {
       method: "POST",
       headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ plan: "tier1" }),
+      body: JSON.stringify({ plan: "build" }),
     });
   }
   assert.equal(last!.status, 429, "the 11th checkout attempt within the window must be blocked (limit is 10)");

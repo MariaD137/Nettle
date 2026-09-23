@@ -9,7 +9,7 @@ import { nettleMonitor } from "../src/middleware/nettleMonitor";
 import { eventsRouter } from "../src/routes/events.routes";
 import { createProject } from "../src/patrol/projects";
 import { listAlerts } from "../src/patrol/alerts";
-import { createUser } from "../src/auth/users";
+import { createUser, setSubscriptionStatus } from "../src/auth/users";
 
 function listen(app: express.Express): Promise<{ server: Server; port: number }> {
   return new Promise((resolve) => {
@@ -35,6 +35,7 @@ async function poll<T>(
 
 test("a customer app using the middleware actually reports events that trigger a real alert", async () => {
   const user = await createUser("nettle-monitor-tests@example.com", "correct horse battery staple");
+  await setSubscriptionStatus(user.id, "protect", "active"); // continuous monitoring is PROTECT-only
   const project = await createProject(user.id, "Middleware Test App");
 
   const ingestionApp = express();

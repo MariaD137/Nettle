@@ -10,6 +10,8 @@ import BadgePill from "../components/BadgePill";
 import NettleLogo from "../components/NettleLogo";
 import { AppBar, BottomNav, Icons, type TabItem } from "../components/MobileChrome";
 import { useIsMobile } from "../useIsMobile";
+import { useAuth } from "../AuthContext";
+import { canRunScan, canUseFixCenter, isProtect } from "../subscription";
 
 type Tab = "overview" | "scan" | "fixcenter" | "findings" | "alerts" | "history" | "settings";
 
@@ -196,6 +198,7 @@ function OverviewTab({ project, latestScan }: { project: Project; latestScan: St
 type ScanMethod = "upload" | "repo";
 
 function ScanTab({ project, onScanned }: { project: Project; onScanned: (badge: BadgeState) => void }) {
+  const { user } = useAuth();
   const [method, setMethod] = useState<ScanMethod>("upload");
   const [file, setFile] = useState<File | null>(null);
   const [repoUrl, setRepoUrl] = useState("");
@@ -203,6 +206,19 @@ function ScanTab({ project, onScanned }: { project: Project; onScanned: (badge: 
   const [report, setReport] = useState<ScanReport | null>(null);
   const [scanning, setScanning] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  if (!canRunScan(user)) {
+    return (
+      <div className="card">
+        <h2>Launch readiness scan</h2>
+        <p className="muted">
+          Real scans require an active BUILD or PROTECT subscription. FREE accounts can{" "}
+          <Link to="/explore">explore Nettle's control library and sample findings</Link>, but a scan of your own
+          project needs an upgrade. <Link to="/subscribe">See plans</Link>.
+        </p>
+      </div>
+    );
+  }
 
   async function handleScan() {
     setError(null);
@@ -438,11 +454,21 @@ function FixCenterTab({ latestScan, projectId, onRescan }: { latestScan: StoredS
     return () => { cancelled = true; };
   }, [projectId, latestScan?.id]);
 
+  const { user } = useAuth();
+
   if (!latestScan) {
     return (
       <div className="card">
         <h2>Fix Center</h2>
-        <p className="muted">Run a scan to see prioritized, actionable recommendations here.</p>
+        {canUseFixCenter(user) ? (
+          <p className="muted">Run a scan to see prioritized, actionable recommendations here.</p>
+        ) : (
+          <p className="muted">
+            The Fix Center shows full findings with file-level evidence and remediation once a real scan has run.
+            Upgrade to BUILD or PROTECT to scan this project, or{" "}
+            <Link to="/explore">see a sample Fix Center report</Link> first. <Link to="/subscribe">See plans</Link>.
+          </p>
+        )}
       </div>
     );
   }
@@ -693,12 +719,37 @@ const STATUS_LABELS: Record<AlertStatus, string> = {
 };
 
 function AlertsTab({ projectId, onUpdate }: { projectId: string; onUpdate: (counts: AlertCounts) => void }) {
+  const { user } = useAuth();
   const [alerts, setAlerts] = useState<Alert[] | null>(null);
   const [filter, setFilter] = useState<AlertStatus | "all">("all");
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   useEffect(() => {
-    api.getAlerts(projectId).then(({ alerts }) => setAlerts(alerts));
+    api.getAlerts(projectId)
+      .then(({ alerts }) => setAlerts(alerts))
+      .catch((err) => setLoadError(err instanceof ApiError ? err.message : "Couldn't load alerts"));
   }, [projectId]);
+
+  if (!isProtect(user)) {
+    return (
+      <div className="card">
+        <h2>Alerts</h2>
+        <p className="muted">
+          Live risk alerts from continuous monitoring are a PROTECT feature. Upgrade to PROTECT to see real-time
+          alerts here. <Link to="/subscribe">See plans</Link>.
+        </p>
+      </div>
+    );
+  }
+
+  if (loadError) {
+    return (
+      <div className="card">
+        <h2>Alerts</h2>
+        <p className="error-banner">{loadError}</p>
+      </div>
+    );
+  }
 
   async function changeStatus(alertId: string, status: AlertStatus) {
     const { alert } = await api.updateAlertStatus(projectId, alertId, status);

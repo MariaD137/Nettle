@@ -43,7 +43,7 @@ test("GET /api/v1/... and GET /api/... return identical responses from the same 
   t.after(() => server.close());
 
   const user = await createUser("apiver-get@example.com", "correct horse battery staple");
-  await setSubscriptionStatus(user.id, "tier1", "active");
+  await setSubscriptionStatus(user.id, "build", "active");
   const token = await createSession(user.id);
   await createProject(user.id, "V1 Test");
 
@@ -101,7 +101,7 @@ test("query strings survive the rewrite", async (t) => {
   t.after(() => server.close());
 
   const user = await createUser("apiver-query@example.com", "correct horse battery staple");
-  await setSubscriptionStatus(user.id, "tier1", "active");
+  await setSubscriptionStatus(user.id, "build", "active");
   const token = await createSession(user.id);
   const project = await createProject(user.id, "Archived Test");
 

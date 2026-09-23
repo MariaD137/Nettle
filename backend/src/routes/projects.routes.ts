@@ -6,7 +6,9 @@ import { listScans, getLatestScan, type StoredScan } from "../patrol/scans";
 import { computeBadgeState } from "../patrol/badge";
 import { hashFinding, upsertFindingStatus, listFindingStatuses } from "../patrol/findingStatuses";
 import { requireAuth } from "../auth/middleware";
-import { requireSubscription } from "../billing/subscription";
+import { requireSubscription, requireProtect, entitledPlan } from "../billing/subscription";
+import { canCreateProject, canUseFixCenter, getMaxProjects } from "../billing/entitlements";
+import { getUserById } from "../auth/users";
 import { getQuotaState } from "../billing/scanQuota";
 import { rateLimit } from "../middleware/rateLimit";
 import { hydrateCheckResult, hydrateCheckResults } from "../scanner/controls";
@@ -30,17 +32,27 @@ const dashboardLimiter = rateLimit({
   keyFn: (req) => (req.userId ? `user:${req.userId}` : null),
 });
 
-// The paywall (and now the dashboard rate limiter) runs per-route rather
-// than as router-level middleware. Two reasons it has to: this router is
-// mounted at the app root, so a bare .use() would intercept every request in
-// the app (signup included, and it would run before requireAuth has even
+// Two gate levels, not one, now that FREE is a real (capped) dashboard tier
+// rather than turned away entirely (pricing rework — see billing/
+// entitlements.ts):
+//   dashboardAccess — requireAuth only. Basic project management (create up
+//     to your plan's limit, list, view, edit, archive, delete) is something
+//     every signed-in account gets, FREE included.
+//   paywalled — requireAuth + requireSubscription (BUILD or PROTECT). Stays
+//     on the routes the pricing model marks BUILD+ specifically: Fix Center
+//     findings, scan history, comparisons, exports, alert management.
+//
+// Both run per-route rather than as router-level middleware, for the same
+// two reasons as before this split: this router is mounted at the app root
+// (a bare .use() would intercept signup etc., before requireAuth has even
 // set req.userId), and the public badge endpoints in badge.routes.ts share
 // the /api/projects prefix, so even a path-scoped .use() would lock those
-// embeds behind the paywall. Every route below therefore states the gate
+// embeds behind auth. Every route below therefore states its gate
 // explicitly — new routes must too.
-const paywalled = [requireAuth, dashboardLimiter, requireSubscription];
-
-const PLAN_LIMITS: Record<string, number> = { free: 3, tier1: 10, tier2: 50 };
+const dashboardAccess = [requireAuth, dashboardLimiter];
+const paywalled = [...dashboardAccess, requireSubscription];
+// Continuous monitoring's alerts — PROTECT-only (see billing/subscription.ts's requireProtect).
+const protectOnly = [...dashboardAccess, requireProtect];
 
 /**
  * Every route here sits behind requireSubscription, so unlike
@@ -66,7 +78,7 @@ function hydrateStoredScan(scan: StoredScan | null): StoredScan | null {
   };
 }
 
-projectsRouter.post("/api/projects", ...paywalled, async (req, res) => {
+projectsRouter.post("/api/projects", ...dashboardAccess, async (req, res) => {
   const name = typeof req.body?.name === "string" ? req.body.name.trim() : "";
   if (!name) {
     return res.status(400).json({ error: "Provide a project 'name'" });
@@ -79,12 +91,23 @@ projectsRouter.post("/api/projects", ...paywalled, async (req, res) => {
 
   // Plan limits stay per-user even for an org project (Phase D scoped MVP
   // doesn't move billing to the organization) — the creating user's own
-  // plan/count is what's checked, same as a personal project.
-  const user = req as any;
-  const limit = PLAN_LIMITS[user.userPlan ?? "free"] ?? 3;
+  // entitled plan/count is what's checked, same as a personal project.
+  // entitledPlan(), never req.userPlan: that field is the *recorded* plan
+  // (users.plan, what was last purchased), and a lapsed BUILD/PROTECT
+  // account reading it here would keep the higher limit indefinitely after
+  // its subscription actually ended — the exact bug entitledPlan() exists
+  // to prevent (see billing/subscription.ts).
+  const requester = await getUserById(req.userId!);
+  const plan = entitledPlan(requester);
   const count = await countProjectsByUser(req.userId!);
-  if (count >= limit) {
-    return res.status(403).json({ error: `Project limit reached (${limit}). Upgrade your plan to add more.` });
+  if (!canCreateProject(plan, count)) {
+    const limit = getMaxProjects(plan);
+    return res.status(403).json({
+      error: `Project limit reached (${limit}). Upgrade your plan to add more.`,
+      projectLimitReached: true,
+      limit,
+      plan,
+    });
   }
 
   const project = await createProject(req.userId!, name, {
@@ -96,7 +119,7 @@ projectsRouter.post("/api/projects", ...paywalled, async (req, res) => {
   res.status(201).json(project);
 });
 
-projectsRouter.get("/api/projects", ...paywalled, async (req, res) => {
+projectsRouter.get("/api/projects", ...dashboardAccess, async (req, res) => {
   const includeArchived = req.query.includeArchived === "true";
   res.json({ projects: await listAccessibleProjects(req.userId!, includeArchived) });
 });
@@ -118,16 +141,29 @@ async function accessibleProjectOr404(req: import("express").Request, res: impor
   return project;
 }
 
-projectsRouter.get("/api/projects/:id", ...paywalled, async (req, res) => {
+/**
+ * The project detail view is reachable by any signed-in account (FREE
+ * included), but latestScan is Fix Center content — full findings with
+ * file-level evidence and remediation — and stays gated to BUILD/PROTECT.
+ * This matters specifically for a downgraded account: its historical scans
+ * are preserved (never deleted on downgrade), so without this check a
+ * lapsed BUILD/PROTECT account would still see its last real Fix Center
+ * report here even after losing entitlement to it. badge/alertCounts stay
+ * visible to everyone — they're summary-level (a score, a count), not the
+ * findings/evidence/remediation detail the pricing model actually restricts.
+ */
+projectsRouter.get("/api/projects/:id", ...dashboardAccess, async (req, res) => {
   const project = await accessibleProjectOr404(req, res);
   if (!project) return;
+  const requester = await getUserById(req.userId!);
+  const plan = entitledPlan(requester);
   const badge = await computeBadgeState(project.id);
-  const latestScan = hydrateStoredScan(await getLatestScan(project.id));
+  const latestScan = canUseFixCenter(plan) ? hydrateStoredScan(await getLatestScan(project.id)) : null;
   const alertCounts = await countAlertsByStatus(project.id);
   res.json({ project, badge, latestScan, alertCounts });
 });
 
-projectsRouter.patch("/api/projects/:id", ...paywalled, async (req, res) => {
+projectsRouter.patch("/api/projects/:id", ...dashboardAccess, async (req, res) => {
   const project = await accessibleProjectOr404(req, res);
   if (!project) return;
   const updates: Record<string, string | undefined> = {};
@@ -139,41 +175,41 @@ projectsRouter.patch("/api/projects/:id", ...paywalled, async (req, res) => {
   res.json(updated);
 });
 
-projectsRouter.delete("/api/projects/:id", ...paywalled, async (req, res) => {
+projectsRouter.delete("/api/projects/:id", ...dashboardAccess, async (req, res) => {
   const project = await accessibleProjectOr404(req, res);
   if (!project) return;
   await deleteProject(project.id);
   res.status(204).end();
 });
 
-projectsRouter.post("/api/projects/:id/archive", ...paywalled, async (req, res) => {
+projectsRouter.post("/api/projects/:id/archive", ...dashboardAccess, async (req, res) => {
   const project = await accessibleProjectOr404(req, res);
   if (!project) return;
   const archived = await archiveProject(project.id);
   res.json(archived);
 });
 
-projectsRouter.post("/api/projects/:id/restore", ...paywalled, async (req, res) => {
+projectsRouter.post("/api/projects/:id/restore", ...dashboardAccess, async (req, res) => {
   const project = await accessibleProjectOr404(req, res);
   if (!project) return;
   const restored = await restoreProject(project.id);
   res.json(restored);
 });
 
-projectsRouter.post("/api/projects/:id/rotate-key", ...paywalled, async (req, res) => {
+projectsRouter.post("/api/projects/:id/rotate-key", ...dashboardAccess, async (req, res) => {
   const project = await accessibleProjectOr404(req, res);
   if (!project) return;
   const updated = await rotateApiKey(project.id);
   res.json(updated);
 });
 
-projectsRouter.get("/api/projects/:id/alerts", ...paywalled, async (req, res) => {
+projectsRouter.get("/api/projects/:id/alerts", ...protectOnly, async (req, res) => {
   const project = await accessibleProjectOr404(req, res);
   if (!project) return;
   res.json({ project: { id: project.id, name: project.name }, alerts: await listAlerts(project.id) });
 });
 
-projectsRouter.patch("/api/projects/:id/alerts/:alertId", ...paywalled, async (req, res) => {
+projectsRouter.patch("/api/projects/:id/alerts/:alertId", ...protectOnly, async (req, res) => {
   const project = await accessibleProjectOr404(req, res);
   if (!project) return;
 
@@ -296,7 +332,12 @@ projectsRouter.get("/api/projects/:id/scans/:scanId/export", ...paywalled, async
   res.json(scan.report);
 });
 
-projectsRouter.get("/api/overview", ...paywalled, async (req, res) => {
+// Dashboard summary — reachable by every signed-in account, FREE included
+// (see the "Do NOT show a blank application" requirement in the pricing
+// spec). Only summary numbers (score, counts, badge state) come back here,
+// never findings/evidence/remediation — that stays behind Fix Center
+// gating on the routes that actually carry it.
+projectsRouter.get("/api/overview", ...dashboardAccess, async (req, res) => {
   const projects = await listAccessibleProjects(req.userId!);
 
   let totalCritical = 0;

@@ -18,8 +18,8 @@ export function getStripeClient(): Stripe {
 }
 
 export const PLAN_PRICE_ENV_VARS: Record<string, string> = {
-  tier1: "STRIPE_PRICE_TIER1",
-  tier2: "STRIPE_PRICE_TIER2",
+  build: "STRIPE_PRICE_BUILD",
+  protect: "STRIPE_PRICE_PROTECT",
 };
 
 export function priceIdForPlan(plan: string): string {

@@ -35,7 +35,7 @@ test("GET /api/projects/:id returns a hydrated latestScan", async (t) => {
   t.after(() => server.close());
 
   const user = await createUser("fixcenter-detail@example.com", "correct horse battery staple");
-  await setSubscriptionStatus(user.id, "tier1", "active");
+  await setSubscriptionStatus(user.id, "build", "active");
   const token = await createSession(user.id);
   const project = await createProject(user.id, "Fix Center Test");
 
@@ -65,7 +65,7 @@ test("GET /api/projects/:id/scans returns hydrated history entries", async (t) =
   t.after(() => server.close());
 
   const user = await createUser("fixcenter-history@example.com", "correct horse battery staple");
-  await setSubscriptionStatus(user.id, "tier1", "active");
+  await setSubscriptionStatus(user.id, "build", "active");
   const token = await createSession(user.id);
   const project = await createProject(user.id, "Fix Center History Test");
 

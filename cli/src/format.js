@@ -94,7 +94,7 @@ export function formatAccessNotice(access) {
   const lines = [
     chalk.yellow.bold("  Preview report"),
     "",
-    `    ${chalk.dim(access.message || "Upgrade to Tier 1 or Tier 2 for the full report.")}`,
+    `    ${chalk.dim(access.message || "Upgrade to BUILD or PROTECT for the full report.")}`,
     `    ${chalk.dim("Upgrade at https://nettle.dev/billing")}`,
     "",
   ];

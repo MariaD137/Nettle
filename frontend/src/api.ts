@@ -163,9 +163,11 @@ export interface ProjectDetail {
 }
 
 export interface QuotaState {
-  limit: number;
+  /** null = unlimited/fair-use (PROTECT). 0 = no scan access at all (FREE), not "a quota of zero to exhaust". */
+  limit: number | null;
   used: number;
-  remaining: number;
+  /** null when limit is unlimited — there is no "remaining count" to show. */
+  remaining: number | null;
   periodStart: string;
   periodEnd: string;
   exhausted: boolean;
@@ -453,7 +455,7 @@ export const api = {
     }),
 
   // Billing
-  createCheckoutSession: (plan: "tier1" | "tier2") =>
+  createCheckoutSession: (plan: "build" | "protect") =>
     request<{ url: string }>("/api/billing/checkout-session", {
       method: "POST",
       body: JSON.stringify({ plan }),

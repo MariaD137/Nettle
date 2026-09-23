@@ -15,8 +15,8 @@ before(() => {
 });
 
 test("hasFullScanAccess unlocks only the paid tiers", () => {
-  assert.equal(hasFullScanAccess("tier1"), true);
-  assert.equal(hasFullScanAccess("tier2"), true);
+  assert.equal(hasFullScanAccess("build"), true);
+  assert.equal(hasFullScanAccess("protect"), true);
   assert.equal(hasFullScanAccess("free"), false);
   assert.equal(hasFullScanAccess(null), false);
   assert.equal(hasFullScanAccess(undefined), false);
@@ -24,7 +24,7 @@ test("hasFullScanAccess unlocks only the paid tiers", () => {
 });
 
 test("a paid plan gets every finding, marked as a full report", () => {
-  const result = applyScanAccess(report, "tier1");
+  const result = applyScanAccess(report, "build");
   assert.equal(result.findings.length, report.findings.length);
   assert.equal(result.access?.fullReport, true);
   assert.equal(result.access?.tier, "full");
@@ -79,7 +79,7 @@ test("redaction does not mutate the report it was given", () => {
 });
 
 test("limitFindings caps free plans and passes paid plans through", () => {
-  assert.equal(limitFindings(report.findings, "tier2").length, report.findings.length);
+  assert.equal(limitFindings(report.findings, "protect").length, report.findings.length);
   assert.equal(limitFindings(report.findings, "free").length, PREVIEW_FINDING_LIMIT);
 });
 
@@ -100,6 +100,6 @@ test("a free-plan preview does not leak full checkResults detail — the paywall
 });
 
 test("a paid plan's checkResults are not trimmed", () => {
-  const result = applyScanAccess(report, "tier1");
+  const result = applyScanAccess(report, "build");
   assert.equal(result.checkResults!.length, report.checkResults!.length);
 });
