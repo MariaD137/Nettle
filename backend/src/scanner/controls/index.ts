@@ -43,6 +43,7 @@ import "./library/paymentSecurity";
 import "./library/cicdSecurity";
 import "./library/multiTenantSecurity";
 import "./library/cloudSecurity";
+import "./library/aiCodeReview";
 
 export { getControl, listControls, listControlsByCategory, getControlLibraryVersion, getControlVersionsSnapshot } from "./registry";
 export { hydrateCheckResult, hydrateCheckResults, type HydratedFinding } from "./hydrate";
