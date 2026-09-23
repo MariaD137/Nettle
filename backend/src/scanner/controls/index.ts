@@ -40,6 +40,7 @@ import "./library/osvVulnerabilities";
 import "./library/codeQuality";
 import "./library/frontendSecurity";
 import "./library/paymentSecurity";
+import "./library/cicdSecurity";
 
 export { getControl, listControls, listControlsByCategory, getControlLibraryVersion, getControlVersionsSnapshot } from "./registry";
 export { hydrateCheckResult, hydrateCheckResults, type HydratedFinding } from "./hydrate";
