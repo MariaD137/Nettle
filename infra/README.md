@@ -1,6 +1,6 @@
 # Nettle infra
 
-Eight stacks (six production, plus a staging pair mirroring two of them), each scoped to one concern:
+Nine stacks (seven production, plus a staging pair mirroring two of them), each scoped to one concern:
 
 - **Nettle-Network** — a VPC. One NAT gateway (not one per AZ) plus
   public/private-egress/isolated subnet tiers, and a Secrets Manager
@@ -19,11 +19,26 @@ Eight stacks (six production, plus a staging pair mirroring two of them), each s
   volume/mount/EFS property — so durable state cannot live in the container).
 - **Nettle-Ecr** — just the ECR repository, deliberately its own stack. See
   "Deploy order" below for why this can't live inside Nettle-Api.
+- **Nettle-ScanWorker** — true scan sandboxing: an ECS Fargate cluster/task
+  definition the API dispatches untrusted scan execution to, instead of
+  running it in the API's own process. Same container image as Nettle-Api,
+  different command (`node dist/scanWorker.js`); placed in the VPC's
+  isolated subnets (no internet route at all — nothing in the actual scan
+  pipeline needs one, see that file's own doc comment for why); its own
+  task role has exactly two scoped S3 permissions and nothing else — no
+  Secrets Manager, no database, no Stripe/SES. A private S3 bucket
+  (`ScanWorkspaceBucket`, 1-day lifecycle expiry) is the handoff: the API
+  uploads the already-extracted, already-safety-checked scan workspace,
+  the task downloads it, scans, and writes results back, the API reads
+  them and deletes both objects. See `lib/scan-worker-stack.ts` and
+  `backend/src/scanner/isolatedExecution.ts` for the full design.
 - **Nettle-Api** — the App Runner service running the API: 1 vCPU / 2 GB,
   egress routed through the VPC connector, database credentials and Stripe
   secrets injected via Secrets Manager (`runtimeEnvironmentSecrets` —
   resolved by App Runner at start-up, never rendered into the template or a
-  log line).
+  log line). Its instance role also gets narrowly-scoped `ecs:RunTask`/
+  `ecs:DescribeTasks`/`ecs:StopTask`/`iam:PassRole`/S3 grants for
+  dispatching to Nettle-ScanWorker — see that stack's own bullet above.
 - **Nettle-Frontend** — static hosting for `frontend/`'s Vite build: a
   private S3 bucket (all public access blocked, HTTPS-only bucket policy)
   behind a CloudFront distribution using Origin Access Control, never a
@@ -70,7 +85,9 @@ Eight stacks (six production, plus a staging pair mirroring two of them), each s
 
 | Checked | How |
 |---|---|
-| All eight stacks synthesize to valid CloudFormation | `cdk synth` |
+| All nine stacks synthesize to valid CloudFormation | `cdk synth` |
+| Adding Nettle-ScanWorker left Nettle-Database/Nettle-Frontend/Nettle-CI untouched; Nettle-Api's diff is purely additive (new IAM policy statements + new runtime env vars, all conditional on props.scanWorker) | Diffed both templates directly against a synth from before Nettle-ScanWorker existed |
+| Nettle-ScanWorker's task role has exactly two scoped S3 actions (read one workspace prefix, write one results prefix) and no other permission — no Secrets Manager, no database, no Stripe/SES | Inspected the synthesized `ScanWorkerTaskRoleDefaultPolicy`'s statements directly |
 | Adding the staging stacks left `Nettle-Api`/`Nettle-Database`'s own templates completely unchanged | Diffed `cdk synth`'s output for both stacks directly against a synth from before the staging stacks/props existed — zero-byte diff |
 | Adding `Nettle-Frontend` left `Nettle-Database` unchanged and added exactly one thing to `Nettle-Api` — a new CloudFormation `Export` of the App Runner service's `ServiceUrl`, for `Nettle-Frontend`'s cross-stack CSP reference | Diffed both templates directly against a synth from before `Nettle-Frontend` existed — `Nettle-Database` zero-byte diff; `Nettle-Api`'s diff is purely additive (a new `Outputs` entry), no existing resource modified or replaced |
 | `Nettle-Frontend`'s bucket has all public access blocked, is reachable only via the one CloudFront distribution (Origin Access Control, `AWS:SourceArn` condition scoped to that exact distribution id), and denies any non-HTTPS request | Inspected the synthesized bucket policy directly — confirmed `PublicAccessBlockConfiguration` blocks all four dimensions, the `s3:GetObject` grant's principal is `cloudfront.amazonaws.com` conditioned on this distribution's ARN specifically (not any CloudFront distribution), and a separate statement denies `s3:*` account-wide when `aws:SecureTransport` is false |
@@ -80,6 +97,7 @@ Eight stacks (six production, plus a staging pair mirroring two of them), each s
 | The RDS password never appears in App Runner's own runtime config, only resolved inside the container | Inspected the synthesized template directly — confirmed `RuntimeEnvironmentVariables` carries no `{{resolve:secretsmanager:...}}` value (previously it did: a composite `DATABASE_URL` built by joining `secretValueFromJson(...).unsafeUnwrap()` calls, which CloudFormation resolves before calling App Runner's API — so the plaintext password ended up stored in App Runner's own service configuration, visible via `DescribeService`/the console to anyone with that read permission, not just to principals with `secretsmanager:GetSecretValue` on the DB secret specifically. Fixed: `DB_USERNAME`/`DB_PASSWORD` now go through `RuntimeEnvironmentSecrets`, the same native ARN-reference mechanism already used correctly for the Stripe secrets, which App Runner resolves only inside the running container and never stores in its own config. `backend/src/db/index.ts`'s `resolveDatabaseUrl()` assembles the real connection string from that plus the plain `DB_HOST`/`DB_PORT`/`DB_NAME` values once the container is running) |
 | Backend builds a working image, starts as non-root, applies its DB migration, serves `/health` and real requests against a real PostgreSQL server | Ran the built artifact directly as the unprivileged user against a local PostgreSQL 16.13 instance (not App Runner itself — see below) |
 | Docker image build | **Not run** — no Docker daemon available in the sandbox this was built in |
+| `scanWorker.js`'s use of `tar` inside the container | **Not run against a real built image** — `tar` is a Debian `Essential: yes` package (always present on any Debian-based image, `node:22-slim` included, by Debian's own packaging policy, not something specific to this Dockerfile), so this should work, but "should" is not "verified running", and it hasn't been run inside an actual container in this sandbox |
 | Actual `cdk deploy` / real AWS resources / App Runner networking / Stripe/SES connectivity | **Not run** — needs a real AWS account and credentials, which are never pasted into a chat session (see below) |
 
 ## Deploy order — read this before running anything
@@ -89,27 +107,35 @@ dependency graph correctly (CDK topologically sorts by cross-stack
 references), but if you deploy stacks individually, this order matters:
 
 ```
-Nettle-Network  →  Nettle-Database  →  Nettle-Ecr  →  [push an image]  →  Nettle-Api  →  Nettle-Frontend  →  Nettle-CI
-                 →  Nettle-Database-Staging                            →  Nettle-Api-Staging
+Nettle-Network  →  Nettle-Database  →  Nettle-Ecr  →  Nettle-ScanWorker  →  [push an image]  →  Nettle-Api  →  Nettle-Frontend  →  Nettle-CI
+                 →  Nettle-Database-Staging                                                 →  Nettle-Api-Staging
 ```
 
-`Nettle-Frontend` depends on `Nettle-Api` (its CSP imports `Nettle-Api`'s
-`ServiceUrl` — see that stack's own comment) but not on anything else;
-`Nettle-CI` depends on `Nettle-Ecr` and `Nettle-Frontend` (it grants its
-deploy role permissions scoped to both).
+`Nettle-ScanWorker` depends on `Nettle-Network` (it places its cluster/task
+in the isolated subnets) and `Nettle-Ecr` (same image as the API) but not
+on `Nettle-Api` — deploy it before `Nettle-Api`, which imports its
+cluster/task-definition/bucket ARNs to grant the API's instance role
+`ecs:RunTask` and the matching S3 permissions. `Nettle-Frontend` depends on
+`Nettle-Api` (its CSP imports `Nettle-Api`'s `ServiceUrl` — see that
+stack's own comment) but not on anything else; `Nettle-CI` depends on
+`Nettle-Ecr` and `Nettle-Frontend` (it grants its deploy role permissions
+scoped to both).
 
 **Nettle-Ecr must be deployed, and a real image pushed into it, before
-Nettle-Api (or Nettle-Api-Staging) is deployed for the first time.**
-`AWS::AppRunner::Service` references an image tag (`:latest` for
-`Nettle-Api`, `:staging` for `Nettle-Api-Staging`) and CloudFormation waits
-for the service to reach `RUNNING` before the resource is considered
-created. On a first-ever deploy there is no image at either tag yet — if the
-ECR repo and the App Runner service were in the same stack (an earlier
-version of this code had them together), the service would fail to pull,
-CloudFormation would roll back the *entire* stack, and it would delete the
-ECR repo it had just created moments earlier along with everything else.
-Splitting them into separate stacks is what breaks that chicken-and-egg —
-see `lib/ecr-stack.ts`.
+Nettle-Api, Nettle-Api-Staging, or Nettle-ScanWorker is deployed for the
+first time.** `AWS::AppRunner::Service` references an image tag (`:latest`
+for `Nettle-Api`, `:staging` for `Nettle-Api-Staging`) and
+`AWS::ECS::TaskDefinition` references one too (also `:latest`, for
+`Nettle-ScanWorker`); CloudFormation waits for the App Runner service to
+reach `RUNNING` before considering that resource created (ECS task
+definitions don't have this same wait, but still need a real image to
+successfully launch a task later). On a first-ever deploy there is no
+image at either tag yet — if the ECR repo and the App Runner service were
+in the same stack (an earlier version of this code had them together), the
+service would fail to pull, CloudFormation would roll back the *entire*
+stack, and it would delete the ECR repo it had just created moments
+earlier along with everything else. Splitting them into separate stacks is
+what breaks that chicken-and-egg — see `lib/ecr-stack.ts`.
 
 **`cdk deploy --all` now deploys the staging pair too** (they're
 unconditionally in `bin/app.ts`, same as every other stack) — this is a
@@ -200,7 +226,15 @@ docker push <account-id>.dkr.ecr.<region>.amazonaws.com/nettle-api:latest
 cd ../infra
 ```
 
-**4. Deploy the API:**
+**4. Deploy the scan worker** (true scan sandboxing — reads the same image
+just pushed, so it must come after step 3, but has no other dependency on
+the API itself):
+
+```bash
+npx cdk deploy Nettle-ScanWorker
+```
+
+**5. Deploy the API:**
 
 ```bash
 npx cdk deploy Nettle-Api
@@ -212,7 +246,7 @@ will start; the container's own persistence guard
 without `DATABASE_URL`, which this stack injects automatically, so if it
 comes up at all, the database connection is real.
 
-**5. Populate the Stripe secret** (the stack creates it with placeholder
+**6. Populate the Stripe secret** (the stack creates it with placeholder
 `"unset"` values under the real key names — see `lib/api-stack.ts` for why
 it needs real JSON structure from creation, not a truly empty secret):
 
@@ -231,7 +265,7 @@ App Runner picks up secret changes on the next deployment, not live — either
 push a new image or use `aws apprunner start-deployment` to pick up the new
 values without a code change.
 
-**6. Verify it's actually live:**
+**7. Verify it's actually live:**
 
 ```bash
 curl https://<ServiceUrl>/health
@@ -247,7 +281,7 @@ curl -X POST https://<ServiceUrl>/api/auth/signup \
   -d '{"email":"you@example.com","password":"a real passphrase here"}'
 ```
 
-**7. Deploy the frontend bucket/distribution:**
+**8. Deploy the frontend bucket/distribution:**
 
 ```bash
 npx cdk deploy Nettle-Frontend
@@ -260,13 +294,13 @@ distribution serves an empty bucket (a 403→index.html fallback with nothing
 at `/index.html` either — a blank error page, not a security problem,
 just not useful yet).
 
-**8. Deploy CI:**
+**9. Deploy CI:**
 
 ```bash
 npx cdk deploy Nettle-CI
 ```
 
-**9. Wire GitHub Actions.** `backend-deploy.yml`/`frontend-deploy.yml` run
+**10. Wire GitHub Actions.** `backend-deploy.yml`/`frontend-deploy.yml` run
 under the `production` GitHub Environment and `backend-deploy-staging.yml`
 under `staging` — add these repository/environment variables (Settings →
 Secrets and variables → Actions → Variables; set per-environment if you
@@ -283,7 +317,7 @@ in this repo, so sharing is fine):
 | `FRONTEND_DISTRIBUTION_ID` | `frontend-deploy.yml` | `Nettle-Frontend` stack's `DistributionId` output |
 | `API_BASE_URL` | `frontend-deploy.yml` | `Nettle-Api` stack's `ServiceUrl` output — baked into the Vite build at build time (`VITE_API_BASE_URL`), not read at runtime |
 
-**10. (Recommended)** Add a `production` GitHub Environment with required
+**11. (Recommended)** Add a `production` GitHub Environment with required
 reviewers, so a push to `main` pauses for approval before it touches AWS —
 `backend-deploy.yml`/`frontend-deploy.yml` already target the `production`
 environment.
@@ -295,7 +329,7 @@ up automatically, no separate deploy step needed. A push to `main` touching
 `/index.html`. Every push to `develop` does the backend's equivalent for
 `:staging`, once step 11 below exists to consume it.
 
-**11. (Optional) Deploy staging** — a second, independent environment (its
+**12. (Optional) Deploy staging** — a second, independent environment (its
 own database, its own App Runner service, its own Stripe-secret slot)
 tracking the `:staging` tag `backend-deploy-staging.yml` already pushes on
 every merge to `develop`:
@@ -303,14 +337,14 @@ every merge to `develop`:
 ```bash
 npx cdk deploy Nettle-Database-Staging
 # push a real image tagged :staging into the same ECR repo from step 3
-# before deploying the service, same chicken-and-egg reasoning as step 4 —
+# before deploying the service, same chicken-and-egg reasoning as step 5 —
 # use the same docker build/tag/push sequence with :staging instead of :latest
 npx cdk deploy Nettle-Api-Staging
 ```
 
-Then populate `nettle/application-staging` (step 5's command, with
+Then populate `nettle/application-staging` (step 6's command, with
 `--secret-id nettle/application-staging`) — with Stripe **test-mode** keys,
-never the live keys from step 5. Skip this step entirely if there's no need
+never the live keys from step 6. Skip this step entirely if there's no need
 for a separate pre-production environment yet; nothing else here depends on
 it existing. There is no separate staging frontend target — `Nettle-Frontend`
 is a single production distribution; the frontend is a static SPA with no
@@ -341,6 +375,14 @@ real recurring costs:
   assets, CloudFront's free tier (1 TB/month egress, 10M requests) covers
   most early usage entirely. Scales with actual visitor traffic, unlike the
   fixed NAT/App Runner/RDS costs above.
+- **Nettle-ScanWorker (Fargate)**: billed per-task, per-second, only while a
+  scan is actually running — no idle/always-on cost, unlike App Runner. At
+  1 vCPU / 2 GB (same sizing as the API), roughly $0.02-0.03 per scan
+  assuming a scan takes 30-60 seconds; a handful of scans/day is well under
+  $5/month. The ECS cluster itself, the S3 workspace bucket (1-day
+  lifecycle expiry keeps storage near-zero), and CloudWatch log retention
+  add negligible cost on top. Scales with actual scan volume, not with
+  uptime.
 
 Rough total: **$90-130/month** at low/zero traffic. The two big line items
 (NAT, App Runner sizing) are both direct consequences of real product
@@ -412,26 +454,35 @@ guard, so this is a clean, complete teardown.
   session tokens, rate-limited) but hand-rolled rather than Cognito-backed —
   revisit if there's a concrete reason (social login, enterprise SSO) to
   want a managed identity provider instead.
-- **True per-scan sandboxing.** The whole API service is network-isolated,
-  which is real but coarse: one large or malicious upload still runs in the
-  same process as everything else. Per-job ephemeral isolation (a Fargate
-  task per scan, or a service built for running untrusted code) is the next
-  real hardening step once there's actual multi-tenant traffic to protect
-  against.
+- **True per-scan sandboxing is now real, production only.** Nettle-ScanWorker
+  gives each scan its own ECS Fargate task — a genuinely separate process,
+  container, filesystem, and network path from the API, with none of the
+  API's own credentials (see that stack's bullet above and
+  `backend/src/scanner/isolatedExecution.ts`). Two disclosed limits: (1)
+  concurrency — the API dispatches and polls one Fargate task at a time
+  rather than several in parallel, a simplicity trade-off for this pass,
+  not a hard limit of the cluster itself; (2) staging keeps the
+  pre-existing in-process fallback (unsandboxed, same as production was
+  before this stack existed) rather than its own isolated worker — a
+  Fargate task definition is pinned to one image tag at registration time,
+  so giving staging parity would mean a second cluster/task definition
+  tracking `:staging`, not done here.
 
 ## Tearing it down
 
 ```bash
-npx cdk destroy Nettle-CI Nettle-Frontend Nettle-Api Nettle-Ecr Nettle-Database Nettle-Network
+npx cdk destroy Nettle-CI Nettle-Frontend Nettle-Api Nettle-ScanWorker Nettle-Ecr Nettle-Database Nettle-Network
 ```
 
 `Nettle-Frontend` must come after `Nettle-CI` (whose deploy role policy
 references the frontend bucket/distribution ARNs) and before `Nettle-Api`
-(whose `ServiceUrl` the frontend's CSP imports) — CloudFormation refuses to
-delete a stack while another stack still imports one of its outputs, so
-this order isn't optional. `Nettle-Frontend`'s bucket has
-`autoDeleteObjects: true`, so this actually empties and deletes it, unlike
-`Nettle-Database` below.
+(whose `ServiceUrl` the frontend's CSP imports); `Nettle-ScanWorker` must
+come after `Nettle-Api` (whose instance role imports its cluster/task-
+definition/bucket ARNs) — CloudFormation refuses to delete a stack while
+another stack still imports one of its outputs, so this order isn't
+optional. `Nettle-Frontend`'s and `Nettle-ScanWorker`'s buckets both have
+`autoDeleteObjects: true`, so this actually empties and deletes them,
+unlike `Nettle-Database` below.
 
 If the staging pair was deployed, tear it down first (no dependents, so
 order relative to the above doesn't matter) — unlike `Nettle-Database`, it

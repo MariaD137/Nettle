@@ -1,37 +1,44 @@
 import { runScan } from "./index";
 import { completeQueuedScan, failQueuedScan, markScanStatus } from "../patrol/scans";
+import { isIsolatedExecutionConfigured, runScanIsolated } from "./isolatedExecution";
 
 /**
  * Decouples project-tied scan execution from the HTTP request that triggers
  * it (master spec: "scans no longer depend on the HTTP request remaining
  * open for the full scan"), using the same in-process async queue pattern
  * already established for continuous-monitoring detection — see
- * patrol/detectionQueue.ts's comment for the full reasoning behind that
- * choice over reaching for real AWS infrastructure (SQS/Fargate/etc.)
- * before there's real traffic to justify it.
+ * patrol/detectionQueue.ts's comment for the full reasoning.
  *
- * Scope, stated honestly: this decouples the *client* from the scan's
- * duration — POST /api/scans returns as soon as the scan record is created,
- * not after the scan runs. It does NOT make the scan itself non-blocking
- * within the Node process: scanner/index.ts's runScan() calls out to
- * Semgrep and other checks via execFileSync (a deliberately synchronous,
- * bounded-timeout subprocess call — see scanner/controls/checks/
- * semgrepControl.ts), which blocks the event loop for its duration exactly
- * as it always has. Converting the scanner pipeline itself to non-blocking
- * subprocess execution would be a much larger change touching every check
- * that shells out, and isn't what was asked for here. What changes is
- * real and matches the stated problem: no HTTP connection, load balancer,
- * or CI client has to stay attached for the scan's duration anymore, and a
- * scan's own timeout/failure can no longer take an in-flight HTTP request
- * down with it.
+ * What this queue itself does and doesn't do, stated honestly: it decouples
+ * the *client* from the scan's duration — POST /api/scans returns as soon
+ * as the scan record is created, not after the scan runs — and it processes
+ * jobs strictly serially, same as detectionQueue.ts.
  *
- * Jobs run strictly serially (like detectionQueue.ts), which costs nothing
- * here beyond what already exists: because runScan() blocks synchronously
- * while it runs, "concurrent" jobs in a single Node process could not
- * actually execute in parallel regardless of how the queue were structured
- * — a second job's code simply cannot run until the first job's blocking
- * call returns. Serial processing is therefore not a throughput compromise,
- * just an honest match to the actual execution model.
+ * Whether the scan itself runs isolated or in-process is a separate
+ * question this queue delegates entirely to isolatedExecution.ts's
+ * isIsolatedExecutionConfigured() (see runJob below):
+ *   - Configured (SCAN_ECS_* env vars present — production, once
+ *     scan-worker-stack.ts is deployed): the scan runs inside its own ECS
+ *     Fargate task — a real process/container/network boundary, with none
+ *     of the API's own credentials. See isolatedExecution.ts and
+ *     scan-worker-stack.ts for the full design.
+ *   - Not configured (every test, local development, this sandbox — no AWS
+ *     ECS config available): falls back to calling runScan() directly,
+ *     in-process. scanner/index.ts's runScan() calls out to Semgrep and
+ *     other checks via execFileSync, which blocks the Node event loop for
+ *     its duration exactly as it always has in this fallback path — this
+ *     is the same disclosed, unsandboxed behavior scanQueue.ts always had
+ *     before isolatedExecution.ts existed, kept exactly as-is for any
+ *     environment that hasn't deployed the isolated worker.
+ *
+ * Serial processing costs nothing in the in-process fallback (runScan()
+ * blocks synchronously, so "concurrent" jobs couldn't actually run in
+ * parallel in one Node process regardless of queue structure) and is a
+ * genuine (if modest) throughput ceiling in the isolated path, where the
+ * API dispatches and polls one Fargate task at a time rather than several
+ * concurrently — a deliberate simplicity trade-off for this pass, not a
+ * hard architectural limit; scan-worker-stack.ts's cluster has no fixed
+ * concurrency cap of its own.
  */
 
 export interface ScanJobInput {
@@ -47,7 +54,15 @@ let pending = 0;
 async function runJob(job: ScanJobInput): Promise<void> {
   await markScanStatus(job.scanId, "SCANNING");
   try {
-    const report = runScan(job.scanRoot);
+    // Isolated execution (scanner/isolatedExecution.ts) when configured —
+    // true sandboxing, a separate ECS Fargate task/process/network path
+    // with none of the API's own credentials (see that file and
+    // scan-worker-stack.ts). Falls back to the pre-existing in-process call
+    // when it isn't (no AWS ECS config present — every test, local dev, and
+    // this sandbox), so nothing about the existing, disclosed in-process
+    // fallback's behavior changes for an environment that was never
+    // configured for isolation in the first place.
+    const report = isIsolatedExecutionConfigured() ? await runScanIsolated(job.scanId, job.scanRoot) : runScan(job.scanRoot);
     await completeQueuedScan(job.scanId, report);
   } catch (err) {
     const message = (err as Error).message;

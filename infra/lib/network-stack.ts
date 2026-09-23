@@ -1,5 +1,5 @@
 import { CfnOutput, Stack, type StackProps } from "aws-cdk-lib";
-import { Vpc, SubnetType, SecurityGroup, Peer, Port, InterfaceVpcEndpointAwsService } from "aws-cdk-lib/aws-ec2";
+import { Vpc, SubnetType, SecurityGroup, Peer, Port, InterfaceVpcEndpointAwsService, GatewayVpcEndpointAwsService } from "aws-cdk-lib/aws-ec2";
 import type { Construct } from "constructs";
 
 /**
@@ -60,6 +60,22 @@ export class NettleNetworkStack extends Stack {
     this.vpc.addInterfaceEndpoint("SecretsManagerEndpoint", {
       service: InterfaceVpcEndpointAwsService.SECRETS_MANAGER,
       subnets: { subnetType: SubnetType.PRIVATE_WITH_EGRESS },
+    });
+
+    // Gateway endpoint (route-table based, no ENI, no NAT/hourly cost — free)
+    // added to the ISOLATED subnets specifically, not private-egress: this is
+    // what lets scan-worker-stack.ts's Fargate scan task (placed in isolated
+    // subnets, same tier as the database, for the same "no route to the
+    // internet at all" reason) reach S3 for its workspace/results handoff
+    // without needing any internet route. The isolated subnets' route table
+    // has no route to 0.0.0.0/0 (no IGW, no NAT) — this endpoint is the ONLY
+    // non-local route added to it, so restricting egress security group
+    // rules to "HTTPS, any destination" for anything placed in these subnets
+    // can only ever actually reach S3 in practice, same reasoning already
+    // applied to the database's own security group below.
+    this.vpc.addGatewayEndpoint("IsolatedS3Endpoint", {
+      service: GatewayVpcEndpointAwsService.S3,
+      subnets: [{ subnetType: SubnetType.PRIVATE_ISOLATED }],
     });
 
     this.connectorSecurityGroup = new SecurityGroup(this, "ConnectorSecurityGroup", {

@@ -1,8 +1,10 @@
 #!/usr/bin/env node
 import { App } from "aws-cdk-lib";
+import { SubnetType } from "aws-cdk-lib/aws-ec2";
 import { NettleNetworkStack } from "../lib/network-stack";
 import { NettleDatabaseStack } from "../lib/database-stack";
 import { NettleEcrStack } from "../lib/ecr-stack";
+import { NettleScanWorkerStack } from "../lib/scan-worker-stack";
 import { NettleApiStack } from "../lib/api-stack";
 import { NettleFrontendStack } from "../lib/frontend-stack";
 import { NettleCiStack } from "../lib/ci-stack";
@@ -30,6 +32,20 @@ const database = new NettleDatabaseStack(app, "Nettle-Database", {
 // exists — see ecr-stack.ts for why this ordering is required, not optional.
 const ecr = new NettleEcrStack(app, "Nettle-Ecr", { env });
 
+// True scan sandboxing (see that file's own doc comment): an isolated ECS
+// Fargate task the API dispatches untrusted scan execution to, instead of
+// running it in the API's own process. Production only for this round —
+// staging keeps the pre-existing in-process fallback (a Fargate task
+// definition is pinned to one image tag at registration time, so giving
+// staging its own isolated path would mean a second cluster/task
+// definition tracking :staging; not done here, a disclosed, deliberate
+// scope-narrowing rather than an oversight).
+const scanWorker = new NettleScanWorkerStack(app, "Nettle-ScanWorker", {
+  env,
+  vpc: network.vpc,
+  repository: ecr.repository,
+});
+
 const api = new NettleApiStack(app, "Nettle-Api", {
   env,
   vpc: network.vpc,
@@ -37,6 +53,15 @@ const api = new NettleApiStack(app, "Nettle-Api", {
   databaseSecret: database.secret,
   databaseEndpoint: database.instance.dbInstanceEndpointAddress,
   repository: ecr.repository,
+  scanWorker: {
+    clusterArn: scanWorker.cluster.clusterArn,
+    taskDefinitionArn: scanWorker.taskDefinition.taskDefinitionArn,
+    subnetIds: network.vpc.selectSubnets({ subnetType: SubnetType.PRIVATE_ISOLATED }).subnetIds.join(","),
+    securityGroupId: scanWorker.taskSecurityGroup.securityGroupId,
+    workspaceBucketName: scanWorker.workspaceBucket.bucketName,
+    taskRoleArn: scanWorker.taskRoleArn,
+    executionRoleArn: scanWorker.executionRoleArn,
+  },
 });
 
 /**

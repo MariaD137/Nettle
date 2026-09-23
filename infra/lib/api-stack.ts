@@ -43,6 +43,26 @@ export interface NettleApiStackProps extends StackProps {
    * consume it — see that file's history).
    */
   imageTag?: string;
+  /**
+   * scan-worker-stack.ts's outputs, wired in so the API can actually
+   * dispatch a scan to an isolated Fargate task (ecs:RunTask) instead of
+   * running it in-process. Optional and additive: omitted, this stack's
+   * ApiInstanceRole/ApiService are unchanged from before this prop existed
+   * — the backend's own isolatedExecution.ts falls back to in-process
+   * execution when these env vars aren't present, so an instantiation
+   * without this (or a stale deploy of this stack from before it existed)
+   * keeps working, just without the isolation.
+   */
+  scanWorker?: {
+    clusterArn: string;
+    taskDefinitionArn: string;
+    /** Comma-separated — App Runner's runtimeEnvironmentVariables are flat strings, not lists. */
+    subnetIds: string;
+    securityGroupId: string;
+    workspaceBucketName: string;
+    taskRoleArn: string;
+    executionRoleArn: string;
+  };
 }
 
 /**
@@ -161,6 +181,61 @@ export class NettleApiStack extends Stack {
       })
     );
 
+    // scanner/isolatedExecution.ts's dispatch to the isolated scan worker
+    // (scan-worker-stack.ts) — every grant here is scoped to that one task
+    // definition/cluster/bucket, never account-wide. Absent when
+    // props.scanWorker isn't provided, in which case the API has none of
+    // these permissions at all and isolatedExecution.ts's own
+    // isConfigured() check (driven by the env vars below, also absent)
+    // correctly falls back to in-process execution rather than failing on
+    // an AccessDenied.
+    if (props.scanWorker) {
+      const sw = props.scanWorker;
+      instanceRole.addToPolicy(
+        new PolicyStatement({
+          actions: ["ecs:RunTask"],
+          resources: [sw.taskDefinitionArn],
+          conditions: { ArnEquals: { "ecs:cluster": sw.clusterArn } },
+        })
+      );
+      instanceRole.addToPolicy(
+        new PolicyStatement({
+          actions: ["ecs:DescribeTasks", "ecs:StopTask"],
+          // Individual task ARNs are only known once RunTask returns one;
+          // scoped to "any task in this one cluster" via the resource
+          // pattern, which is as tight as a static IAM policy can get for
+          // actions on resources created dynamically at runtime.
+          resources: [`arn:aws:ecs:${this.region}:${this.account}:task/*`],
+          conditions: { ArnEquals: { "ecs:cluster": sw.clusterArn } },
+        })
+      );
+      // ecs:RunTask requires the caller to be able to pass the task's own
+      // roles to ECS — scoped to exactly these two role ARNs, not "*".
+      instanceRole.addToPolicy(
+        new PolicyStatement({
+          actions: ["iam:PassRole"],
+          resources: [sw.taskRoleArn, sw.executionRoleArn],
+        })
+      );
+      // Mirror image of the task role's own two grants (scan-worker-stack.ts):
+      // the API writes the workspace the task will read, and reads the
+      // results the task wrote — the reverse direction of the task's own
+      // permissions, never both directions on the same prefix for either
+      // side.
+      instanceRole.addToPolicy(
+        new PolicyStatement({
+          actions: ["s3:PutObject", "s3:DeleteObject"],
+          resources: [`arn:aws:s3:::${sw.workspaceBucketName}/workspaces/*`],
+        })
+      );
+      instanceRole.addToPolicy(
+        new PolicyStatement({
+          actions: ["s3:GetObject", "s3:DeleteObject"],
+          resources: [`arn:aws:s3:::${sw.workspaceBucketName}/results/*`],
+        })
+      );
+    }
+
     const vpcConnector = new CfnVpcConnector(this, "ApiVpcConnector", {
       // The egress subnets, not the isolated ones: the service needs a route
       // to Stripe and the git hosts through the NAT gateway.
@@ -200,6 +275,21 @@ export class NettleApiStack extends Stack {
               { name: "DB_HOST", value: props.databaseEndpoint },
               { name: "DB_PORT", value: "5432" },
               { name: "DB_NAME", value: "nettle" },
+              // Read by scanner/isolatedExecution.ts's isConfigured() — all
+              // five present is what switches scan execution from
+              // in-process to the isolated Fargate task. Omitted entirely
+              // (not even empty strings) when props.scanWorker isn't
+              // provided, so isConfigured() sees them as genuinely absent
+              // rather than empty-but-present.
+              ...(props.scanWorker
+                ? [
+                    { name: "SCAN_ECS_CLUSTER_ARN", value: props.scanWorker.clusterArn },
+                    { name: "SCAN_ECS_TASK_DEFINITION_ARN", value: props.scanWorker.taskDefinitionArn },
+                    { name: "SCAN_ECS_SUBNET_IDS", value: props.scanWorker.subnetIds },
+                    { name: "SCAN_ECS_SECURITY_GROUP_ID", value: props.scanWorker.securityGroupId },
+                    { name: "SCAN_WORKSPACE_BUCKET_NAME", value: props.scanWorker.workspaceBucketName },
+                  ]
+                : []),
             ],
             runtimeEnvironmentSecrets: [
               // App Runner resolves these itself, inside the running

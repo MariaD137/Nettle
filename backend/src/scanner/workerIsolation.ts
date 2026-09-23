@@ -1,6 +1,22 @@
 /**
- * Worker isolation: run untrusted code analysis in a separate process.
- * Prevents sandbox escapes and resource exhaustion from affecting the main process.
+ * NOT wired into the real scan pipeline. Verified directly: nothing in
+ * scanner/index.ts, scanner/scanQueue.ts, or routes/scans.routes.ts
+ * imports anything from this file — only its own test
+ * (test/c2-worker-isolation.test.ts) and src/audit/phase5-final-audit.ts
+ * reference it. Its worker thread body is also a stub that doesn't run
+ * real analysis at all (it returns a hardcoded `{ analyzed: true, findings:
+ * [] }` regardless of input — see initializeWorkers below), so even if it
+ * were wired in, it wouldn't do what its name/comments claim.
+ *
+ * The real isolation boundary for untrusted scan execution is
+ * scanner/isolatedExecution.ts + scan-worker-stack.ts (a separate ECS
+ * Fargate task/process/container/network path, with no application
+ * secrets) — this file predates that work and is unrelated to it. Left in
+ * place rather than deleted (not asked for, and its own tests pass against
+ * what it actually is — a worker_threads pool with a stub body — so
+ * deleting it isn't a security fix, just cleanup outside this round's
+ * scope), but it should not be read as an existing "worker isolation"
+ * control that the real isolation work is redundant with.
  */
 
 import { Worker } from "worker_threads";

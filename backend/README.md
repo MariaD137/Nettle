@@ -240,22 +240,29 @@ in-process one — see known gaps for what that does and doesn't cover).
 
 ## Known gaps
 
-**Tier 1 sandboxing.** The `/api/scans` endpoint currently extracts and reads
-the uploaded zip directly on the host running the API. That's fine for local
-development — it is **not** fine for production, since this endpoint runs
-static analysis over code an attacker fully controls. Before this goes
-anywhere near real traffic, extraction and scanning need to happen in an
-isolated, network-less sandbox (see the AWS architecture notes: ECS Fargate
-tasks with no NAT/egress, or a service like e2b/Modal purpose-built for
-executing untrusted code). A project-tied scan now runs asynchronously
-(`scanner/scanQueue.ts`, off the HTTP request path — see `infra/README.md`'s
-"what's deliberately not here yet"), but async is not the same thing as
-sandboxed: it still runs in the same process, on the same host, as
-everything else. Isolation between *concurrent* scans is real today (each
-gets its own uniquely-named temp directory, and the queue processes jobs
-strictly one at a time, so there is no window where two scans' filesystem
-operations could even race) — isolation from *the host itself* is the gap
-this note is actually about, and remains open.
+**Tier 1 sandboxing — now real in production, with two disclosed gaps.**
+A project-tied scan (`scanner/scanQueue.ts`) dispatches to
+`scanner/isolatedExecution.ts`, which runs the scan inside its own ECS
+Fargate task (`infra/lib/scan-worker-stack.ts`) — a separate process,
+container, filesystem, and network path from the API, in the VPC's
+isolated subnets (no internet route at all), with a task IAM role that has
+exactly two scoped S3 permissions and nothing else (no Secrets Manager, no
+database, no Stripe/SES). Extraction itself still happens on the API host
+before the workspace is handed off (it's the cheap, security-critical step
+— symlink/decompression-bomb/path-traversal checks in
+`scanner/safeExtraction.ts`, unchanged — that must reject a bad archive
+before anything is queued), but the actual analysis of the untrusted
+content runs isolated, closing the gap this note used to describe.
+Two disclosed limits: (1) this is production-only — the in-process
+fallback (same-process, same-host execution this note originally warned
+about) is what still runs locally, in tests, and on the staging App Runner
+service, since a Fargate task definition is pinned to one image tag and
+staging wasn't given its own; (2) `isIsolatedExecutionConfigured()` is the
+switch, so any environment that deploys `Nettle-Api` without also
+deploying `Nettle-ScanWorker` (or that predates this change) silently
+falls back to in-process execution rather than failing — intentional for
+backward compatibility, but worth knowing if isolation is assumed present
+everywhere `Nettle-Api` is.
 
 **Billing is untested against a live Stripe account.** The webhook's
 signature verification is genuinely tested (see above), but the actual

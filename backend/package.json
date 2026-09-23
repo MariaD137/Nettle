@@ -15,6 +15,8 @@
     "lint:test": "tsc --noEmit -p tsconfig.test.json"
   },
   "dependencies": {
+    "@aws-sdk/client-ecs": "^3.1138.0",
+    "@aws-sdk/client-s3": "^3.1138.0",
     "@aws-sdk/client-sesv2": "^3.1138.0",
     "cors": "^2.8.6",
     "express": "^4.19.2",
