@@ -23,7 +23,7 @@ function renderAt(path: string) {
 }
 
 describe("App routing", () => {
-  it("redirects / to /login when not authenticated", async () => {
+  it("renders the public marketing page at / when not authenticated", async () => {
     const { __setMockUser } = await import("./AuthContext") as any;
     __setMockUser(null);
 
@@ -31,6 +31,8 @@ describe("App routing", () => {
     await waitFor(() => {
       expect(screen.queryByText("Loading…")).not.toBeInTheDocument();
     });
+    expect(screen.getAllByText("Pricing").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Get started").length).toBeGreaterThan(0);
   });
 
   it("renders the login page at /login", () => {

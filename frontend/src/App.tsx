@@ -1,6 +1,7 @@
 import { Navigate, Route, Routes } from "react-router-dom";
 import { useAuth } from "./AuthContext";
 import LoginPage from "./pages/LoginPage";
+import MarketingPage from "./pages/MarketingPage";
 import DashboardPage from "./pages/DashboardPage";
 import ProjectPage from "./pages/ProjectPage";
 import BillingResultPage from "./pages/BillingResultPage";
@@ -30,6 +31,21 @@ function PaidRoute({ children }: { children: React.ReactNode }) {
   return <>{children}</>;
 }
 
+/**
+ * "/" specifically: the one route a signed-out visitor can land on without
+ * being bounced straight to a login form. Same gating as PaidRoute for
+ * anyone who *is* signed in (unpaid still goes to /subscribe, paid gets the
+ * dashboard) — only the signed-out case changes, from an immediate redirect
+ * to the public marketing page.
+ */
+function HomeRoute() {
+  const { user, loading } = useAuth();
+  if (loading) return <div className="shell muted">Loading…</div>;
+  if (!user) return <MarketingPage />;
+  if (!hasActiveSubscription(user)) return <Navigate to="/subscribe" replace />;
+  return <DashboardPage />;
+}
+
 export default function App() {
   return (
     <Routes>
@@ -43,14 +59,7 @@ export default function App() {
           </ProtectedRoute>
         }
       />
-      <Route
-        path="/"
-        element={
-          <PaidRoute>
-            <DashboardPage />
-          </PaidRoute>
-        }
-      />
+      <Route path="/" element={<HomeRoute />} />
       <Route
         path="/projects/:id"
         element={
