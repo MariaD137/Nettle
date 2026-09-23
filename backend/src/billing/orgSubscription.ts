@@ -2,6 +2,7 @@ import type { NextFunction, Request, Response } from "express";
 import type { Organization } from "../organizations/types";
 import { getOrganization } from "../organizations/organizations";
 import { entitledPlan, PAID_PLANS } from "./subscription";
+import type { QuotaSubject } from "./scanQuota";
 import { getUserById } from "../auth/users";
 import { getProject, canAccessProject } from "../patrol/projects";
 import type { Project } from "../patrol/types";
@@ -43,6 +44,33 @@ export async function resolvePlanForProject(
   if (!project.organizationId) return fallbackPlan;
   const org = await getOrganization(project.organizationId);
   return hasActiveOrgSubscription(org) ? org!.plan : fallbackPlan;
+}
+
+/**
+ * Resolves which quota a scan is actually billed against — the organization's
+ * own shared monthly pool if the project belongs to one that's actively
+ * subscribed, else the triggering account's own personal quota (the
+ * pre-existing, unchanged behavior). Returns the resolved plan alongside the
+ * subject so the caller (routes/scans.routes.ts) doesn't need a second
+ * lookup to know which limit/state applies — same shape and reasoning as
+ * resolvePlanForProject above, just also naming *whose* quota to check.
+ *
+ * `fallbackPlan` is the caller's already-computed per-user entitled plan
+ * (entitledPlan(billedUser)) — this function never re-derives it, matching
+ * resolvePlanForProject's own division of responsibility.
+ */
+export async function resolveQuotaSubject(
+  billedUserId: string,
+  project: Pick<Project, "organizationId"> | null,
+  fallbackPlan: string
+): Promise<{ subject: QuotaSubject; plan: string }> {
+  if (project?.organizationId) {
+    const org = await getOrganization(project.organizationId);
+    if (org && hasActiveOrgSubscription(org)) {
+      return { subject: { type: "organization", organizationId: org.id }, plan: org.plan };
+    }
+  }
+  return { subject: { type: "user", userId: billedUserId }, plan: fallbackPlan };
 }
 
 /**

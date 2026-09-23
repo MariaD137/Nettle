@@ -8,6 +8,7 @@ interface OrganizationRow {
   plan: string;
   stripe_customer_id: string | null;
   subscription_status: string;
+  billing_anchor: string | null;
   created_at: string;
 }
 
@@ -28,6 +29,7 @@ function toOrganization(row: OrganizationRow): Organization {
     plan: row.plan,
     stripeCustomerId: row.stripe_customer_id,
     subscriptionStatus: row.subscription_status,
+    billingAnchor: row.billing_anchor,
     createdAt: row.created_at,
   };
 }
@@ -52,6 +54,7 @@ export async function createOrganization(ownerId: string, name: string): Promise
     plan: "free",
     stripeCustomerId: null,
     subscriptionStatus: "none",
+    billingAnchor: null,
     createdAt: new Date().toISOString(),
   };
   await db.transaction(async (tx) => {
@@ -183,6 +186,18 @@ export async function setOrgSubscriptionStatus(
       await tx.run("UPDATE organizations SET last_subscription_event_at = ? WHERE id = ?", [eventCreatedAt, organizationId]);
     }
     await tx.run("UPDATE organizations SET plan = ?, subscription_status = ? WHERE id = ?", [plan, status, organizationId]);
+
+    // Stamp the billing anchor the first time this organization becomes
+    // active — never overwritten, exactly mirroring users.ts's
+    // setSubscriptionStatus. billing/scanQuota.ts derives the organization's
+    // shared monthly scan period by rolling this date forward, so moving it
+    // would silently reset the whole organization's usage mid-cycle.
+    if (status === "active" || status === "trialing") {
+      await tx.run("UPDATE organizations SET billing_anchor = ? WHERE id = ? AND billing_anchor IS NULL", [
+        new Date().toISOString(),
+        organizationId,
+      ]);
+    }
   });
 }
 

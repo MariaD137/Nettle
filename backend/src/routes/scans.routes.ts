@@ -10,13 +10,15 @@ import { findProjectByApiKey } from "../patrol/projects";
 import { createQueuedScan } from "../patrol/scans";
 import { enqueueScan } from "../scanner/scanQueue";
 import { requireAuth, optionalAuth } from "../auth/middleware";
-import { requireSubscription, entitledPlan } from "../billing/subscription";
+import { entitledPlan } from "../billing/subscription";
+import { resolveQuotaSubject } from "../billing/orgSubscription";
 import { canRunScan, getMonthlyScanLimit } from "../billing/entitlements";
 import { getUserById } from "../auth/users";
 import { applyScanAccess } from "../billing/scanAccess";
 import { hydrateCheckResults } from "../scanner/controls";
 import type { ScanReport } from "../scanner/types";
-import { getQuotaState, recordScanUsage, reserveScanSlot } from "../billing/scanQuota";
+import { getQuotaStateForSubject, recordQuotaUsage, reserveQuotaSlot, type QuotaSubject } from "../billing/scanQuota";
+import type { Project } from "../patrol/types";
 import { safeExtractZip } from "../scanner/safeExtraction";
 import { rateLimit } from "../middleware/rateLimit";
 import type { Request as ExpressRequest } from "express";
@@ -48,8 +50,9 @@ function respondWithScan(res: Response, report: ScanReport, plan: string): void 
 }
 
 /**
- * The entitlement gate in front of real scan execution. Returns true when
- * the caller should stop (a response has already been sent).
+ * The entitlement gate in front of real scan execution. Returns the
+ * QuotaSubject the caller should record usage against on success, or null
+ * when the caller should stop (a response has already been sent).
  *
  * Anonymous, unauthenticated scans (billedUserId undefined — no bearer
  * token and no API key resolving to a project owner) have no account to
@@ -59,29 +62,44 @@ function respondWithScan(res: Response, report: ScanReport, plan: string): void 
  *
  * For an identified account (bearer token, or an API key whose project
  * resolves to an owner — so a CI run authenticated only by a project key is
- * gated the same as a browser session):
- *   - FREE (canRunScan false): blocked outright. This is the absolute rule
- *     the pricing model requires — FREE never gets a real scan, CLI/CI
- *     included, since both paths call this same route.
- *   - BUILD (a finite monthly limit): the slot is reserved atomically via
- *     reserveScanSlot before any expensive work runs, so two concurrent
- *     requests near the limit cannot both read "9 used, 10 allowed" and
- *     both proceed — see that function's comment for how the atomicity
- *     works. A rejected reservation still costs nothing extra; the bucket
- *     it increments is enforcement-only, not the accurate usage figure
- *     shown in the UI (that's scan_usage/getQuotaState, updated separately
- *     on an actually-completed scan via recordScanUsage below).
+ * gated the same as a browser session), the subject is resolved via
+ * orgSubscription.ts's resolveQuotaSubject: the project's organization, if
+ * it belongs to one that's actively subscribed itself (every member's
+ * scans then draw from that organization's own shared monthly pool, not
+ * their own personal number), else the billed account's own personal
+ * quota — the pre-existing, unchanged behavior for a personal project or
+ * an unsubscribed organization's project.
+ *
+ *   - FREE (canRunScan false, checked against the resolved subject's plan):
+ *     blocked outright. This is the absolute rule the pricing model
+ *     requires — FREE never gets a real scan, CLI/CI included, since both
+ *     paths call this same route.
+ *   - A finite monthly limit (BUILD, whichever subject holds it): the slot
+ *     is reserved atomically via reserveQuotaSlot before any expensive work
+ *     runs, so concurrent requests near the limit — whether from the same
+ *     account or different members of the same organization — cannot both
+ *     read "9 used, 10 allowed" and both proceed; see that function's own
+ *     comment for how the atomicity works. A rejected reservation still
+ *     costs nothing extra; the bucket it increments is enforcement-only,
+ *     not the accurate usage figure shown in the UI (that's
+ *     scan_usage/getQuotaStateForSubject, updated separately on an
+ *     actually-completed scan via recordQuotaUsage below).
  *   - PROTECT (getMonthlyScanLimit returns null): unlimited/fair-use, no
  *     reservation needed. Still subject to scanUploadLimiter/scanRepoLimiter
  *     below — that's deliberately a separate concern (abuse/burst
  *     protection) from the subscription entitlement (unmetered), not a
  *     hidden numeric cap standing in for "unlimited".
  */
-async function scanBlocked(billedUserId: string | undefined, res: Response): Promise<boolean> {
-  if (!billedUserId) return false;
+type ScanQuotaResolution =
+  | { blocked: true }
+  | { blocked: false; subject: null } // anonymous — no billedUserId, nothing to record against (unchanged pre-existing preview flow)
+  | { blocked: false; subject: QuotaSubject };
+
+async function resolveScanQuota(billedUserId: string | undefined, project: Pick<Project, "organizationId"> | null, res: Response): Promise<ScanQuotaResolution> {
+  if (!billedUserId) return { blocked: false, subject: null };
 
   const owner = await getUserById(billedUserId);
-  const plan = entitledPlan(owner);
+  const { subject, plan } = await resolveQuotaSubject(billedUserId, project, entitledPlan(owner));
 
   if (!canRunScan(plan)) {
     res.status(402).json({
@@ -91,17 +109,17 @@ async function scanBlocked(billedUserId: string | undefined, res: Response): Pro
       requiredPlan: "build",
       plan,
     });
-    return true;
+    return { blocked: true };
   }
 
   const limit = getMonthlyScanLimit(plan);
-  if (limit === null) return false; // PROTECT: unlimited/fair-use
+  if (limit === null) return { blocked: false, subject }; // PROTECT: unlimited/fair-use
 
-  const reserved = await reserveScanSlot(billedUserId, limit);
+  const reserved = await reserveQuotaSlot(subject, limit);
   if (!reserved) {
-    const quota = await getQuotaState(billedUserId);
+    const quota = await getQuotaStateForSubject(subject, plan);
     res.status(402).json({
-      error: `You have used all ${limit} scans in this billing period.${
+      error: `${subject.type === "organization" ? "Your organization has" : "You have"} used all ${limit} scans in this billing period.${
         quota ? ` Your allowance resets on ${new Date(quota.periodEnd).toLocaleDateString("en-GB")}.` : ""
       } Upgrade to PROTECT for unlimited, fair-use scanning.`,
       quotaExceeded: true,
@@ -111,9 +129,9 @@ async function scanBlocked(billedUserId: string | undefined, res: Response): Pro
       remaining: 0,
       periodEnd: quota?.periodEnd ?? null,
     });
-    return true;
+    return { blocked: true };
   }
-  return false;
+  return { blocked: false, subject };
 }
 
 /**
@@ -169,7 +187,7 @@ async function scanUploadIdentity(req: Request): Promise<string> {
 
 /**
  * Anonymous, unauthenticated uploads bypass the monthly scan quota entirely
- * (scanBlocked() only gates known accounts), so this is the main thing
+ * (resolveScanQuota() only gates known accounts), so this is the main thing
  * standing between the public upload endpoint and someone scripting
  * repeated Semgrep runs against it. Authenticated/API-key callers are
  * already metered monthly by billing/scanQuota — this is a second, much
@@ -214,7 +232,8 @@ scansRouter.post("/api/scans", optionalAuth, scanUploadLimiter, upload.single("c
   const upfrontKey = req.header("x-nettle-api-key");
   const upfrontProject = upfrontKey ? await findProjectByApiKey(upfrontKey) : null;
   const billedUserId = req.userId ?? upfrontProject?.userId;
-  if (await scanBlocked(billedUserId, res)) {
+  const quota = await resolveScanQuota(billedUserId, upfrontProject, res);
+  if (quota.blocked) {
     fs.unlinkSync(req.file.path);
     return;
   }
@@ -259,11 +278,12 @@ scansRouter.post("/api/scans", optionalAuth, scanUploadLimiter, upload.single("c
   // gets its id back immediately, and the actual scan happens off the
   // request path via scanner/scanQueue.ts (see that file for exactly what
   // "async" does and doesn't mean here). Anonymous/no-project uploads keep
-  // today's synchronous one-shot behavior unchanged — see scanBlocked()'s
-  // comment for why that pre-existing flow is deliberately untouched.
+  // today's synchronous one-shot behavior unchanged — see
+  // resolveScanQuota()'s comment for why that pre-existing flow is
+  // deliberately untouched.
   if (upfrontProject) {
     const queued = await createQueuedScan(upfrontProject.id);
-    if (billedUserId) await recordScanUsage(billedUserId, upfrontProject.id, "upload");
+    if (quota.subject) await recordQuotaUsage(quota.subject, billedUserId!, upfrontProject.id, "upload");
 
     enqueueScan({
       scanId: queued.id,
@@ -281,7 +301,7 @@ scansRouter.post("/api/scans", optionalAuth, scanUploadLimiter, upload.single("c
 
   try {
     const report = runScan(scanRoot);
-    if (billedUserId) await recordScanUsage(billedUserId, null, "upload");
+    if (quota.subject) await recordQuotaUsage(quota.subject, billedUserId!, null, "upload");
     respondWithScan(res, report, await planForScan(req));
   } catch (err) {
     const msg = (err as Error).message;
@@ -295,7 +315,17 @@ scansRouter.post("/api/scans", optionalAuth, scanUploadLimiter, upload.single("c
 // array duplicated it and was never read.
 const REPO_URL_PATTERN = /^https:\/\/(github\.com|gitlab\.com|bitbucket\.org)\/[\w.\-]+\/[\w.\-]+(\.git)?$/;
 
-scansRouter.post("/api/scans/repo", requireAuth, scanRepoLimiter, requireSubscription, async (req: Request, res: Response) => {
+// requireSubscription (account-level only) deliberately removed from this
+// gate: resolveScanQuota below already calls canRunScan() against the
+// correctly-resolved plan (the project's organization, if it's actively
+// subscribed, else the caller's own — see that function's own comment) and
+// responds 402 the same way, before any clone happens. Keeping
+// requireSubscription here as well would 402 a FREE-personal member of a
+// PROTECT-subscribed organization before resolveScanQuota ever got a
+// chance to look past their personal plan — exactly the gap this pass
+// closes. POST /api/scans (the upload route) never had this middleware and
+// was already correctly org-aware for the same reason.
+scansRouter.post("/api/scans/repo", requireAuth, scanRepoLimiter, async (req: Request, res: Response) => {
   const repoUrl = typeof req.body?.repoUrl === "string" ? req.body.repoUrl.trim() : "";
   const branch = typeof req.body?.branch === "string" ? req.body.branch.trim() : "";
   const apiKey = typeof req.body?.apiKey === "string" ? req.body.apiKey.trim() : "";
@@ -309,7 +339,8 @@ scansRouter.post("/api/scans/repo", requireAuth, scanRepoLimiter, requireSubscri
 
   const repoProject = apiKey ? await findProjectByApiKey(apiKey) : null;
   const billedUserId = req.userId ?? repoProject?.userId;
-  if (await scanBlocked(billedUserId, res)) return;
+  const quota = await resolveScanQuota(billedUserId, repoProject, res);
+  if (quota.blocked) return;
 
   const cloneDir = fs.mkdtempSync(path.join(os.tmpdir(), "nettle-repo-"));
 
@@ -339,7 +370,7 @@ scansRouter.post("/api/scans/repo", requireAuth, scanRepoLimiter, requireSubscri
   // no project apiKey supplied) stays synchronous — see scanQueue.ts.
   if (repoProject) {
     const queued = await createQueuedScan(repoProject.id);
-    if (billedUserId) await recordScanUsage(billedUserId, repoProject.id, "repo");
+    if (quota.subject) await recordQuotaUsage(quota.subject, billedUserId!, repoProject.id, "repo");
 
     enqueueScan({
       scanId: queued.id,
@@ -357,7 +388,7 @@ scansRouter.post("/api/scans/repo", requireAuth, scanRepoLimiter, requireSubscri
 
   try {
     const report = runScan(cloneDir);
-    if (billedUserId) await recordScanUsage(billedUserId, null, "repo");
+    if (quota.subject) await recordQuotaUsage(quota.subject, billedUserId!, null, "repo");
     respondWithScan(res, report, await planForScan(req));
   } catch (err) {
     res.status(422).json({ error: "Couldn't scan the repository", detail: (err as Error).message });

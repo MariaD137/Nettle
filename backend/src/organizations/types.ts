@@ -17,6 +17,8 @@ export interface Organization {
   plan: string;
   stripeCustomerId: string | null;
   subscriptionStatus: string;
+  /** Stamped once, the first time the organization becomes actively subscribed — mirrors users.billingAnchor exactly. Null until then; drives billing/scanQuota.ts's shared org scan period. */
+  billingAnchor: string | null;
   createdAt: string;
 }
 

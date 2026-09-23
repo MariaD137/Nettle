@@ -147,7 +147,14 @@ single `INSERT ... ON CONFLICT DO UPDATE ... RETURNING` against the same
 `rate_limit_buckets` table the rate limiter uses, specifically so two
 concurrent requests near the monthly limit can't both win the last slot —
 see `test/scanQuota.test.ts` and `test/pricingEntitlements.test.ts` for
-that race actually exercised, not just asserted.
+that race actually exercised, not just asserted. Organization-aware since
+`billing/orgSubscription.ts`'s `resolveQuotaSubject`: a project owned by an
+organization that's actively subscribed itself draws from that
+organization's own shared monthly pool (every member's scans count against
+ONE limit, not one each — `reserveOrgScanSlot`/`getOrgQuotaState`, same
+atomicity guarantee, its own `rate_limit_buckets` namespace), falling back
+to the triggering account's personal quota otherwise — see
+`test/organizationScanQuota.test.ts`.
 
 **Billing** (`src/routes/billing.routes.ts`) is real Stripe integration code
 — `POST /api/billing/checkout-session` creates a real Checkout Session,
