@@ -165,10 +165,24 @@ export async function resolveInvitationToken(token: string): Promise<Organizatio
  *   - the organization's current team-member limit isn't already at
  *     capacity (re-checked here, not just at invite-creation time, since
  *     the owner's plan may have changed since the invitation was sent)
- * Marking the invitation accepted and inserting the membership row happen
- * in the same transaction specifically to prevent two concurrent accept
- * requests for the same token both passing the "not yet accepted" check
- * and both creating a membership.
+ *
+ * The accept itself is a conditional UPDATE — `WHERE accepted_at IS NULL`,
+ * checking `changes` — not a plain SELECT-then-UPDATE. Wrapping the two in
+ * one transaction is not sufficient on its own: at PostgreSQL's default
+ * READ COMMITTED isolation, two concurrent transactions can both SELECT the
+ * same not-yet-accepted row before either commits its UPDATE, so both would
+ * pass a "not yet accepted" check read this way and both create a
+ * membership (confirmed directly — this exact race, run for real against
+ * PostgreSQL in backend/test/organizationInvitations.test.ts's concurrency
+ * test, let 4 of 4 concurrent acceptances succeed before this fix). The
+ * conditional UPDATE is what actually serializes the two: PostgreSQL takes
+ * a row lock on the first UPDATE to reach it, and the second one's own
+ * `WHERE accepted_at IS NULL` no longer matches once it can proceed,
+ * so `changes` comes back 0 — the same atomic-claim shape
+ * billing/scanQuota.ts's reservation primitive already uses. SQLite never
+ * exposed this: this codebase's SQLite driver serializes all writes onto a
+ * single connection, so two "concurrent" requests never actually overlap at
+ * the database level the way two real PostgreSQL connections do.
  */
 export async function acceptInvitation(token: string, acceptingUserId: string, acceptingUserEmail: string): Promise<OrganizationMember> {
   return db.transaction(async (tx) => {
@@ -191,7 +205,11 @@ export async function acceptInvitation(token: string, acceptingUserId: string, a
       throw new TeamMemberLimitError(limit);
     }
 
-    await tx.run("UPDATE organization_invitations SET accepted_at = ? WHERE id = ?", [new Date().toISOString(), invitation.id]);
+    const claimed = await tx.run(
+      "UPDATE organization_invitations SET accepted_at = ? WHERE id = ? AND accepted_at IS NULL",
+      [new Date().toISOString(), invitation.id]
+    );
+    if (claimed.changes === 0) throw new InvitationAlreadyAcceptedError();
 
     // Already a member (e.g. re-clicking an old link after being added a
     // different way): the invitation is still consumed above, but no

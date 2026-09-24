@@ -138,7 +138,7 @@ test("runScanIsolated: a real task failure (non-zero exit) throws, never a fabri
   _setClientsForTesting(
     {
       send: async (command: any) => {
-        if (command instanceof DeleteObjectCommand) deletedKeys.push(command.input.Key);
+        if (command instanceof DeleteObjectCommand) deletedKeys.push(command.input.Key!);
         return {} as any;
       },
     },
@@ -228,7 +228,7 @@ test("two concurrent scans never share a workspace or results key", async () => 
   _setClientsForTesting(
     {
       send: async (command: any) => {
-        if (command instanceof PutObjectCommand) putKeys.push(command.input.Key);
+        if (command instanceof PutObjectCommand) putKeys.push(command.input.Key!);
         if (command instanceof GetObjectCommand) return { Body: { transformToString: async () => JSON.stringify(fakeReport) } } as any;
         return {} as any;
       },

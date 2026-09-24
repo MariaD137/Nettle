@@ -42,7 +42,7 @@ test("sendEmail issues a real SendEmailCommand with the right shape when configu
   await sendEmail({ to: "user@example.com", subject: "Hello", text: "Body text", html: "<p>Body text</p>" });
 
   assert.ok(captured, "sendEmail must actually call the SES client");
-  assert.ok(captured instanceof SendEmailCommand);
+  assert.ok((captured as unknown) instanceof SendEmailCommand);
   const input = (captured as SendEmailCommand).input;
   assert.equal(input.FromEmailAddress, "noreply@nettle.dev");
   assert.deepEqual(input.Destination?.ToAddresses, ["user@example.com"]);
@@ -114,7 +114,8 @@ test("deliverInvitationLink sends a real email naming the organization and invit
 
   const result = await deliverInvitationLink("invitee@example.com", "invite-token-xyz", "Acme Corp", "owner@example.com");
   assert.equal(result.delivered, true);
-  const input = (captured as SendEmailCommand).input;
+  assert.ok(captured, "deliverInvitationLink must actually call the SES client");
+  const input = (captured! as SendEmailCommand).input;
   assert.equal(input.Destination?.ToAddresses?.[0], "invitee@example.com");
   assert.ok(input.Content?.Simple?.Subject?.Data?.includes("Acme Corp"));
   assert.ok(input.Content?.Simple?.Body?.Text?.Data?.includes("invite-token-xyz"));
