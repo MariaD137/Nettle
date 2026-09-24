@@ -63,6 +63,21 @@ export interface NettleApiStackProps extends StackProps {
     taskRoleArn: string;
     executionRoleArn: string;
   };
+  /**
+   * Whether App Runner watches this service's own image tag and redeploys
+   * automatically on every push to it. Defaults to true — unchanged from
+   * before this prop existed, and still correct for staging (backend-deploy-staging.yml
+   * pushes :staging; App Runner picking that up automatically is the whole
+   * mechanism).
+   *
+   * Production sets this to false: backend-deploy.yml now pushes an
+   * immutable :<git-sha> tag and deploys it via an explicit
+   * `aws apprunner update-service` call (see that workflow), rather than a
+   * mutable :latest tag App Runner watches on its own. Leaving
+   * autoDeploymentsEnabled on for production alongside that explicit call
+   * would race two deployment triggers against each other for no benefit.
+   */
+  autoDeploymentsEnabled?: boolean;
 }
 
 /**
@@ -248,7 +263,7 @@ export class NettleApiStack extends Stack {
     const service = new CfnService(this, "ApiService", {
       serviceName: `nettle-api${suffix}`,
       sourceConfiguration: {
-        autoDeploymentsEnabled: true,
+        autoDeploymentsEnabled: props.autoDeploymentsEnabled ?? true,
         authenticationConfiguration: { accessRoleArn: ecrAccessRole.roleArn },
         imageRepository: {
           // imageTag defaults to "latest" (production, unchanged). A staging

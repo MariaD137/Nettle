@@ -95,6 +95,34 @@ export class NettleCiStack extends Stack {
       })
     );
 
+    // backend-deploy.yml's production deploy: after pushing an immutable
+    // :<git-sha> image, it looks up Nettle-Api's App Runner service by name
+    // (ListServices — this action has no resource-level scoping, so it's
+    // granted account-wide; it only returns service names/ARNs, nothing
+    // sensitive) and updates that one service's image (DescribeService to
+    // read its current source configuration without clobbering the
+    // ECR access role / port / env vars, then UpdateService with only the
+    // image identifier changed). Scoped to service names starting
+    // "nettle-api" — exactly api-stack.ts's `nettle-api${suffix}` naming
+    // (production "nettle-api", staging "nettle-api-staging") — never "*".
+    // backend-deploy-staging.yml does not use this: staging keeps watching
+    // its :staging tag via App Runner's own autoDeploymentsEnabled (see
+    // api-stack.ts's autoDeploymentsEnabled prop), unchanged from before.
+    deployRole.addToPolicy(
+      new PolicyStatement({
+        effect: Effect.ALLOW,
+        actions: ["apprunner:ListServices"],
+        resources: ["*"], // ListServices does not support resource-level scoping
+      })
+    );
+    deployRole.addToPolicy(
+      new PolicyStatement({
+        effect: Effect.ALLOW,
+        actions: ["apprunner:DescribeService", "apprunner:UpdateService"],
+        resources: [`arn:aws:apprunner:${this.region}:${this.account}:service/nettle-api*`],
+      })
+    );
+
     new CfnOutput(this, "DeployRoleArn", { value: deployRole.roleArn });
   }
 }

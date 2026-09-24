@@ -54,6 +54,10 @@ const api = new NettleApiStack(app, "Nettle-Api", {
   databaseSecret: database.secret,
   databaseEndpoint: database.instance.dbInstanceEndpointAddress,
   repository: ecr.repository,
+  // backend-deploy.yml deploys an immutable :<git-sha> image via an explicit
+  // `aws apprunner update-service` call instead of a mutable :latest tag
+  // App Runner watches on its own — see api-stack.ts's own prop comment.
+  autoDeploymentsEnabled: false,
   scanWorker: {
     clusterArn: scanWorker.cluster.clusterArn,
     taskDefinitionArn: scanWorker.taskDefinition.taskDefinitionArn,

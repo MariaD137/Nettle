@@ -385,12 +385,16 @@ reviewers, so a push to `main` pauses for approval before it touches AWS —
 `backend-deploy.yml`/`frontend-deploy.yml` already target the `production`
 environment.
 
-From here on, every push to `main` touching `backend/**` builds a new image
-and pushes `:latest` — App Runner's `autoDeploymentsEnabled: true` picks it
-up automatically, no separate deploy step needed. A push to `main` touching
-`frontend/**` builds and syncs the SPA into the bucket, then invalidates
-`/index.html`. Every push to `develop` does the backend's equivalent for
-`:staging`, once step 11 below exists to consume it.
+From here on, every push to `main` touching `backend/**` builds an immutable
+`:<git-sha>` image, pushes it, then explicitly deploys it to `Nettle-Api` via
+`aws apprunner update-service` (production's `autoDeploymentsEnabled` is
+`false` for exactly this reason — see `lib/api-stack.ts`'s
+`autoDeploymentsEnabled` prop) and waits for the deployment to stabilize,
+failing the job if it doesn't. A push to `main` touching `frontend/**` builds
+and syncs the SPA into the bucket, then invalidates `/index.html`. Every push
+to `develop` still builds and pushes `:staging` — App Runner's
+`autoDeploymentsEnabled: true` on `Nettle-Api-Staging` picks that up
+automatically, unchanged — once step 11 below exists to consume it.
 
 **14. (Optional) Deploy staging** — a second, independent environment (its
 own database, its own App Runner service, its own Stripe-secret slot)

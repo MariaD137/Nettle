@@ -27,14 +27,43 @@ jobs:
         id: ecr-login
         uses: aws-actions/amazon-ecr-login@v2
 
-      - name: Build and push image
+      - name: Build and push immutable image
         working-directory: backend
         env:
           ECR_REPOSITORY_URI: ${{ vars.ECR_REPOSITORY_URI }}
         run: |
-          docker build -t "$ECR_REPOSITORY_URI:${{ github.sha }}" -t "$ECR_REPOSITORY_URI:latest" .
+          set -euo pipefail
+          docker build -t "$ECR_REPOSITORY_URI:${{ github.sha }}" .
           docker push "$ECR_REPOSITORY_URI:${{ github.sha }}"
-          docker push "$ECR_REPOSITORY_URI:latest"
-          # App Runner has AutoDeploymentsEnabled on this service — pushing
-          # :latest is what triggers the actual deployment, no separate
-          # start-deployment call needed.
+
+      - name: Deploy image to App Runner
+        env:
+          ECR_REPOSITORY_URI: ${{ vars.ECR_REPOSITORY_URI }}
+        run: |
+          set -euo pipefail
+
+          SERVICE_ARN=$(aws apprunner list-services \
+            --query "ServiceSummaryList[?ServiceName=='nettle-api'].ServiceArn | [0]" \
+            --output text)
+          if [ -z "$SERVICE_ARN" ] || [ "$SERVICE_ARN" = "None" ]; then
+            echo "::error::No App Runner service named 'nettle-api' found in this account/region. Deploy Nettle-Api via CDK first."
+            exit 1
+          fi
+          echo "Deploying to $SERVICE_ARN"
+
+          # Read the service's current source configuration and change only
+          # the image identifier — preserves the ECR access role, port, and
+          # every runtime env var/secret Nettle-Api's CDK stack configured,
+          # rather than reconstructing (and risking dropping) that config here.
+          CURRENT_CONFIG=$(aws apprunner describe-service \
+            --service-arn "$SERVICE_ARN" \
+            --query "Service.SourceConfiguration")
+          NEW_CONFIG=$(echo "$CURRENT_CONFIG" | jq --arg img "$ECR_REPOSITORY_URI:${{ github.sha }}" \
+            '.ImageRepository.ImageIdentifier = $img')
+
+          aws apprunner update-service \
+            --service-arn "$SERVICE_ARN" \
+            --source-configuration "$NEW_CONFIG"
+
+          # Fails the job (non-zero exit) if the deployment doesn't stabilize.
+          aws apprunner wait service-updated-successfully --service-arn "$SERVICE_ARN"
