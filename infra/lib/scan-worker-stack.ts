@@ -184,7 +184,7 @@ export class NettleScanWorkerStack extends Stack {
       description: "Nettle scan worker - isolated subnet, S3 only (workspace/results handoff), no other network access",
       allowAllOutbound: false,
     });
-    this.taskSecurityGroup.addEgressRule(Peer.anyIpv4(), Port.tcp(443), "HTTPS to S3 via the isolated subnets' gateway endpoint only");
+    this.taskSecurityGroup.addEgressRule(Peer.anyIpv4(), Port.tcp(443), "HTTPS to S3 via the isolated subnets gateway endpoint only");
 
     new CfnOutput(this, "ClusterArn", { value: this.cluster.clusterArn });
     new CfnOutput(this, "TaskDefinitionArn", { value: this.taskDefinition.taskDefinitionArn });
