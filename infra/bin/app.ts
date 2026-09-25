@@ -158,4 +158,8 @@ new NettleCiStack(app, "Nettle-CI", {
   ecrRepositoryArn: ecr.repository.repositoryArn,
   frontendBucketArn: frontend.bucket.bucketArn,
   frontendDistributionId: frontend.distribution.distributionId,
+  // Set only if a deploy has failed with EntityAlreadyExistsException on
+  // the token.actions.githubusercontent.com OIDC provider — see
+  // ci-stack.ts's own prop comment.
+  githubOidcProviderArn: process.env.GITHUB_OIDC_PROVIDER_ARN,
 });

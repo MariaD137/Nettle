@@ -10,6 +10,19 @@ export interface NettleCiStackProps extends StackProps {
   frontendBucketArn: string;
   /** frontend-stack.ts's distribution — grants exactly cloudfront:CreateInvalidation, scoped to this one distribution. */
   frontendDistributionId: string;
+  /**
+   * ARN of an already-existing `token.actions.githubusercontent.com` OIDC
+   * provider in this account, if one exists. AWS allows only one OIDC
+   * provider per URL per account — a second CREATE against the same URL
+   * fails with EntityAlreadyExistsException, which is exactly what this repo
+   * hit deploying Nettle-CI against an account that already had this
+   * provider (from an earlier attempt, or something else in the account
+   * unrelated to Nettle). Left undefined (the default), this stack creates
+   * a new provider exactly as it always has — set this only when a deploy
+   * has actually failed with that error, using the ARN
+   * `aws iam list-open-id-connect-providers` prints for the existing one.
+   */
+  githubOidcProviderArn?: string;
 }
 
 /**
@@ -23,10 +36,12 @@ export class NettleCiStack extends Stack {
   constructor(scope: Construct, id: string, props: NettleCiStackProps) {
     super(scope, id, props);
 
-    const provider = new OpenIdConnectProvider(this, "GithubOidcProvider", {
-      url: "https://token.actions.githubusercontent.com",
-      clientIds: ["sts.amazonaws.com"],
-    });
+    const provider = props.githubOidcProviderArn
+      ? OpenIdConnectProvider.fromOpenIdConnectProviderArn(this, "GithubOidcProvider", props.githubOidcProviderArn)
+      : new OpenIdConnectProvider(this, "GithubOidcProvider", {
+          url: "https://token.actions.githubusercontent.com",
+          clientIds: ["sts.amazonaws.com"],
+        });
 
     const deployRole = new Role(this, "GithubActionsDeployRole", {
       roleName: "nettle-github-actions-deploy",
