@@ -219,63 +219,11 @@ export default function MarketingPage() {
           Nettle doesn't stop at identifying a problem. Every finding that fails
           comes with a recommendation, and every recommendation has a path back
           to verification: <strong>Finding &rarr; Recommendation &rarr; Fix &rarr; Rescan &rarr; Verification</strong>.
-          Below is an illustrative example built directly from a real control in
-          Nettle's control library (SECRET-001) — not a real customer's finding.
+          A finding shows what was checked, what was found, and why it matters;
+          the Fix Center gives a quick fix, a developer fix, and where relevant
+          an architecture fix and long-term hardening step, matched to your
+          detected stack.
         </p>
-
-        <div className="finding finding-critical example-finding">
-          <div className="finding-top">
-            <span className="finding-title">No hardcoded credentials in source</span>
-            <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-              <span className="impact-pill impact-block-release">Block release</span>
-              <span className="finding-cat">Security</span>
-            </div>
-          </div>
-          <p className="finding-detail">
-            A credential-shaped pattern was matched in a scanned file. Confidence: 92%.
-          </p>
-          <p className="finding-file">src/config/cloud.ts:42</p>
-
-          <div className="fix-detail">
-            <div className="fix-section">
-              <strong>Why it matters</strong>
-              A credential committed to source is readable by anyone with repository
-              access, persists in git history even after deletion, and is routinely
-              indexed by code-search tools and AI coding assistants that read the
-              codebase. Treat it as compromised the moment it's committed.
-            </div>
-            <div className="fix-section">
-              <strong>Quick fix</strong>
-              Remove the credential from source and rotate it at its provider
-              immediately.
-            </div>
-            <div className="fix-section">
-              <strong>Developer fix</strong>
-              Load the credential from an environment variable or a secret manager
-              at runtime, never as a literal in code. Check git history for prior
-              exposure even after removing the current copy.
-            </div>
-            <div className="fix-section">
-              <strong>Architecture fix</strong>
-              Use short-lived, workload-scoped credentials where the platform
-              supports them (OIDC federation, IAM roles) instead of a long-lived
-              static secret at all.
-            </div>
-            <div className="fix-section">
-              <strong>Verification</strong>
-              Rescan and confirm the credential pattern is no longer present in
-              any scanned file — a rotated-but-still-present key still fails this
-              control.
-            </div>
-          </div>
-
-          <div className="example-rescan">
-            <span className="diff-pill diff-stillopen">STILL_OPEN</span>
-            <span className="example-rescan-arrow" aria-hidden="true">&rarr;</span>
-            <span className="diff-pill diff-fixed">FIXED</span>
-            <span className="muted example-rescan-note">after a rescan confirms the pattern is gone</span>
-          </div>
-        </div>
       </Reveal>
 
       <Reveal as="section" className="marketing-section">

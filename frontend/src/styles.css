@@ -1703,36 +1703,6 @@ button.destructive {
   background: var(--accent);
 }
 
-/* Illustrative example finding (Findings & the Fix Center section) — reuses
-   the real dashboard's .finding/.fix-detail/.fix-section classes so the
-   marketing page shows the actual product UI language, not an invented
-   mockup. Widened and left-aligned since the marketing shell's default
-   section text is centered. */
-.example-finding {
-  max-width: 640px;
-  margin: 24px auto 0;
-  text-align: left;
-  cursor: default;
-}
-.example-finding .fix-detail {
-  cursor: default;
-}
-.example-rescan {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  flex-wrap: wrap;
-  margin-top: 14px;
-  padding-top: 14px;
-  border-top: 1px solid var(--line);
-}
-.example-rescan-arrow {
-  color: var(--line-strong);
-}
-.example-rescan-note {
-  font-size: 12.5px;
-}
-
 /* Rescan/verification diff-status legend */
 .diff-legend {
   display: grid;
