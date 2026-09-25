@@ -17,6 +17,24 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # See frontend-deploy.yml's identical step for why this exists: fails
+      # fast with a specific message instead of a confusing failure deep
+      # into the job (or, worse, a job that silently proceeds with an empty
+      # ECR_REPOSITORY_URI and pushes to a nonsense image reference).
+      - name: Verify required repository variables are configured
+        run: |
+          missing=()
+          [ -z "${{ vars.AWS_REGION }}" ] && missing+=("AWS_REGION")
+          [ -z "${{ vars.AWS_DEPLOY_ROLE_ARN }}" ] && missing+=("AWS_DEPLOY_ROLE_ARN")
+          [ -z "${{ vars.ECR_REPOSITORY_URI }}" ] && missing+=("ECR_REPOSITORY_URI")
+          if [ ${#missing[@]} -gt 0 ]; then
+            echo "::error::Missing required repository variable(s): ${missing[*]}"
+            echo "Set these under Settings -> Secrets and variables -> Actions -> Variables."
+            echo "Values come from this account's CloudFormation stack outputs — see infra/scripts/deploy-cloudshell.sh's"
+            echo "'Next steps' output (Nettle-CI's DeployRoleArn, Nettle-Ecr's RepositoryUri)."
+            exit 1
+          fi
+
       - name: Configure AWS credentials via OIDC
         uses: aws-actions/configure-aws-credentials@v4
         with:

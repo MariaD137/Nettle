@@ -20,6 +20,29 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Fails fast with a specific, actionable message instead of letting a
+      # missing repository variable surface as aws-actions/configure-aws-
+      # credentials's generic "Input required and not supplied: aws-region"
+      # deep into the job — every var below is read by a later step in this
+      # workflow, so a job that gets this far but is missing one would
+      # otherwise fail confusingly (or, for API_BASE_URL, "succeed" while
+      # silently baking a broken API URL into the deployed bundle).
+      - name: Verify required repository variables are configured
+        run: |
+          missing=()
+          [ -z "${{ vars.AWS_REGION }}" ] && missing+=("AWS_REGION")
+          [ -z "${{ vars.AWS_DEPLOY_ROLE_ARN }}" ] && missing+=("AWS_DEPLOY_ROLE_ARN")
+          [ -z "${{ vars.FRONTEND_BUCKET_NAME }}" ] && missing+=("FRONTEND_BUCKET_NAME")
+          [ -z "${{ vars.FRONTEND_DISTRIBUTION_ID }}" ] && missing+=("FRONTEND_DISTRIBUTION_ID")
+          [ -z "${{ vars.API_BASE_URL }}" ] && missing+=("API_BASE_URL")
+          if [ ${#missing[@]} -gt 0 ]; then
+            echo "::error::Missing required repository variable(s): ${missing[*]}"
+            echo "Set these under Settings -> Secrets and variables -> Actions -> Variables."
+            echo "Values come from this account's CloudFormation stack outputs — see infra/scripts/deploy-cloudshell.sh's"
+            echo "'Next steps' output (Nettle-CI's DeployRoleArn, Nettle-Frontend's BucketName/DistributionId, Nettle-Api's ServiceUrl)."
+            exit 1
+          fi
+
       - uses: actions/setup-node@v4
         with:
           node-version: "22"

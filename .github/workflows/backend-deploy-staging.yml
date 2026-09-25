@@ -17,6 +17,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Verify required repository variables are configured
+        run: |
+          missing=()
+          [ -z "${{ vars.AWS_REGION }}" ] && missing+=("AWS_REGION")
+          [ -z "${{ vars.AWS_DEPLOY_ROLE_ARN }}" ] && missing+=("AWS_DEPLOY_ROLE_ARN")
+          [ -z "${{ vars.ECR_REPOSITORY_URI }}" ] && missing+=("ECR_REPOSITORY_URI")
+          if [ ${#missing[@]} -gt 0 ]; then
+            echo "::error::Missing required repository variable(s): ${missing[*]}"
+            echo "Set these under Settings -> Secrets and variables -> Actions -> Variables (staging Environment)."
+            exit 1
+          fi
+
       - name: Configure AWS credentials via OIDC
         uses: aws-actions/configure-aws-credentials@v4
         with:
