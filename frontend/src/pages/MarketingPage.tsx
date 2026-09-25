@@ -1,7 +1,6 @@
 import { Link } from "react-router-dom";
 import NettleLogo from "../components/NettleLogo";
 import Reveal from "../components/Reveal";
-import VideoSection from "../components/VideoSection";
 import { PLANS } from "../plans";
 
 /**
@@ -142,10 +141,6 @@ export default function MarketingPage() {
           <a href="#how" className="button secondary">See how it works</a>
         </div>
       </section>
-
-      <Reveal className="video-reveal">
-        <VideoSection />
-      </Reveal>
 
       <Reveal as="section" id="checks" className="marketing-section">
         <h2 className="marketing-section-title">What is Nettle?</h2>
