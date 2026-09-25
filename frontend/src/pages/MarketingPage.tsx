@@ -1,8 +1,16 @@
 import { Link } from "react-router-dom";
 import NettleLogo from "../components/NettleLogo";
 import Reveal from "../components/Reveal";
-import VideoSection from "../components/VideoSection";
 import { PLANS } from "../plans";
+
+// VideoSection is deliberately not rendered below: frontend/public/media/
+// nettle-explainer.mp4 doesn't exist yet (generating it via Higgsfield is
+// blocked on account credits — 10.5 available vs. ~65.5 needed for the
+// minimum 30s cut, see docs/NETTLE_EXPLAINER_VIDEO_SCRIPT.md). The
+// component, poster SVG, and VTT captions are untouched and ready — once a
+// real nettle-explainer.mp4 lands at that path, re-add
+// `<Reveal className="video-reveal"><VideoSection /></Reveal>` right after
+// the hero <section> below and this note can go.
 
 /**
  * The public landing page. Rendered at "/" for anyone who isn't signed in —
@@ -142,10 +150,6 @@ export default function MarketingPage() {
           <a href="#how" className="button secondary">See how it works</a>
         </div>
       </section>
-
-      <Reveal className="video-reveal">
-        <VideoSection />
-      </Reveal>
 
       <Reveal as="section" id="checks" className="marketing-section">
         <h2 className="marketing-section-title">What is Nettle?</h2>
