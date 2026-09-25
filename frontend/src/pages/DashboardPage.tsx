@@ -31,6 +31,13 @@ export default function DashboardPage() {
   const [error, setError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [showAdvanced, setShowAdvanced] = useState(false);
+  // The API only ever hands back the real key at creation (and rotation) —
+  // every other read of a project returns it masked (see
+  // backend/src/routes/projects.routes.ts's withMaskedKey). So this is the
+  // one chance the user gets to see and copy it; once they navigate away or
+  // this component unmounts, it's gone from the UI for good.
+  const [newKeyReveal, setNewKeyReveal] = useState<{ name: string; apiKey: string } | null>(null);
+  const [keyCopied, setKeyCopied] = useState(false);
 
   async function refresh() {
     const data = await api.overview();
@@ -47,7 +54,7 @@ export default function DashboardPage() {
     setError(null);
     setCreating(true);
     try {
-      await api.createProject(newName, {
+      const created = await api.createProject(newName, {
         url: newUrl || undefined,
         description: newDesc || undefined,
         environment: newEnv || undefined,
@@ -60,6 +67,8 @@ export default function DashboardPage() {
       setNewOrgId("");
       setShowAdvanced(false);
       setShowNew(false);
+      setKeyCopied(false);
+      setNewKeyReveal({ name: created.name, apiKey: created.apiKey });
       await refresh();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Couldn't create project");
@@ -67,6 +76,32 @@ export default function DashboardPage() {
       setCreating(false);
     }
   }
+
+  async function copyRevealedKey() {
+    if (!newKeyReveal) return;
+    try {
+      await navigator.clipboard.writeText(newKeyReveal.apiKey);
+      setKeyCopied(true);
+    } catch {
+      // Clipboard access can be denied (permissions, non-HTTPS, older
+      // browsers) — the key is still selectable text in the banner either way.
+    }
+  }
+
+  const keyRevealBanner = newKeyReveal && (
+    <div className="card" style={{ borderColor: "var(--accent, #4a5fd9)" }}>
+      <h2>API key for "{newKeyReveal.name}"</h2>
+      <p className="muted">
+        Copy this now — for your security, Nettle won't show the full key again. If you lose it, rotate it from the
+        project's Settings tab to get a new one.
+      </p>
+      <div className="code-snippet">{newKeyReveal.apiKey}</div>
+      <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+        <button type="button" onClick={copyRevealedKey}>{keyCopied ? "Copied!" : "Copy key"}</button>
+        <button type="button" className="secondary" onClick={() => setNewKeyReveal(null)}>Done</button>
+      </div>
+    </div>
+  );
 
   const orgPicker = organizations.length > 0 && (
     <div className="field">
@@ -98,6 +133,7 @@ export default function DashboardPage() {
         />
         <div className="shell m-has-bottomnav">
           {error && <div className="error-banner" style={{ margin: "12px 12px 0" }}>{error}</div>}
+          {keyRevealBanner}
 
           {overview && (
             <div className="m-statstrip">
@@ -204,6 +240,7 @@ export default function DashboardPage() {
       </div>
 
       {error && <div className="error-banner">{error}</div>}
+      {keyRevealBanner}
 
       {overview && (
         <div className="stats-grid">

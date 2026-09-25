@@ -5,7 +5,7 @@ import express from "express";
 import type { Server } from "http";
 import { AddressInfo } from "net";
 import { createUser, setSubscriptionStatus } from "../src/auth/users";
-import { createProject } from "../src/patrol/projects";
+import { createProject, maskApiKey } from "../src/patrol/projects";
 import { recordScan } from "../src/patrol/scans";
 import { createAlert } from "../src/patrol/alerts";
 import { runScan } from "../src/scanner";
@@ -174,7 +174,11 @@ test("a refused write leaves the owner's project untouched", async () => {
     assert.equal(res.status, 200);
     const body = await res.json();
     assert.equal(body.project.name, "Original Name");
-    assert.equal(body.project.apiKey, originalKey);
+    // GET masks the key (see routes/projects.routes.ts's withMaskedKey) —
+    // asserting against the masked form of the original key still proves
+    // what this test is actually for: Bob's unauthorized rotate-key attempt
+    // above did not change Alice's real key.
+    assert.equal(body.project.apiKey, maskApiKey(originalKey));
   } finally {
     server.close();
   }

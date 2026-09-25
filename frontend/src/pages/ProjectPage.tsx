@@ -160,7 +160,10 @@ function OverviewTab({ project, latestScan }: { project: Project; latestScan: St
 
       <div className="card">
         <h2>Continuous monitoring</h2>
-        <p className="muted">Drop this into your own Express app to start reporting live traffic:</p>
+        <p className="muted">
+          Drop this into your own Express app to start reporting live traffic — substitute your real API key from
+          below (Nettle only shows the full key once, right after it's created or rotated):
+        </p>
         <div className="code-snippet">
           {`import { nettleMonitor } from "./nettleMonitor";\napp.use(nettleMonitor({ apiKey: "${project.apiKey}" }));`}
         </div>
@@ -168,7 +171,10 @@ function OverviewTab({ project, latestScan }: { project: Project; latestScan: St
 
       <div className="card">
         <h2>API key</h2>
-        <p className="muted">Used by the monitoring middleware and to associate scans with this project.</p>
+        <p className="muted">
+          Used by the monitoring middleware and to associate scans with this project. For your security, only the
+          last 4 characters are shown here — go to Settings to rotate it if you've lost the full key.
+        </p>
         <div className="code-snippet">{project.apiKey}</div>
       </div>
 
@@ -1118,6 +1124,11 @@ function ProjectSettingsTab({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
+  // POST /rotate-key is the only route (besides creation) that returns the
+  // real key — every other read returns it masked. Shown here once so the
+  // user doesn't have to guess where to find it after rotating.
+  const [rotatedKey, setRotatedKey] = useState<string | null>(null);
+  const [keyCopied, setKeyCopied] = useState(false);
 
   async function handleSave(e: React.FormEvent) {
     e.preventDefault();
@@ -1144,9 +1155,21 @@ function ProjectSettingsTab({
     if (!confirm("Rotate the API key? The old key will stop working immediately.")) return;
     try {
       const updated = await api.rotateApiKey(project.id);
+      setKeyCopied(false);
+      setRotatedKey(updated.apiKey);
       onUpdated(updated);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Failed to rotate key");
+    }
+  }
+
+  async function copyRotatedKey() {
+    if (!rotatedKey) return;
+    try {
+      await navigator.clipboard.writeText(rotatedKey);
+      setKeyCopied(true);
+    } catch {
+      // Clipboard access can be denied — the key is still selectable text below.
     }
   }
 
@@ -1210,6 +1233,15 @@ function ProjectSettingsTab({
         <h2>API key</h2>
         <div className="code-snippet" style={{ marginBottom: 12 }}>{project.apiKey}</div>
         <button className="secondary" onClick={handleRotateKey}>Rotate key</button>
+        {rotatedKey && (
+          <div style={{ marginTop: 12 }}>
+            <p className="muted">
+              New key — copy it now. For your security, Nettle won't show the full key again after you leave this page.
+            </p>
+            <div className="code-snippet" style={{ marginBottom: 8 }}>{rotatedKey}</div>
+            <button type="button" onClick={copyRotatedKey}>{keyCopied ? "Copied!" : "Copy key"}</button>
+          </div>
+        )}
       </div>
 
       <div className="card">

@@ -84,6 +84,29 @@ export async function rotateApiKey(id: string): Promise<Project | null> {
   return getProject(id);
 }
 
+/**
+ * Everywhere a Project reaches an HTTP response EXCEPT the moment a key is
+ * actually created (createProject) or deliberately regenerated
+ * (rotateApiKey), the full secret must never be sent again — see
+ * routes/projects.routes.ts's withMaskedKey, which is the only caller. A
+ * scanning product that lectures its customers about not exposing secrets
+ * to the browser (SECRET-001's own "browser-delivered code cannot contain a
+ * secret" fix advice) cannot itself keep re-serving a live API key on every
+ * ordinary page load.
+ *
+ * Keeps the "nettle_" prefix and last 4 characters — enough for a customer
+ * to recognize which key they're looking at (e.g. to confirm a rotation
+ * took effect) without the masked value being usable as a credential.
+ */
+export function maskApiKey(apiKey: string): string {
+  const prefixMatch = apiKey.match(/^([a-z]+_)/);
+  const prefix = prefixMatch ? prefixMatch[1] : "";
+  const rest = apiKey.slice(prefix.length);
+  const last4 = rest.slice(-4);
+  const hidden = Math.max(rest.length - 4, 8);
+  return `${prefix}${"•".repeat(hidden)}${last4}`;
+}
+
 export async function findProjectByApiKey(apiKey: string): Promise<Project | null> {
   const row = await db.get("SELECT * FROM projects WHERE api_key = ?", [apiKey]) as ProjectRow | undefined;
   return row ? toProject(row) : null;

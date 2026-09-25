@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { createProject, getProject, listAccessibleProjects, updateProject, deleteProject, archiveProject, restoreProject, rotateApiKey, countProjectsByUser, canAccessProject } from "../patrol/projects";
+import { createProject, getProject, listAccessibleProjects, updateProject, deleteProject, archiveProject, restoreProject, rotateApiKey, countProjectsByUser, canAccessProject, maskApiKey } from "../patrol/projects";
 import { isMember } from "../organizations/organizations";
 import { listAlerts, getAlert, updateAlertStatus, countAlertsByStatus, createAlert, hasRecentAlert } from "../patrol/alerts";
 import { listScans, getLatestScan, type StoredScan } from "../patrol/scans";
@@ -14,9 +14,20 @@ import { getQuotaState } from "../billing/scanQuota";
 import { rateLimit } from "../middleware/rateLimit";
 import { hydrateCheckResult, hydrateCheckResults } from "../scanner/controls";
 import { compareScans, ScanComparisonError, type ComparisonFinding } from "../scanner/scanComparison";
-import type { AlertStatus, AlertSeverity, FindingStatus } from "../patrol/types";
+import type { AlertStatus, AlertSeverity, FindingStatus, Project } from "../patrol/types";
 
 export const projectsRouter = Router();
+
+/**
+ * Every Project reaching the client through this router goes through here
+ * EXCEPT the two routes that must hand back a real, usable key: creation
+ * and rotation, where the customer needs the actual secret to configure
+ * their own app with (see maskApiKey's own comment for why that split
+ * exists at all).
+ */
+function withMaskedKey(project: Project): Project {
+  return { ...project, apiKey: maskApiKey(project.apiKey) };
+}
 
 // Dashboard CRUD had no rate limiting at all before this — scans, badge and
 // event-ingestion did. Keyed by account (available here since this always
@@ -118,6 +129,9 @@ projectsRouter.post("/api/projects", ...dashboardAccess, async (req, res) => {
     });
   }
 
+  // Deliberately NOT withMaskedKey here: this is the one moment the
+  // customer needs the real key, to paste into their own app's config.
+  // Every other route that returns a Project masks it (see withMaskedKey).
   const project = await createProject(req.userId!, name, {
     url: typeof req.body?.url === "string" ? req.body.url.trim() : undefined,
     description: typeof req.body?.description === "string" ? req.body.description.trim() : undefined,
@@ -129,7 +143,8 @@ projectsRouter.post("/api/projects", ...dashboardAccess, async (req, res) => {
 
 projectsRouter.get("/api/projects", ...dashboardAccess, async (req, res) => {
   const includeArchived = req.query.includeArchived === "true";
-  res.json({ projects: await listAccessibleProjects(req.userId!, includeArchived) });
+  const projects = await listAccessibleProjects(req.userId!, includeArchived);
+  res.json({ projects: projects.map(withMaskedKey) });
 });
 
 /**
@@ -168,7 +183,7 @@ projectsRouter.get("/api/projects/:id", ...dashboardAccess, async (req, res) => 
   const badge = await computeBadgeState(project.id);
   const latestScan = canUseFixCenter(plan) ? hydrateStoredScan(await getLatestScan(project.id)) : null;
   const alertCounts = await countAlertsByStatus(project.id);
-  res.json({ project, badge, latestScan, alertCounts });
+  res.json({ project: withMaskedKey(project), badge, latestScan, alertCounts });
 });
 
 projectsRouter.patch("/api/projects/:id", ...dashboardAccess, async (req, res) => {
@@ -180,7 +195,7 @@ projectsRouter.patch("/api/projects/:id", ...dashboardAccess, async (req, res) =
   if (typeof req.body?.description === "string") updates.description = req.body.description.trim();
   if (typeof req.body?.environment === "string") updates.environment = req.body.environment;
   const updated = await updateProject(project.id, updates);
-  res.json(updated);
+  res.json(updated ? withMaskedKey(updated) : updated);
 });
 
 projectsRouter.delete("/api/projects/:id", ...dashboardAccess, async (req, res) => {
@@ -194,19 +209,21 @@ projectsRouter.post("/api/projects/:id/archive", ...dashboardAccess, async (req,
   const project = await accessibleProjectOr404(req, res);
   if (!project) return;
   const archived = await archiveProject(project.id);
-  res.json(archived);
+  res.json(archived ? withMaskedKey(archived) : archived);
 });
 
 projectsRouter.post("/api/projects/:id/restore", ...dashboardAccess, async (req, res) => {
   const project = await accessibleProjectOr404(req, res);
   if (!project) return;
   const restored = await restoreProject(project.id);
-  res.json(restored);
+  res.json(restored ? withMaskedKey(restored) : restored);
 });
 
 projectsRouter.post("/api/projects/:id/rotate-key", ...dashboardAccess, async (req, res) => {
   const project = await accessibleProjectOr404(req, res);
   if (!project) return;
+  // Deliberately NOT withMaskedKey — same reasoning as POST /api/projects:
+  // this response is the customer's one chance to see and copy the new key.
   const updated = await rotateApiKey(project.id);
   res.json(updated);
 });
