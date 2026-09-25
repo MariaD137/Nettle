@@ -1642,6 +1642,183 @@ button.destructive {
   font-size: 13px;
 }
 
+/* Workflow/lifecycle chip chain (LoopChain component) — the "major visual
+   section" for the SCAN -> ... -> MONITOR loop and the BUILD -> ... ->
+   MONITOR lifecycle. Wraps on narrow viewports rather than scrolling. */
+.loop-chain {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-items: center;
+  gap: 6px;
+  row-gap: 14px;
+}
+.loop-chip-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.loop-chip {
+  font-family: var(--mono);
+  font-size: 12px;
+  letter-spacing: 0.02em;
+  color: var(--accent);
+  border: 1px solid var(--accent);
+  border-radius: 3px;
+  padding: 6px 12px;
+  white-space: nowrap;
+}
+.loop-arrow {
+  color: var(--line-strong);
+  font-size: 14px;
+}
+
+/* Problem-example / who-for / what-not lists — a neutral checklist reusing
+   the pricing page's list rhythm, with a plain square marker for gap
+   examples (not a checkmark, since these are things Nettle looks for, not
+   things it has) and the existing pass/fail icons where the section is
+   affirmative (who it's for) or negative (what it isn't). */
+.problem-list {
+  list-style: none;
+  margin: 24px auto 0;
+  padding: 0;
+  max-width: 640px;
+  display: flex;
+  flex-direction: column;
+  gap: 11px;
+}
+.problem-list li {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  font-size: 14px;
+  line-height: 1.5;
+  text-align: left;
+}
+.problem-marker {
+  flex-shrink: 0;
+  width: 6px;
+  height: 6px;
+  margin-top: 7px;
+  background: var(--accent);
+}
+
+/* Illustrative example finding (Findings & the Fix Center section) — reuses
+   the real dashboard's .finding/.fix-detail/.fix-section classes so the
+   marketing page shows the actual product UI language, not an invented
+   mockup. Widened and left-aligned since the marketing shell's default
+   section text is centered. */
+.example-finding {
+  max-width: 640px;
+  margin: 24px auto 0;
+  text-align: left;
+  cursor: default;
+}
+.example-finding .fix-detail {
+  cursor: default;
+}
+.example-rescan {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+.example-rescan-arrow {
+  color: var(--line-strong);
+}
+.example-rescan-note {
+  font-size: 12.5px;
+}
+
+/* Rescan/verification diff-status legend */
+.diff-legend {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 14px;
+  margin-top: 28px;
+  text-align: left;
+}
+.diff-legend-item {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 14px 16px;
+}
+.diff-legend-item .diff-pill {
+  margin-bottom: 8px;
+}
+.diff-legend-item p {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+
+/* FAQ — native <details>/<summary> so it's fully static and keyboard/no-JS
+   accessible, no client-side accordion state needed. */
+.faq-list {
+  max-width: 680px;
+  margin: 24px auto 0;
+  text-align: left;
+  border-top: 1px solid var(--line);
+}
+.faq-item {
+  border-bottom: 1px solid var(--line);
+  padding: 16px 0;
+}
+.faq-item summary {
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 14.5px;
+  list-style: none;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+.faq-item summary::-webkit-details-marker {
+  display: none;
+}
+.faq-item summary::after {
+  content: "+";
+  font-family: var(--mono);
+  color: var(--accent);
+  flex-shrink: 0;
+  font-size: 18px;
+}
+.faq-item[open] summary::after {
+  content: "\2212";
+}
+.faq-item p {
+  margin: 10px 0 0;
+  font-size: 13.5px;
+  line-height: 1.6;
+}
+
+/* Final CTA — full-bleed like the honesty band, but ink-on-white rather than
+   solid accent, so the two full-width moments in the page don't compete. */
+.marketing-final-cta {
+  max-width: none;
+  margin: 0 -24px 64px;
+  padding: 56px 24px;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  text-align: center;
+}
+.marketing-final-cta h2 {
+  font-size: 26px;
+  margin: 0 0 10px;
+}
+.marketing-final-cta p {
+  margin: 0 0 24px;
+  color: var(--muted);
+}
+.marketing-final-cta .button {
+  padding: 11px 26px;
+  font-size: 15px;
+}
+
 .marketing-footer {
   display: flex;
   align-items: center;
@@ -1677,6 +1854,14 @@ button.destructive {
   .marketing-honesty {
     margin: 0 -16px 48px;
     padding: 40px 16px;
+  }
+  .marketing-final-cta {
+    margin: 0 -16px 48px;
+    padding: 40px 16px;
+  }
+  .loop-chip {
+    font-size: 11px;
+    padding: 5px 10px;
   }
   .marketing-section {
     margin-bottom: 48px;
