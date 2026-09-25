@@ -1,11 +1,10 @@
 import { useRef, useState } from "react";
 
 // Served from public/ (not bundled) so the video payload never enters the
-// JS bundle and can be swapped without a rebuild. nettle-explainer.mp4
-// does not exist yet — see docs/NETTLE_EXPLAINER_VIDEO_SCRIPT.md for the
-// script this section is built against; the poster and captions below are
-// real, finished assets, not placeholders, so the page stays fully
-// presentable until the mp4 is supplied.
+// JS bundle and can be swapped without a rebuild. See
+// docs/NETTLE_EXPLAINER_VIDEO_SCRIPT.md for the script this section is
+// built against — the VTT timing was retimed to match the narration's
+// actual runtime (31.88s) rather than the script's original estimate.
 const VIDEO_SRC = "/media/nettle-explainer.mp4";
 const POSTER_SRC = "/media/nettle-explainer-poster.svg";
 const CAPTIONS_SRC = "/media/nettle-explainer.vtt";
