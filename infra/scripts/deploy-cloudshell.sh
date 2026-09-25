@@ -249,7 +249,28 @@ DISTRIBUTION_DOMAIN="$(echo "$FRONTEND_OUTPUTS" | node -e 'const o=JSON.parse(re
 #    Nettle-Frontend (scoped to both). No external secrets needed to
 #    deploy the stack itself — only the later GitHub Actions variable
 #    wiring (step 12 in infra/README.md) needs a human.
+#
+#    AWS allows only one IAM OIDC provider per URL per account. If this
+#    account already has one for token.actions.githubusercontent.com
+#    (from an earlier attempt, a stack that got deleted without deleting
+#    the provider, or something else in the account entirely), ci-stack.ts
+#    trying to create a second one fails with EntityAlreadyExistsException
+#    — real failure this script hit. Detect that case up front and reuse
+#    the existing provider (ci-stack.ts's githubOidcProviderArn prop)
+#    instead of creating a new one, same as recover_if_rollback_complete
+#    handles its own known failure mode above.
 # ---------------------------------------------------------------------------
+log "Checking for an existing GitHub Actions OIDC provider"
+# An IAM OIDC provider's ARN is arn:aws:iam::<account>:oidc-provider/<url>
+# (no scheme) — the URL is literally the resource id, so a single list call
+# is enough to find one, no per-provider lookup needed.
+EXISTING_OIDC_ARN="$(aws iam list-open-id-connect-providers --query \
+  "OpenIDConnectProviderList[?ends_with(Arn, '/token.actions.githubusercontent.com')].Arn | [0]" --output text)"
+if [[ -n "$EXISTING_OIDC_ARN" && "$EXISTING_OIDC_ARN" != "None" ]]; then
+  echo "Found existing OIDC provider ($EXISTING_OIDC_ARN) — reusing it instead of creating a new one"
+  export GITHUB_OIDC_PROVIDER_ARN="$EXISTING_OIDC_ARN"
+fi
+
 log "Deploying Nettle-CI"
 recover_if_rollback_complete "Nettle-CI" || true
 npx cdk deploy Nettle-CI --require-approval never
