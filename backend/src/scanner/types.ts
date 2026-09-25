@@ -108,6 +108,12 @@ export interface ScanReport {
   score: number;
   scoreConfidence?: number; // 0-100: how complete is the scan
   status?: ScanStatus; // default COMPLETED for backward compatibility
+  /** Set only on a FAILED report (see patrol/scans.ts's failQueuedScan) — the
+   *  actual error message from the worker (a clone failure, a Fargate task
+   *  failure, an unhandled exception in a control). Every "check the History
+   *  tab for details" message the API/frontend show a customer is a promise
+   *  that this field is what they'll find there. */
+  error?: string;
   access?: ScanAccess;
   // Legacy fields for backward compatibility
   findings: Finding[];

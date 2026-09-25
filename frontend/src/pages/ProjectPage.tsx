@@ -183,8 +183,8 @@ function OverviewTab({ project, latestScan }: { project: Project; latestScan: St
         <div className="card">
           <h2>Latest scan</h2>
           <p className="error-banner">
-            The most recent scan failed to complete ({new Date(latestScan.scannedAt).toLocaleString()}). Try running
-            it again from the Scan tab.
+            The most recent scan failed to complete ({new Date(latestScan.scannedAt).toLocaleString()}).
+            {latestScan.report.error ? ` ${latestScan.report.error}` : ""} Try running it again from the Scan tab.
           </p>
         </div>
       )}
@@ -383,6 +383,16 @@ function scoreLabel(score: number): string {
 }
 
 function ReportView({ report }: { report: ScanReport }) {
+  if (report.status === "FAILED") {
+    return (
+      <div>
+        <p className="error-banner">
+          {report.error ? report.error : "This scan failed to complete, and no error detail was recorded."}
+        </p>
+      </div>
+    );
+  }
+
   const bySeverity = (sev: string) => report.findings.filter((f) => f.severity === sev);
   const critical = bySeverity("critical");
   const high = bySeverity("high");

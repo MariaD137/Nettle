@@ -148,6 +148,8 @@ export interface ScanReport {
   scoreConfidence?: number;
   scannerVersion: string;
   status?: ScanStatus;
+  /** Set only on a FAILED report — the actual worker error message (see backend's failQueuedScan). */
+  error?: string;
   detectedTechnology?: string | null;
   access?: ScanAccess;
   findings: Finding[];
