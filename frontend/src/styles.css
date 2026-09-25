@@ -1310,6 +1310,11 @@ button.destructive {
   max-width: 1080px;
   margin: 0 auto;
   padding: 28px 24px 80px;
+  /* Landing-page palette only — scoped here rather than on :root so the
+     authenticated dashboard keeps its existing accent. */
+  --accent: #121b8f;
+  --accent-soft: #e4e7fa;
+  --brand-mark: #121b8f;
 }
 .marketing-nav {
   margin-bottom: 0;
@@ -1357,38 +1362,61 @@ button.destructive {
   max-width: 680px;
   margin: 64px auto 56px;
 }
-/* A soft, static radial glow behind the headline — the "futuristic" cue
-   this page had none of before. Purely decorative (aria-hidden via
-   ::before having no accessibility node at all) and never animated by
-   default; the drift keyframe only runs for visitors who haven't asked
-   for reduced motion. */
+/* A geometric scan-grid motif behind the headline — a dot grid plus a
+   single targeting ring, not a soft gradient wash. Purely decorative
+   (both live on pseudo-elements with no accessibility node) and the ring's
+   pulse only runs for visitors who haven't asked for reduced motion. */
 .hero::before {
   content: "";
   position: absolute;
-  inset: -80px -40% auto;
-  height: 420px;
-  background: radial-gradient(closest-side, var(--accent-soft), transparent 70%);
-  opacity: 0.7;
+  inset: -48px -10% auto;
+  height: 380px;
+  background-image: radial-gradient(circle, color-mix(in srgb, var(--accent) 14%, transparent) 1.4px, transparent 1.4px);
+  background-size: 28px 28px;
+  z-index: -1;
+  pointer-events: none;
+}
+.hero::after {
+  content: "";
+  position: absolute;
+  top: -16px;
+  right: 4%;
+  width: 170px;
+  height: 170px;
+  border: 1px solid color-mix(in srgb, var(--accent) 20%, transparent);
+  border-radius: 50%;
   z-index: -1;
   pointer-events: none;
 }
 @media (prefers-reduced-motion: no-preference) {
-  .hero::before {
-    animation: hero-glow-drift 16s ease-in-out infinite alternate;
+  .hero::after {
+    animation: hero-ring-pulse 6s ease-in-out infinite;
   }
 }
-@keyframes hero-glow-drift {
-  from { transform: translateY(0) scale(1); }
-  to { transform: translateY(14px) scale(1.06); }
+@keyframes hero-ring-pulse {
+  0%, 100% { opacity: 0.55; transform: scale(1); }
+  50% { opacity: 1; transform: scale(1.06); }
+}
+.hero-eyebrow {
+  display: inline-flex;
+  align-items: center;
+  font-family: var(--mono);
+  font-size: 12px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--accent);
+  border: 1px solid var(--accent);
+  padding: 6px 14px;
+  border-radius: 3px;
+  margin-bottom: 24px;
 }
 .hero h1 {
   font-size: 42px;
   line-height: 1.15;
   margin: 0 0 16px;
-  background: linear-gradient(100deg, var(--ink) 30%, var(--accent) 70%);
-  background-clip: text;
-  -webkit-background-clip: text;
-  color: transparent;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  color: var(--ink);
 }
 .hero-sub {
   font-size: 16px;
@@ -1407,17 +1435,28 @@ button.destructive {
   font-size: 15px;
 }
 
+/* Full-bleed solid block — breaks out of .marketing-shell's side padding via
+   matching negative margins (kept in sync with the mobile padding override
+   further down) rather than a card floating on the white page. */
 .marketing-honesty {
-  max-width: 720px;
-  margin: 0 auto 64px;
+  max-width: none;
+  margin: 0 -24px 64px;
+  padding: 56px 24px;
+  background: var(--accent);
+  border-radius: 0;
   text-align: center;
 }
 .marketing-honesty h2 {
-  font-size: 17px;
+  font-size: 22px;
+  color: #fff;
+  max-width: 640px;
+  margin: 0 auto 14px;
 }
 .marketing-honesty p {
   line-height: 1.6;
-  margin: 0;
+  margin: 0 auto;
+  max-width: 640px;
+  color: color-mix(in srgb, var(--accent-soft) 70%, #fff);
 }
 
 .marketing-section {
@@ -1447,11 +1486,13 @@ button.destructive {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 28px;
-  height: 28px;
-  border-radius: 50%;
-  background: var(--accent-soft);
+  width: 36px;
+  height: 36px;
+  border-radius: 4px;
+  border: 1px solid var(--accent);
+  background: var(--surface);
   color: var(--accent);
+  font-family: var(--mono);
   font-weight: 700;
   font-size: 13px;
   margin-bottom: 10px;
@@ -1482,7 +1523,7 @@ button.destructive {
 .feature-card:hover {
   border-color: var(--accent);
   transform: translateY(-2px);
-  box-shadow: 0 8px 24px -12px var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
 }
 .feature-card h3 {
   font-family: var(--serif);
@@ -1515,7 +1556,7 @@ button.destructive {
 }
 .marketing-shell .plan-card:hover {
   transform: translateY(-3px);
-  box-shadow: 0 10px 28px -14px var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -1626,8 +1667,16 @@ button.destructive {
     font-size: 30px;
   }
   .hero::before {
-    inset: -40px -10% auto;
-    height: 260px;
+    inset: -30px -10% auto;
+    height: 240px;
+  }
+  .hero::after {
+    width: 110px;
+    height: 110px;
+  }
+  .marketing-honesty {
+    margin: 0 -16px 48px;
+    padding: 40px 16px;
   }
   .marketing-section {
     margin-bottom: 48px;

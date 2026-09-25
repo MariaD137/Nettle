@@ -35,10 +35,10 @@ const CATEGORIES: { name: string; blurb: string }[] = [
 ];
 
 const STEPS: { title: string; detail: string }[] = [
-  { title: "Scan", detail: "Upload a zip or point Nettle at a public repo — no install required to try it." },
-  { title: "Understand", detail: "Every finding explains what was checked, what was found, and why it matters." },
-  { title: "Fix", detail: "Recommendations are technology-aware: a fix for your actual stack, not a generic checklist." },
-  { title: "Verify", detail: "Rescan to confirm the fix landed — the same check, the same evidence standard." },
+  { title: "Scan", detail: "Upload a zip or point Nettle at a public repo. No install required." },
+  { title: "Understand", detail: "Every finding shows what was checked, what was found, and why it matters." },
+  { title: "Fix", detail: "Recommendations match your actual stack, not a generic checklist." },
+  { title: "Verify", detail: "Rescan to confirm the fix landed, against the same evidence standard." },
   { title: "Monitor", detail: "PROTECT keeps watching after launch, with live alerts on suspicious traffic." },
 ];
 
@@ -56,11 +56,12 @@ export default function MarketingPage() {
       </div>
 
       <section className="hero">
+        <span className="hero-eyebrow">Scan &middot; Explain &middot; Fix &middot; Verify &middot; Monitor</span>
         <h1>Know what's actually wrong before you ship it.</h1>
         <p className="hero-sub">
-          Nettle scans AI-built and AI-assisted apps for the security, legal, and
-          compliance gaps their creators don't know to look for — then explains
-          why each one matters and what to do about it, in your own stack's terms.
+          Nettle scans your application for the security, legal, and compliance
+          gaps other tools miss. It explains why each one matters, in terms
+          specific to your stack.
         </p>
         <div className="hero-cta">
           <Link to="/login" className="button">Scan your app free</Link>
@@ -72,15 +73,12 @@ export default function MarketingPage() {
         <VideoSection />
       </Reveal>
 
-      <Reveal as="section" className="marketing-honesty card">
-        <h2>Every finding is PASS, FAIL, or NOT_VERIFIED — never a guess</h2>
+      <Reveal as="section" className="marketing-honesty">
+        <h2>Every finding is PASS, FAIL, or NOT_VERIFIED. Never a guess.</h2>
         <p>
-          If Nettle can't determine whether a control is actually satisfied — no
-          production config supplied, no evidence either way — it says so
-          explicitly instead of quietly assuming a pass. A finding that fails
-          always comes with a quick fix, a developer-level fix, and a way to
-          verify the fix worked, tailored to the frameworks Nettle detects in
-          your codebase.
+          When Nettle can't confirm a control is satisfied, it says so instead
+          of assuming a pass. Every failed finding ships with a quick fix, a
+          developer fix, and a way to verify it worked.
         </p>
       </Reveal>
 
@@ -89,7 +87,7 @@ export default function MarketingPage() {
         <div className="steps">
           {STEPS.map((s, i) => (
             <div className="step" key={s.title}>
-              <span className="step-num">{i + 1}</span>
+              <span className="step-num">{String(i + 1).padStart(2, "0")}</span>
               <h3>{s.title}</h3>
               <p className="muted">{s.detail}</p>
             </div>
