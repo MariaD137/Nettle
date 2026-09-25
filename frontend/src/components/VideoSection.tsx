@@ -1,12 +1,12 @@
 import { useRef, useState } from "react";
 
 // Served from public/ (not bundled) so the video payload never enters the
-// JS bundle and can be swapped without a rebuild. See
-// docs/NETTLE_EXPLAINER_VIDEO_SCRIPT.md for the script this section is
-// built against — the VTT timing was retimed to match the narration's
-// actual runtime (31.88s) rather than the script's original estimate.
+// JS bundle and can be swapped without a rebuild. This cut already has its
+// captions burned into the picture, so there's no <track> element below —
+// a WebVTT overlay on top would just double them up. CAPTIONS_SRC is kept
+// only as a downloadable plain-text transcript for the link at the bottom.
 const VIDEO_SRC = "/media/nettle-explainer.mp4";
-const POSTER_SRC = "/media/nettle-explainer-poster.svg";
+const POSTER_SRC = "/media/nettle-explainer-poster.jpg";
 const CAPTIONS_SRC = "/media/nettle-explainer.vtt";
 
 /**
@@ -47,7 +47,6 @@ export default function VideoSection() {
           onEnded={() => setPlaying(false)}
         >
           <source src={VIDEO_SRC} type="video/mp4" />
-          <track kind="captions" src={CAPTIONS_SRC} srcLang="en" label="English" default />
           Your browser doesn't support embedded video.{" "}
           <a href={VIDEO_SRC}>Download the video</a> instead.
         </video>
