@@ -15,7 +15,7 @@ jobs:
     runs-on: ubuntu-latest
     environment: production # add required reviewers here in GitHub settings before relying on this
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # See frontend-deploy.yml's identical step for why this exists: fails
       # fast with a specific message instead of a confusing failure deep
