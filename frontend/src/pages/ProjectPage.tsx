@@ -13,10 +13,9 @@ import { useIsMobile } from "../useIsMobile";
 import { useAuth } from "../AuthContext";
 import { canRunScan, canUseFixCenter, isProtect } from "../subscription";
 
-type Tab = "overview" | "scan" | "fixcenter" | "findings" | "alerts" | "history" | "settings";
+type Tab = "scan" | "fixcenter" | "findings" | "alerts" | "history" | "settings";
 
 const TAB_LABELS: Record<Tab, string> = {
-  overview: "Overview",
   scan: "Scan",
   fixcenter: "Fix Center",
   findings: "Findings",
@@ -34,7 +33,7 @@ export default function ProjectPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const isMobile = useIsMobile();
-  const [tab, setTab] = useState<Tab>("overview");
+  const [tab, setTab] = useState<Tab>("scan");
   const [project, setProject] = useState<Project | null>(null);
   const [badge, setBadge] = useState<BadgeState | null>(null);
   const [alertCounts, setAlertCounts] = useState<AlertCounts | null>(null);
@@ -59,11 +58,10 @@ export default function ProjectPage() {
   if (error) return <div className="shell error-banner">{error}</div>;
   if (!project || !badge) return <div className="shell muted">Loading…</div>;
 
-  const tabs: Tab[] = ["overview", "scan", "fixcenter", "findings", "alerts", "history", "settings"];
+  const tabs: Tab[] = ["scan", "fixcenter", "findings", "alerts", "history", "settings"];
 
   const content = (
     <>
-      {tab === "overview" && <OverviewTab project={project} latestScan={latestScan} />}
       {tab === "scan" && <ScanTab project={project} onScanned={(b) => { setBadge(b); refresh(); }} />}
       {tab === "fixcenter" && <FixCenterTab latestScan={latestScan} projectId={project.id} onRescan={() => setTab("scan")} />}
       {tab === "findings" && <FindingsTab projectId={project.id} latestScan={latestScan} />}
@@ -81,7 +79,6 @@ export default function ProjectPage() {
 
   if (isMobile) {
     const navItems: TabItem[] = [
-      { key: "overview", label: "Overview", icon: Icons.overview },
       { key: "scan", label: "Scan", icon: Icons.scan },
       { key: "fixcenter", label: "Fix Center", icon: Icons.fixcenter, badge: fixCount(latestScan) },
       { key: "findings", label: "Findings", icon: Icons.findings },
@@ -133,80 +130,6 @@ export default function ProjectPage() {
 
       {content}
     </div>
-  );
-}
-
-function OverviewTab({ project, latestScan }: { project: Project; latestScan: StoredScan | null }) {
-  const badgeUrl = api.badgeSvgUrl(project.id);
-  const [exportError, setExportError] = useState<string | null>(null);
-
-  async function handleExport(scanId: string) {
-    setExportError(null);
-    try {
-      await api.downloadScanReport(project.id, scanId);
-    } catch (err) {
-      setExportError(err instanceof ApiError ? err.message : "Export failed");
-    }
-  }
-
-  return (
-    <>
-      <div className="card">
-        <h2>Trust badge</h2>
-        <p className="muted">Embed this on your own site — it updates live as scans and alerts come in.</p>
-        <img src={badgeUrl} alt="Nettle status badge" style={{ marginBottom: 10 }} />
-        <div className="code-snippet">{`<img src="${badgeUrl}" alt="Nettle status" />`}</div>
-      </div>
-
-      <div className="card">
-        <h2>Continuous monitoring</h2>
-        <p className="muted">
-          Drop this into your own Express app to start reporting live traffic — substitute your real API key,
-          available from the Settings tab (Nettle only ever shows the full key once, right after it's created or
-          rotated — it isn't displayed anywhere after that):
-        </p>
-        <div className="code-snippet">
-          {`import { nettleMonitor } from "./nettleMonitor";\napp.use(nettleMonitor({ apiKey: "<YOUR_API_KEY>" }));`}
-        </div>
-      </div>
-
-      {latestScan && (latestScan.status === "CREATED" || latestScan.status === "SCANNING") && (
-        <div className="card">
-          <h2>Latest scan</h2>
-          <p className="muted">Scan in progress — this project's most recent scan hasn't finished yet. Check back shortly.</p>
-        </div>
-      )}
-
-      {latestScan && latestScan.status === "FAILED" && (
-        <div className="card">
-          <h2>Latest scan</h2>
-          <p className="error-banner">
-            The most recent scan failed to complete ({new Date(latestScan.scannedAt).toLocaleString()}).
-            {latestScan.report.error ? ` ${latestScan.report.error}` : ""} Try running it again from the Scan tab.
-          </p>
-        </div>
-      )}
-
-      {latestScan && latestScan.status !== "CREATED" && latestScan.status !== "SCANNING" && latestScan.status !== "FAILED" && (
-        <div className="card">
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-            <h2>Latest scan</h2>
-            <button className="small secondary" onClick={() => handleExport(latestScan.id)}>
-              Download JSON
-            </button>
-          </div>
-          {exportError && <div className="error-banner">{exportError}</div>}
-          <p className="muted">
-            {new Date(latestScan.scannedAt).toLocaleString()} — Score: {latestScan.score}/100
-          </p>
-          <div className="score-counts">
-            <span className="count-critical">{latestScan.criticalCount} critical</span>
-            <span className="count-high">{latestScan.cautionCount} caution</span>
-            <span className="count-clear">{latestScan.clearCount} clear</span>
-          </div>
-        </div>
-      )}
-    </>
   );
 }
 
@@ -1121,6 +1044,7 @@ function ProjectSettingsTab({
   // user doesn't have to guess where to find it after rotating.
   const [rotatedKey, setRotatedKey] = useState<string | null>(null);
   const [keyCopied, setKeyCopied] = useState(false);
+  const badgeUrl = api.badgeSvgUrl(project.id);
 
   async function handleSave(e: React.FormEvent) {
     e.preventDefault();
@@ -1237,6 +1161,24 @@ function ProjectSettingsTab({
             <button type="button" onClick={copyRotatedKey}>{keyCopied ? "Copied!" : "Copy key"}</button>
           </div>
         )}
+      </div>
+
+      <div className="card">
+        <h2>Trust badge</h2>
+        <p className="muted">Embed this on your own site — it updates live as scans and alerts come in.</p>
+        <img src={badgeUrl} alt="Nettle status badge" style={{ marginBottom: 10 }} />
+        <div className="code-snippet">{`<img src="${badgeUrl}" alt="Nettle status" />`}</div>
+      </div>
+
+      <div className="card">
+        <h2>Continuous monitoring</h2>
+        <p className="muted">
+          Drop this into your own Express app to start reporting live traffic — substitute your real API key
+          (Nettle only ever shows the full key once, right after it's created or rotated):
+        </p>
+        <div className="code-snippet">
+          {`import { nettleMonitor } from "./nettleMonitor";\napp.use(nettleMonitor({ apiKey: "<YOUR_API_KEY>" }));`}
+        </div>
       </div>
 
       <div className="card">
