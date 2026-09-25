@@ -3,6 +3,7 @@ import { SubnetType, SecurityGroup, Peer, Port, type Vpc } from "aws-cdk-lib/aws
 import { Cluster, FargateTaskDefinition, ContainerImage, LogDrivers, ContainerInsights } from "aws-cdk-lib/aws-ecs";
 import { Role, ServicePrincipal, PolicyStatement } from "aws-cdk-lib/aws-iam";
 import { Bucket, BlockPublicAccess, BucketEncryption } from "aws-cdk-lib/aws-s3";
+import { Queue } from "aws-cdk-lib/aws-sqs";
 import { LogGroup, RetentionDays } from "aws-cdk-lib/aws-logs";
 import type { IRepository } from "aws-cdk-lib/aws-ecr";
 import type { Construct } from "constructs";
@@ -78,6 +79,8 @@ export class NettleScanWorkerStack extends Stack {
   public readonly taskSecurityGroup: SecurityGroup;
   public readonly taskRoleArn: string;
   public readonly executionRoleArn: string;
+  public readonly scanQueue: Queue;
+  public readonly scanQueueDlq: Queue;
 
   constructor(scope: Construct, id: string, props: NettleScanWorkerStackProps) {
     super(scope, id, props);
@@ -95,6 +98,47 @@ export class NettleScanWorkerStack extends Stack {
       removalPolicy: RemovalPolicy.DESTROY,
       autoDeleteObjects: true,
       lifecycleRules: [{ expiration: Duration.days(1) }],
+    });
+
+    // Durable handoff between "a scan was requested" and "a worker actually
+    // ran it" — replaces scanQueue.ts's in-memory job list, which loses any
+    // queued/in-flight scan outright if the API process restarts (a deploy,
+    // an App Runner health-check recycle, a crash) with no recovery path.
+    // SQS gives that recovery path for free: a message isn't deleted until
+    // the consumer finishes processing it, so a process that dies mid-scan
+    // leaves the message to become visible again (after visibilityTimeout)
+    // for whichever process is polling next — including a freshly restarted
+    // one. Same account/region as everything else in this stack; no new
+    // network path since the API's own outbound HTTPS already reaches SQS's
+    // public endpoint (unlike the isolated scan-worker task, this queue is
+    // read by the API process itself, not by the sandboxed Fargate task).
+    this.scanQueueDlq = new Queue(this, "ScanQueueDLQ", {
+      retentionPeriod: Duration.days(14),
+    });
+    // Visibility timeout must exceed the worst-case time a message can be
+    // "in flight" before the consumer either completes it or is confirmed
+    // dead: isolatedExecution.ts's own task budget (SCAN_ISOLATED_TIMEOUT_MS,
+    // default 5 minutes) plus real margin for task launch and the S3
+    // upload/download this queue's consumer does around it. Set below this,
+    // a still-healthy consumer's message would become visible again and get
+    // double-processed; set far above it, a truly dead consumer's scan sits
+    // invisible (and unrecoverable) longer than necessary. 10 minutes gives
+    // ~2x the default scan budget as margin.
+    this.scanQueue = new Queue(this, "ScanQueue", {
+      visibilityTimeout: Duration.minutes(10),
+      retentionPeriod: Duration.days(4),
+      deadLetterQueue: {
+        // A message that fails to be deleted 3 times in a row means 3
+        // separate consumer processes each died (or hung past the
+        // visibility timeout) while holding it — not a transient blip.
+        // durableQueue.ts also explicitly fails the scan record itself
+        // (via failQueuedScan) once ApproximateReceiveCount approaches this
+        // threshold, specifically so a scan sent to the DLQ still leaves a
+        // real FAILED record behind rather than staying stuck at SCANNING
+        // with the customer never told anything went wrong.
+        maxReceiveCount: 3,
+        queue: this.scanQueueDlq,
+      },
     });
 
     this.cluster = new Cluster(this, "ScanWorkerCluster", { vpc: props.vpc, containerInsightsV2: ContainerInsights.DISABLED });
@@ -193,5 +237,8 @@ export class NettleScanWorkerStack extends Stack {
     new CfnOutput(this, "IsolatedSubnetIds", {
       value: props.vpc.selectSubnets({ subnetType: SubnetType.PRIVATE_ISOLATED }).subnetIds.join(","),
     });
+    new CfnOutput(this, "ScanQueueUrl", { value: this.scanQueue.queueUrl });
+    new CfnOutput(this, "ScanQueueArn", { value: this.scanQueue.queueArn });
+    new CfnOutput(this, "ScanQueueDlqArn", { value: this.scanQueueDlq.queueArn });
   }
 }

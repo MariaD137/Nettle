@@ -10,6 +10,7 @@ import { authRouter } from "./routes/auth.routes";
 import { badgeRouter } from "./routes/badge.routes";
 import { billingRouter, billingWebhookRouter } from "./routes/billing.routes";
 import { initializeScanner } from "./scanner/initialization";
+import { startDurableQueueConsumer } from "./scanner/durableQueue";
 import { initializeDatabase, assertProductionPersistence } from "./db";
 import { startRateLimitCleanup } from "./middleware/rateLimit";
 import { apiVersioning } from "./middleware/apiVersion";
@@ -128,6 +129,9 @@ async function start(): Promise<void> {
   await initializeDatabase();
   initializeScanner();
   startRateLimitCleanup();
+  // No-op when SCAN_QUEUE_URL isn't configured (every test, local dev, this
+  // sandbox) — see durableQueue.ts's own doc comment.
+  startDurableQueueConsumer();
 
   app.listen(PORT, () => {
     console.log(`Nettle backend listening on port ${PORT}`);

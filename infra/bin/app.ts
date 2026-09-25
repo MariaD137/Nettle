@@ -66,6 +66,8 @@ const api = new NettleApiStack(app, "Nettle-Api", {
     workspaceBucketName: scanWorker.workspaceBucket.bucketName,
     taskRoleArn: scanWorker.taskRoleArn,
     executionRoleArn: scanWorker.executionRoleArn,
+    scanQueueUrl: scanWorker.scanQueue.queueUrl,
+    scanQueueArn: scanWorker.scanQueue.queueArn,
   },
 });
 

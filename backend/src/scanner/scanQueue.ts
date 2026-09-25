@@ -1,6 +1,7 @@
 import { runScan } from "./index";
 import { completeQueuedScan, failQueuedScan, markScanStatus } from "../patrol/scans";
 import { isIsolatedExecutionConfigured, runScanIsolated } from "./isolatedExecution";
+import { isDurableQueueConfigured, enqueueScanDurable } from "./durableQueue";
 
 /**
  * Decouples project-tied scan execution from the HTTP request that triggers
@@ -85,12 +86,34 @@ async function runJob(job: ScanJobInput): Promise<void> {
  * scans.routes.ts) has already responded to the client with the scan's id
  * and CREATED status by the time this settles.
  *
- * A failure inside one job (a throw from runScan, or from the status
- * updates around it) is caught here so it can never break the chain for
- * jobs queued after it — same resilience property detectionQueue.ts's own
- * tests verify for its queue.
+ * Delegates to durableQueue.ts (SQS-backed, survives an API restart) when
+ * SCAN_QUEUE_URL/SCAN_WORKSPACE_BUCKET_NAME are configured — production,
+ * once scan-worker-stack.ts's queue is deployed. Falls back to the
+ * in-memory path below otherwise (every test, local dev, this sandbox),
+ * unchanged from before durableQueue.ts existed. A failure enqueueing
+ * durably (an S3/SQS error, not a scan failure — those are handled inside
+ * pollDurableQueueOnce) still leaves a real FAILED record rather than a
+ * scan stuck at CREATED forever.
+ *
+ * A failure inside one in-memory job (a throw from runScan, or from the
+ * status updates around it) is caught here so it can never break the chain
+ * for jobs queued after it — same resilience property detectionQueue.ts's
+ * own tests verify for its queue.
  */
 export function enqueueScan(job: ScanJobInput): void {
+  if (isDurableQueueConfigured()) {
+    enqueueScanDurable(job).catch((err) => {
+      console.error(`[scan-queue] durable enqueue failed for scan ${job.scanId}: ${(err as Error).message}`);
+      failQueuedScan(job.scanId, (err as Error).message).catch(() => undefined);
+      try {
+        job.cleanup();
+      } catch {
+        // already best-effort
+      }
+    });
+    return;
+  }
+
   pending++;
   tail = tail
     .then(() => runJob(job))
@@ -127,12 +150,12 @@ export async function flushScanQueue(): Promise<void> {
   }
 }
 
-// Known, disclosed limitation (matches detectionQueue.ts's own documented
-// tradeoff): this queue is memory-only. If the process crashes or restarts
-// while a job is queued or mid-SCANNING, that job is lost — the row is left
-// at CREATED or SCANNING with no automatic recovery, since there is no real
-// message queue here to redeliver it. The scan record itself is not
-// corrupted (the client can retrigger a scan for the project), but nothing
-// currently sweeps and fails stale in-flight rows. A real queue backend
-// (SQS + a separate worker) would close this gap — deliberately not added
-// speculatively here, same reasoning as the monitoring detection queue.
+// The in-memory path below is memory-only, same known, disclosed limitation
+// detectionQueue.ts's own queue still has: if the process crashes or
+// restarts while a job is queued or mid-SCANNING, that job is lost with no
+// automatic recovery. That gap is now closed for any environment with
+// SCAN_QUEUE_URL/SCAN_WORKSPACE_BUCKET_NAME configured — enqueueScan()
+// above delegates to durableQueue.ts's SQS-backed queue instead, which
+// survives a process restart (see that file). This in-memory path remains
+// exactly as it always was for every environment without that config: every
+// test, local development, and this sandbox.

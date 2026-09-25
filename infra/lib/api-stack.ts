@@ -62,6 +62,9 @@ export interface NettleApiStackProps extends StackProps {
     workspaceBucketName: string;
     taskRoleArn: string;
     executionRoleArn: string;
+    /** Durable scan queue (scan-worker-stack.ts's ScanQueue) — see scanner/durableQueue.ts. */
+    scanQueueUrl: string;
+    scanQueueArn: string;
   };
   /**
    * Whether App Runner watches this service's own image tag and redeploys
@@ -250,6 +253,33 @@ export class NettleApiStack extends Stack {
           resources: [`arn:aws:s3:::${sw.workspaceBucketName}/results/*`],
         })
       );
+
+      // Durable scan queue (durableQueue.ts): the API process is both
+      // producer (enqueueing a newly submitted scan) and consumer (its own
+      // background poller — see index.ts's start()). SendMessage/ReceiveMessage/
+      // DeleteMessage/ChangeMessageVisibility/GetQueueAttributes is the
+      // complete set an SQS consumer+producer needs; nothing broader.
+      instanceRole.addToPolicy(
+        new PolicyStatement({
+          actions: [
+            "sqs:SendMessage",
+            "sqs:ReceiveMessage",
+            "sqs:DeleteMessage",
+            "sqs:ChangeMessageVisibility",
+            "sqs:GetQueueAttributes",
+          ],
+          resources: [sw.scanQueueArn],
+        })
+      );
+      // Same read/write split as workspaces//results above, under its own
+      // prefix so a durable-queue object can never collide with an
+      // isolatedExecution.ts object even though both share this bucket.
+      instanceRole.addToPolicy(
+        new PolicyStatement({
+          actions: ["s3:PutObject", "s3:GetObject", "s3:DeleteObject"],
+          resources: [`arn:aws:s3:::${sw.workspaceBucketName}/queue-workspaces/*`],
+        })
+      );
     }
 
     const vpcConnector = new CfnVpcConnector(this, "ApiVpcConnector", {
@@ -304,6 +334,7 @@ export class NettleApiStack extends Stack {
                     { name: "SCAN_ECS_SUBNET_IDS", value: props.scanWorker.subnetIds },
                     { name: "SCAN_ECS_SECURITY_GROUP_ID", value: props.scanWorker.securityGroupId },
                     { name: "SCAN_WORKSPACE_BUCKET_NAME", value: props.scanWorker.workspaceBucketName },
+                    { name: "SCAN_QUEUE_URL", value: props.scanWorker.scanQueueUrl },
                   ]
                 : []),
             ],
