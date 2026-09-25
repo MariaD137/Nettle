@@ -1,5 +1,7 @@
 import { Link } from "react-router-dom";
 import NettleLogo from "../components/NettleLogo";
+import Reveal from "../components/Reveal";
+import VideoSection from "../components/VideoSection";
 import { PLANS } from "../plans";
 
 /**
@@ -66,7 +68,11 @@ export default function MarketingPage() {
         </div>
       </section>
 
-      <section className="marketing-honesty card">
+      <Reveal className="video-reveal">
+        <VideoSection />
+      </Reveal>
+
+      <Reveal as="section" className="marketing-honesty card">
         <h2>Every finding is PASS, FAIL, or NOT_VERIFIED — never a guess</h2>
         <p>
           If Nettle can't determine whether a control is actually satisfied — no
@@ -76,9 +82,9 @@ export default function MarketingPage() {
           verify the fix worked, tailored to the frameworks Nettle detects in
           your codebase.
         </p>
-      </section>
+      </Reveal>
 
-      <section id="how" className="marketing-section">
+      <Reveal as="section" id="how" className="marketing-section">
         <h2 className="marketing-section-title">How it works</h2>
         <div className="steps">
           {STEPS.map((s, i) => (
@@ -89,9 +95,9 @@ export default function MarketingPage() {
             </div>
           ))}
         </div>
-      </section>
+      </Reveal>
 
-      <section id="checks" className="marketing-section">
+      <Reveal as="section" id="checks" className="marketing-section">
         <h2 className="marketing-section-title">What Nettle checks</h2>
         <p className="muted marketing-section-sub">
           A structured control library, not a static checklist — each category
@@ -106,18 +112,18 @@ export default function MarketingPage() {
             </div>
           ))}
         </div>
-      </section>
+      </Reveal>
 
-      <section className="marketing-section">
+      <Reveal as="section" className="marketing-section">
         <h2 className="marketing-section-title">Also ships as a CLI</h2>
         <p className="muted marketing-section-sub" style={{ marginBottom: 0 }}>
           Run <code>nettle scan</code> in CI and gate the build with{" "}
           <code>--fail-on critical</code> (or high, medium, low) — the same
           control library, in your pipeline.
         </p>
-      </section>
+      </Reveal>
 
-      <section id="pricing" className="marketing-section">
+      <Reveal as="section" id="pricing" className="marketing-section">
         <h2 className="marketing-section-title">Pricing</h2>
         <div className="plan-grid">
           {PLANS.map((plan) => (
@@ -153,7 +159,7 @@ export default function MarketingPage() {
             </div>
           ))}
         </div>
-      </section>
+      </Reveal>
 
       <footer className="marketing-footer">
         <span className="brand"><NettleLogo size={20} title="" />nettle</span>
