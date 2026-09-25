@@ -47,9 +47,43 @@ import { getControlLibraryVersion, getControlVersionsSnapshot } from "./controls
 import { SCANNER_VERSION, type CheckResult, type Finding, type Pass, type ScanReport } from "./types";
 import { getSemgrepVersion } from "./initialization";
 import { SCORING_CONFIG, calculateScore, calculateConfidence } from "./scoringConfig";
-import { checkResultToFinding, checkResultToPass, findingToCheckResult, passToCheckResult } from "./threeStateModel";
+import { checkResultToFinding, checkResultToPass, findingToCheckResult, passToCheckResult, generateCheckId } from "./threeStateModel";
 
 const SCANNED_EXTENSIONS = [".js", ".ts", ".jsx", ".tsx", ".env", ".json", ".yml", ".yaml", ".tf", "dockerfile"];
+
+/**
+ * Every control below was written and tested against fixture repos, not the
+ * unbounded variety of real-world codebases a customer actually scans — a
+ * huge lockfile, an unusual file encoding, a package.json shape a control's
+ * parser didn't anticipate. Before this wrapper, one control throwing on
+ * real-world input took the *entire* scan down (runScan() rethrew, the
+ * queue recorded the whole thing as FAILED, and the customer got zero
+ * results for it) — the exact "OSV-001 used to have no try/catch around its
+ * DB query and could abort the whole scan" defect class documented in
+ * osvVulnerabilityControl.ts's own comment, except unfixed for every other
+ * control here. Isolating each call means one control's real-world bug
+ * costs that one control (reported honestly as NOT_VERIFIED, with the
+ * actual error attached) instead of the customer's whole scan.
+ */
+function runControlSafely(label: string, fn: () => CheckResult[]): CheckResult[] {
+  try {
+    return fn();
+  } catch (err) {
+    const message = (err as Error).message;
+    console.error(`[scanner] ${label} threw and was skipped: ${message}`);
+    return [
+      {
+        checkId: generateCheckId("Configuration", `${label}:internal-error`),
+        status: "NOT_VERIFIED",
+        category: "Configuration",
+        title: `${label} could not complete`,
+        detail: `This check hit an internal error on this codebase and was skipped rather than failing the whole scan: ${message}`,
+        confidence: 0,
+        detectionMethod: "unknown",
+      },
+    ];
+  }
+}
 
 export function runScan(targetPath: string): ScanReport {
   const targetRoot = path.resolve(targetPath);
@@ -59,46 +93,46 @@ export function runScan(targetPath: string): ScanReport {
   // CheckResult directly, including NOT_VERIFIED where the old
   // Finding/Pass-only modules could only silently contribute nothing.
   const controlledResults: CheckResult[] = [
-    ...scanAuthControl(files, targetRoot),
-    ...scanSecretsControl(files, targetRoot),
-    ...scanApiRateLimitControl(files, targetRoot),
-    ...scanSqlInjectionControl(files, targetRoot),
-    ...scanSecurityHeadersControl(files, targetRoot),
-    ...scanJwtAlgorithmControl(files, targetRoot),
-    ...scanCryptoControl(files, targetRoot),
-    ...scanAiPromptInjectionControl(files, targetRoot),
-    ...scanPathTraversalControl(files, targetRoot),
-    ...scanTransportSecurityControl(files, targetRoot),
-    ...scanJwtExpiryControl(files, targetRoot),
-    ...scanCorsControl(files, targetRoot),
-    ...scanCookieSecurityControl(files, targetRoot),
-    ...scanCsrfControl(files, targetRoot),
-    ...scanInputValidationControl(files, targetRoot),
-    ...scanRequestSizeControl(files, targetRoot),
-    ...scanFileUploadControl(files, targetRoot),
-    ...scanDeserializationControl(files, targetRoot),
-    ...scanDbCredentialExposureControl(files, targetRoot),
-    ...scanParameterizedQueryControl(files, targetRoot),
-    ...scanRefreshTokenControl(files, targetRoot),
-    ...scanSessionStoreControl(files, targetRoot),
-    ...scanSessionExpirationControl(files, targetRoot),
-    ...scanLogoutInvalidationControl(files, targetRoot),
-    ...scanAiCostLimitsControl(files, targetRoot),
-    ...scanAiToolExecutionControl(files, targetRoot),
-    ...scanAiOutputValidationControl(files, targetRoot),
-    ...scanDependencyLockfileControl(targetRoot),
-    ...scanLegalPolicyControl(targetRoot),
-    ...scanAiContentDisclosureControl(files, targetRoot),
-    ...scanSemgrepControl(targetRoot),
-    ...scanOsvVulnerabilityControl(targetRoot),
-    ...scanCodeQualityControl(files, targetRoot),
-    ...scanFrontendSecurityControl(files, targetRoot),
-    ...scanPaymentSecurityControl(files, targetRoot),
-    ...scanCicdSecurityControl(files, targetRoot),
-    ...scanMultiTenantSecurityControl(files, targetRoot),
-    ...scanCloudSecurityControl(files, targetRoot),
-    ...scanAiCodeReviewControl(files, targetRoot),
-    ...scanSupplyChainControl(targetRoot),
+    ...runControlSafely("AUTH", () => scanAuthControl(files, targetRoot)),
+    ...runControlSafely("SECRET-001..002", () => scanSecretsControl(files, targetRoot)),
+    ...runControlSafely("API rate limit", () => scanApiRateLimitControl(files, targetRoot)),
+    ...runControlSafely("SQL injection", () => scanSqlInjectionControl(files, targetRoot)),
+    ...runControlSafely("Security headers", () => scanSecurityHeadersControl(files, targetRoot)),
+    ...runControlSafely("JWT algorithm", () => scanJwtAlgorithmControl(files, targetRoot)),
+    ...runControlSafely("CRYPTO-001", () => scanCryptoControl(files, targetRoot)),
+    ...runControlSafely("AI prompt injection", () => scanAiPromptInjectionControl(files, targetRoot)),
+    ...runControlSafely("Path traversal", () => scanPathTraversalControl(files, targetRoot)),
+    ...runControlSafely("NET-001 transport security", () => scanTransportSecurityControl(files, targetRoot)),
+    ...runControlSafely("JWT expiry", () => scanJwtExpiryControl(files, targetRoot)),
+    ...runControlSafely("CORS", () => scanCorsControl(files, targetRoot)),
+    ...runControlSafely("Cookie security", () => scanCookieSecurityControl(files, targetRoot)),
+    ...runControlSafely("CSRF", () => scanCsrfControl(files, targetRoot)),
+    ...runControlSafely("INPUT-001..004", () => scanInputValidationControl(files, targetRoot)),
+    ...runControlSafely("Request size", () => scanRequestSizeControl(files, targetRoot)),
+    ...runControlSafely("File upload", () => scanFileUploadControl(files, targetRoot)),
+    ...runControlSafely("Deserialization", () => scanDeserializationControl(files, targetRoot)),
+    ...runControlSafely("DB credential exposure", () => scanDbCredentialExposureControl(files, targetRoot)),
+    ...runControlSafely("Parameterized query", () => scanParameterizedQueryControl(files, targetRoot)),
+    ...runControlSafely("Refresh token", () => scanRefreshTokenControl(files, targetRoot)),
+    ...runControlSafely("Session store", () => scanSessionStoreControl(files, targetRoot)),
+    ...runControlSafely("Session expiration", () => scanSessionExpirationControl(files, targetRoot)),
+    ...runControlSafely("Logout invalidation", () => scanLogoutInvalidationControl(files, targetRoot)),
+    ...runControlSafely("AI cost limits", () => scanAiCostLimitsControl(files, targetRoot)),
+    ...runControlSafely("AI tool execution", () => scanAiToolExecutionControl(files, targetRoot)),
+    ...runControlSafely("AI output validation", () => scanAiOutputValidationControl(files, targetRoot)),
+    ...runControlSafely("DEPS-001 lockfile", () => scanDependencyLockfileControl(targetRoot)),
+    ...runControlSafely("LEGAL-001..004", () => scanLegalPolicyControl(targetRoot)),
+    ...runControlSafely("AI content disclosure", () => scanAiContentDisclosureControl(files, targetRoot)),
+    ...runControlSafely("Semgrep", () => scanSemgrepControl(targetRoot)),
+    ...runControlSafely("OSV-001", () => scanOsvVulnerabilityControl(targetRoot)),
+    ...runControlSafely("CQ-001..007 code quality", () => scanCodeQualityControl(files, targetRoot)),
+    ...runControlSafely("FE-001..004 frontend security", () => scanFrontendSecurityControl(files, targetRoot)),
+    ...runControlSafely("PAY-001..004 payment security", () => scanPaymentSecurityControl(files, targetRoot)),
+    ...runControlSafely("CICD-001..003", () => scanCicdSecurityControl(files, targetRoot)),
+    ...runControlSafely("MT-001..002 multi-tenant security", () => scanMultiTenantSecurityControl(files, targetRoot)),
+    ...runControlSafely("CLOUD-001..003", () => scanCloudSecurityControl(files, targetRoot)),
+    ...runControlSafely("AICODE-001..002", () => scanAiCodeReviewControl(files, targetRoot)),
+    ...runControlSafely("SUPPLY-001..002", () => scanSupplyChainControl(targetRoot)),
   ];
 
   // Every legacy Finding/Pass-shaped scanner module (apiSecurity.ts,
@@ -148,7 +182,15 @@ export function runScan(targetPath: string): ScanReport {
   // three-state model's own tests but was never wired into an actual scan.
   const scoreConfidence = calculateConfidence(checkResults);
 
-  const detectedTechnology = mapFrameworkToTechnology(detectFrameworks(targetRoot).primaryFramework) ?? null;
+  // Technology detection is a nice-to-have (it only steers which fix
+  // recommendation a finding shows) — it must never be able to take the
+  // whole scan down the way an unwrapped control call used to.
+  let detectedTechnology: string | null = null;
+  try {
+    detectedTechnology = mapFrameworkToTechnology(detectFrameworks(targetRoot).primaryFramework) ?? null;
+  } catch (err) {
+    console.error(`[scanner] technology detection threw and was skipped: ${(err as Error).message}`);
+  }
 
   return {
     scannedAt: new Date().toISOString(),
