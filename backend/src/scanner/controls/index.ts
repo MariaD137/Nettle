@@ -45,6 +45,8 @@ import "./library/multiTenantSecurity";
 import "./library/cloudSecurity";
 import "./library/aiCodeReview";
 import "./library/supplyChain";
+import "./library/authorization";
+import "./library/pypiVulnerabilities";
 
 export { getControl, listControls, listControlsByCategory, getControlLibraryVersion, getControlVersionsSnapshot } from "./registry";
 export { hydrateCheckResult, hydrateCheckResults, type HydratedFinding } from "./hydrate";

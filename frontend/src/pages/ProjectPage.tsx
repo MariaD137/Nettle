@@ -29,6 +29,21 @@ function fixCount(latestScan: StoredScan | null): number {
   return latestScan?.report.checkResults?.filter((r) => r.status === "FAIL").length ?? 0;
 }
 
+/**
+ * One-line "where does this project stand right now" summary — the piece
+ * of the removed Overview tab's job that no other tab replaces (History
+ * lists every past scan; this is specifically the current one, at a
+ * glance, without navigating away from wherever the user actually is).
+ * Built entirely from state ProjectPage already fetches for other reasons
+ * (latestScan) — no new API call.
+ */
+function latestScanSummary(latestScan: StoredScan | null): string {
+  if (!latestScan) return "No scans yet";
+  if (latestScan.status === "CREATED" || latestScan.status === "SCANNING") return "Scan in progress…";
+  if (latestScan.status === "FAILED") return `Last scan failed — ${new Date(latestScan.scannedAt).toLocaleDateString()}`;
+  return `Last scan: ${new Date(latestScan.scannedAt).toLocaleDateString()} — ${latestScan.score}/100`;
+}
+
 export default function ProjectPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
@@ -90,7 +105,7 @@ export default function ProjectPage() {
       <>
         <AppBar
           title={project.name}
-          subtitle={badge.label}
+          subtitle={`${badge.label} · ${latestScanSummary(latestScan)}`}
           onBack={() => navigate("/")}
         />
         <div className="shell m-has-bottomnav">{content}</div>
@@ -113,6 +128,7 @@ export default function ProjectPage() {
         {project.archivedAt && <span className="plan-badge" style={{ marginLeft: 8, background: "#888" }}>archived</span>}
       </p>
       {project.description && <p className="muted">{project.description}</p>}
+      <p className="muted">{latestScanSummary(latestScan)}</p>
 
       <div className="tabs">
         {tabs.map((t) => (

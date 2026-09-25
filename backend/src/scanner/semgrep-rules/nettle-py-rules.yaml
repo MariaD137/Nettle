@@ -1,0 +1,81 @@
+rules:
+  - id: nettle-eval-usage-py
+    languages: [python]
+    severity: ERROR
+    message: >-
+      eval()/exec() executes arbitrary strings as code. If any part of that
+      string is influenced by user input, this is a remote code execution
+      risk.
+    patterns:
+      - pattern-either:
+          - pattern: eval(...)
+          - pattern: exec(...)
+
+  - id: nettle-shell-injection-py
+    languages: [python]
+    severity: ERROR
+    message: >-
+      Running a shell command with shell=True (or os.system) and any
+      interpolated/concatenated value is a command-injection risk if that
+      value comes from user input. Prefer subprocess.run() with an argument
+      list and shell=False (the default) instead.
+    patterns:
+      - pattern-either:
+          - pattern: os.system(...)
+          - pattern: subprocess.run(..., shell=True, ...)
+          - pattern: subprocess.Popen(..., shell=True, ...)
+          - pattern: subprocess.call(..., shell=True, ...)
+
+  - id: nettle-sql-string-format-py
+    languages: [python]
+    severity: ERROR
+    message: >-
+      Building a SQL query with an f-string, %-formatting, or .format() is a
+      SQL-injection risk if any interpolated value comes from user input.
+      Use parameterized queries (the DB-API's own placeholder syntax) instead.
+    patterns:
+      - pattern-either:
+          - pattern: $CURSOR.execute(f"...")
+          - pattern: $CURSOR.execute("..." % ...)
+          - pattern: $CURSOR.execute("...".format(...))
+
+  - id: nettle-hardcoded-jwt-secret-py
+    languages: [python]
+    severity: ERROR
+    message: >-
+      A JWT is being signed or decoded with a string literal secret instead
+      of a value read from configuration/environment. Anyone with source
+      access can then forge valid tokens.
+    patterns:
+      - pattern-either:
+          - pattern: jwt.encode($PAYLOAD, "...", ...)
+          - pattern: jwt.decode($TOKEN, "...", ...)
+
+  - id: nettle-disabled-tls-verification-py
+    languages: [python]
+    severity: ERROR
+    message: >-
+      TLS certificate verification is being explicitly disabled. This makes
+      the app vulnerable to man-in-the-middle attacks on every request it
+      makes.
+    patterns:
+      - pattern-either:
+          - pattern: requests.get(..., verify=False, ...)
+          - pattern: requests.post(..., verify=False, ...)
+          - pattern: requests.request(..., verify=False, ...)
+          - pattern: ssl._create_unverified_context(...)
+
+  - id: nettle-unsafe-deserialization-py
+    languages: [python]
+    severity: ERROR
+    message: >-
+      pickle.load()/pickle.loads() and yaml.load() (without an explicit safe
+      Loader) execute arbitrary code embedded in the serialized data —
+      deserializing anything from an untrusted source this way is a remote
+      code execution risk. Use json for untrusted data, or yaml.safe_load()
+      instead of yaml.load().
+    patterns:
+      - pattern-either:
+          - pattern: pickle.load(...)
+          - pattern: pickle.loads(...)
+          - pattern: yaml.load($X)

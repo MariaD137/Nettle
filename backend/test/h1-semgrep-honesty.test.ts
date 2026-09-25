@@ -2,12 +2,18 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { scanSemgrepControl } from "../src/scanner/controls/checks/semgrepControl";
 import { initializeScanner, isSemgrepAvailable } from "../src/scanner/initialization";
+import { walk } from "../src/scanner/walk";
 import path from "node:path";
 
 // A fixed fixture, not "/tmp": scanning the machine's shared temp directory
 // made these tests depend on whatever else happened to be on the host, and
 // on a busy runner it is also a large, slow target.
 const CLEAN_FIXTURE = path.join(__dirname, "fixtures", "clean-app");
+// Same extension list production's runScan() walks with — scanSemgrepControl
+// uses this to decide which language-specific rules are even applicable
+// (see its own comment on why: a PASS for a language with zero files of
+// that language would be a fabricated result).
+const CLEAN_FIXTURE_FILES = walk(CLEAN_FIXTURE, [".js", ".ts", ".jsx", ".tsx", ".py"]);
 
 test("H-1: Semgrep initialization records version", () => {
   const metadata = initializeScanner();
@@ -32,7 +38,7 @@ test("H-1: Semgrep missing returns NOT_VERIFIED for AST checks", () => {
   let results;
 
   try {
-    results = scanSemgrepControl(dummyPath);
+    results = scanSemgrepControl(CLEAN_FIXTURE_FILES, dummyPath);
   } catch {
     // If there's a fatal error, skip — the mock may not have write access
     return;
@@ -60,7 +66,7 @@ test("H-1: Check results include detection method", () => {
   let results;
 
   try {
-    results = scanSemgrepControl(dummyPath);
+    results = scanSemgrepControl(CLEAN_FIXTURE_FILES, dummyPath);
   } catch {
     return;
   }
@@ -81,7 +87,7 @@ test("H-1: Check results include confidence", () => {
   let results;
 
   try {
-    results = scanSemgrepControl(dummyPath);
+    results = scanSemgrepControl(CLEAN_FIXTURE_FILES, dummyPath);
   } catch {
     return;
   }
@@ -102,7 +108,7 @@ test("H-1: AST check titles are descriptive", () => {
   let results;
 
   try {
-    results = scanSemgrepControl(dummyPath);
+    results = scanSemgrepControl(CLEAN_FIXTURE_FILES, dummyPath);
   } catch {
     return;
   }

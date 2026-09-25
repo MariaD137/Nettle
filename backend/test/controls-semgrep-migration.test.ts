@@ -65,9 +65,9 @@ test("INPUT-003 and INPUT-004 are registered", () => {
 
 test("scanSemgrepControl: always returns exactly one result per rule when nothing fires (per-rule PASS, not all-or-nothing)", { skip: !isSemgrepAvailable() && "semgrep not available in this environment" }, () => {
   const dir = tmpDir("nettle-semgrep-clean-");
-  writeTempFile(dir, "clean.js", `function add(a, b) { return a + b; }\n`);
+  const file = writeTempFile(dir, "clean.js", `function add(a, b) { return a + b; }\n`);
 
-  const results = scanSemgrepControl(dir);
+  const results = scanSemgrepControl([file], dir);
   const byKey = Object.fromEntries(results.map((r) => [r.controlKey, r]));
 
   for (const key of ["INPUT-003", "INPUT-004", "DB-001", "SECRET-001", "NET-001", "API-002"]) {
@@ -81,9 +81,9 @@ test("scanSemgrepControl: always returns exactly one result per rule when nothin
 
 test("scanSemgrepControl: FAIL on INPUT-003 for eval() usage, other rules still independently PASS", { skip: !isSemgrepAvailable() && "semgrep not available in this environment" }, () => {
   const dir = tmpDir("nettle-semgrep-eval-");
-  writeTempFile(dir, "run.js", `function run(input) { return eval(input); }\n`);
+  const file = writeTempFile(dir, "run.js", `function run(input) { return eval(input); }\n`);
 
-  const results = scanSemgrepControl(dir);
+  const results = scanSemgrepControl([file], dir);
   const byKey = Object.fromEntries(results.map((r) => [r.controlKey, r]));
 
   assert.equal(byKey["INPUT-003"].status, "FAIL");
@@ -101,9 +101,9 @@ test("scanSemgrepControl: FAIL on INPUT-003 for eval() usage, other rules still 
 
 test("scanSemgrepControl: FAIL on INPUT-004 for a shell command built via interpolation", { skip: !isSemgrepAvailable() && "semgrep not available in this environment" }, () => {
   const dir = tmpDir("nettle-semgrep-cmdinj-");
-  writeTempFile(dir, "run.js", `const { exec } = require('child_process');\nfunction run(name) { exec(\`ls \${name}\`, () => {}); }\n`);
+  const file = writeTempFile(dir, "run.js", `const { exec } = require('child_process');\nfunction run(name) { exec(\`ls \${name}\`, () => {}); }\n`);
 
-  const results = scanSemgrepControl(dir);
+  const results = scanSemgrepControl([file], dir);
   const byKey = Object.fromEntries(results.map((r) => [r.controlKey, r]));
 
   assert.equal(byKey["INPUT-004"].status, "FAIL");
@@ -114,9 +114,9 @@ test("scanSemgrepControl: FAIL on INPUT-004 for a shell command built via interp
 
 test("scanSemgrepControl: FAIL on SECRET-001 for a hardcoded JWT secret passed directly to jwt.sign() (not caught by SECRET-001's own regex)", { skip: !isSemgrepAvailable() && "semgrep not available in this environment" }, () => {
   const dir = tmpDir("nettle-semgrep-jwt-");
-  writeTempFile(dir, "auth.js", `const jwt = require('jsonwebtoken');\njwt.sign({ id: 1 }, "hardcoded-secret-value");\n`);
+  const file = writeTempFile(dir, "auth.js", `const jwt = require('jsonwebtoken');\njwt.sign({ id: 1 }, "hardcoded-secret-value");\n`);
 
-  const results = scanSemgrepControl(dir);
+  const results = scanSemgrepControl([file], dir);
   const secretResult = results.find((r) => r.controlKey === "SECRET-001");
   assert.ok(secretResult);
   assert.equal(secretResult!.status, "FAIL");
@@ -127,9 +127,9 @@ test("scanSemgrepControl: FAIL on SECRET-001 for a hardcoded JWT secret passed d
 
 test("scanSemgrepControl: FAIL on NET-001 for NODE_TLS_REJECT_UNAUTHORIZED (not caught by NET-001's own regex)", { skip: !isSemgrepAvailable() && "semgrep not available in this environment" }, () => {
   const dir = tmpDir("nettle-semgrep-tls-");
-  writeTempFile(dir, "app.js", `process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";\n`);
+  const file = writeTempFile(dir, "app.js", `process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";\n`);
 
-  const results = scanSemgrepControl(dir);
+  const results = scanSemgrepControl([file], dir);
   const netResult = results.find((r) => r.controlKey === "NET-001");
   assert.ok(netResult);
   assert.equal(netResult!.status, "FAIL");
@@ -139,9 +139,9 @@ test("scanSemgrepControl: FAIL on NET-001 for NODE_TLS_REJECT_UNAUTHORIZED (not 
 
 test("scanSemgrepControl: FAIL on API-002 for res.setHeader Access-Control-Allow-Origin wildcard (not caught by API-002's own regex)", { skip: !isSemgrepAvailable() && "semgrep not available in this environment" }, () => {
   const dir = tmpDir("nettle-semgrep-cors-");
-  writeTempFile(dir, "app.js", `res.setHeader("Access-Control-Allow-Origin", "*");\n`);
+  const file = writeTempFile(dir, "app.js", `res.setHeader("Access-Control-Allow-Origin", "*");\n`);
 
-  const results = scanSemgrepControl(dir);
+  const results = scanSemgrepControl([file], dir);
   const apiResult = results.find((r) => r.controlKey === "API-002");
   assert.ok(apiResult);
   assert.equal(apiResult!.status, "FAIL");
@@ -151,13 +151,13 @@ test("scanSemgrepControl: FAIL on API-002 for res.setHeader Access-Control-Allow
 
 test("scanSemgrepControl: two FAILs for the same rule in the same file get distinct checkIds (legacy checkId collision fixed)", { skip: !isSemgrepAvailable() && "semgrep not available in this environment" }, () => {
   const dir = tmpDir("nettle-semgrep-multi-");
-  writeTempFile(
+  const file = writeTempFile(
     dir,
     "run.js",
     `function a(x) { return eval(x); }\nfunction b(y) { return eval(y); }\n`
   );
 
-  const results = scanSemgrepControl(dir);
+  const results = scanSemgrepControl([file], dir);
   const evalFails = results.filter((r) => r.controlKey === "INPUT-003" && r.status === "FAIL");
   assert.equal(evalFails.length, 2, "both eval() call sites should be reported");
   assert.notEqual(evalFails[0].checkId, evalFails[1].checkId, "distinct findings must not collide onto the same checkId");
@@ -169,7 +169,10 @@ test("scanSemgrepControl: NOT_VERIFIED for all 6 rules when Semgrep fails to run
   // Semgrep exits non-zero (and thus runSemgrep throws) for a target path
   // that doesn't exist, exercising the same catch path a missing binary
   // would take.
-  const results = scanSemgrepControl("/nonexistent/nettle-semgrep-target-does-not-exist");
+  // A fake .js path (never actually read — files is only used to gate
+  // which rules are applicable, by extension) keeps this test about "did
+  // the Semgrep-failure path work", not "was a real JS file present".
+  const results = scanSemgrepControl(["/nonexistent/fake.js"], "/nonexistent/nettle-semgrep-target-does-not-exist");
   assert.equal(results.length, 6);
   assert.ok(results.every((r) => r.status === "NOT_VERIFIED"));
   assert.ok(results.every((r) => r.confidence === 0));
@@ -236,12 +239,12 @@ function scanAt(id: string, scannedAt: string, checkResults: CheckResult[]): Sca
 
 test("INPUT-003 (a newly-migrated control) participates fully in scan comparison: open -> fixed -> regressed", { skip: !isSemgrepAvailable() && "semgrep not available in this environment" }, () => {
   const dirEval = tmpDir("nettle-semgrep-cmp-eval-");
-  writeTempFile(dirEval, "run.js", `function run(input) { return eval(input); }\n`);
+  const fileEval = writeTempFile(dirEval, "run.js", `function run(input) { return eval(input); }\n`);
   const dirClean = tmpDir("nettle-semgrep-cmp-clean-");
-  writeTempFile(dirClean, "run.js", `function run(input) { return JSON.parse(input); }\n`);
+  const fileClean = writeTempFile(dirClean, "run.js", `function run(input) { return JSON.parse(input); }\n`);
 
-  const evalResults = scanSemgrepControl(dirEval);
-  const cleanResults = scanSemgrepControl(dirClean);
+  const evalResults = scanSemgrepControl([fileEval], dirEval);
+  const cleanResults = scanSemgrepControl([fileClean], dirClean);
 
   const s1 = scanAt("s1", "2026-01-01T00:00:00Z", evalResults); // open
   const s2 = scanAt("s2", "2026-01-02T00:00:00Z", cleanResults); // fixed

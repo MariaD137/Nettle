@@ -5,11 +5,14 @@ import path from "path";
 import type { CheckResult, FindingCategory } from "../../types";
 import { generateCheckId } from "../../threeStateModel";
 
-const RULES_PATH = path.join(__dirname, "..", "..", "semgrep-rules", "nettle-js-rules.yaml");
+const JS_RULES_PATH = path.join(__dirname, "..", "..", "semgrep-rules", "nettle-js-rules.yaml");
+const PY_RULES_PATH = path.join(__dirname, "..", "..", "semgrep-rules", "nettle-py-rules.yaml");
 
 const SEMGREP_ARGS = [
   "--config",
-  RULES_PATH,
+  JS_RULES_PATH,
+  "--config",
+  PY_RULES_PATH,
   "--no-git-ignore",
   "--disable-version-check",
   "--metrics=off",
@@ -75,6 +78,28 @@ const REMEDIATION_BY_RULE: Record<string, string> = {
   "hardcoded-jwt-secret": "Move the JWT secret to an environment variable (e.g. process.env.JWT_SECRET) and load it at runtime.",
   "disabled-tls-verification": "Remove rejectUnauthorized: false. If you need to trust a custom CA, configure the CA certificate explicitly instead.",
   "wildcard-cors": "Restrict the CORS origin to your actual frontend domain instead of allowing all origins with '*'.",
+  "eval-usage-py": "Replace eval()/exec() with a safer alternative like json.loads() for data, or ast.literal_eval() for trusted literal expressions.",
+  "shell-injection-py": "Use subprocess.run() with an argument list and shell=False (the default) instead of shell=True or os.system().",
+  "sql-string-format-py": "Use parameterized queries (e.g. cursor.execute('SELECT * FROM users WHERE id = %s', (id,))) instead of building the query string yourself.",
+  "hardcoded-jwt-secret-py": "Move the JWT secret to an environment variable (e.g. os.environ['JWT_SECRET']) and load it at runtime.",
+  "disabled-tls-verification-py": "Remove verify=False. If you need to trust a custom CA, pass its certificate path to verify= explicitly instead.",
+  "unsafe-deserialization-py": "Use json for untrusted data, or yaml.safe_load() instead of yaml.load(). Never unpickle data from an untrusted source.",
+};
+
+/** Which language a rule applies to — used to gate that rule's PASS/NOT_VERIFIED entries on whether this codebase actually contains any file of that language (see scanSemgrepControl's own comment on why: claiming "PASS, no eval() usage" for Python when the scan found zero .py files would be exactly the fabricated-PASS-for-an-unsupported/inapplicable-case this library's three-state model exists to prevent). */
+const RULE_LANGUAGE: Record<string, "js" | "py"> = {
+  "eval-usage": "js",
+  "child-process-exec-template": "js",
+  "sql-string-concat": "js",
+  "hardcoded-jwt-secret": "js",
+  "disabled-tls-verification": "js",
+  "wildcard-cors": "js",
+  "eval-usage-py": "py",
+  "shell-injection-py": "py",
+  "sql-string-format-py": "py",
+  "hardcoded-jwt-secret-py": "py",
+  "disabled-tls-verification-py": "py",
+  "unsafe-deserialization-py": "py",
 };
 
 interface RuleMapping {
@@ -144,6 +169,55 @@ const RULE_MAP: Record<string, RuleMapping> = {
     passTitle: "No wildcard CORS configuration detected via AST analysis",
     notVerifiedTitle: "Wildcard CORS (AST analysis) could not be checked",
   },
+  // Python rules map onto the SAME controlKeys as their JS/TS equivalents
+  // above — same reasoning as those: this is complementary, language-
+  // specific AST evidence for the same underlying control, not a second,
+  // near-duplicate control. unsafe-deserialization-py has no direct JS rule
+  // in this file, so it maps onto INPUT-002 ("Deserialization" —
+  // controls/library/deserialization.ts), the existing control for exactly
+  // this risk class.
+  "eval-usage-py": {
+    controlKey: "INPUT-003",
+    category: "Security",
+    failTitle: "eval()/exec() usage detected (Python)",
+    passTitle: "No eval()/exec() usage detected (Python)",
+    notVerifiedTitle: "Eval/exec usage could not be checked (Python)",
+  },
+  "shell-injection-py": {
+    controlKey: "INPUT-004",
+    category: "Security",
+    failTitle: "Shell command run with shell=True/os.system() and dynamic input (Python)",
+    passTitle: "No shell=True/os.system() command-injection pattern detected (Python)",
+    notVerifiedTitle: "Command injection risk could not be checked (Python)",
+  },
+  "sql-string-format-py": {
+    controlKey: "DB-001",
+    category: "Database",
+    failTitle: "SQL injection pattern detected via AST analysis (Python)",
+    passTitle: "No SQL injection patterns detected via AST analysis (Python)",
+    notVerifiedTitle: "SQL injection (AST analysis) could not be checked (Python)",
+  },
+  "hardcoded-jwt-secret-py": {
+    controlKey: "SECRET-001",
+    category: "Security",
+    failTitle: "JWT signed or decoded with a hardcoded secret (detected via AST analysis, Python)",
+    passTitle: "No hardcoded JWT secrets detected via AST analysis (Python)",
+    notVerifiedTitle: "Hardcoded JWT secrets (AST analysis) could not be checked (Python)",
+  },
+  "disabled-tls-verification-py": {
+    controlKey: "NET-001",
+    category: "Security",
+    failTitle: "TLS certificate verification disabled (detected via AST analysis, Python)",
+    passTitle: "No disabled TLS verification detected via AST analysis (Python)",
+    notVerifiedTitle: "Disabled TLS verification (AST analysis) could not be checked (Python)",
+  },
+  "unsafe-deserialization-py": {
+    controlKey: "INPUT-002",
+    category: "Security",
+    failTitle: "Unsafe deserialization detected (pickle or yaml.load, Python)",
+    passTitle: "No unsafe deserialization detected via AST analysis (Python)",
+    notVerifiedTitle: "Unsafe deserialization could not be checked (Python)",
+  },
 };
 
 /**
@@ -161,22 +235,33 @@ const RULE_MAP: Record<string, RuleMapping> = {
  *    findings for the same rule in the same file (different lines) would
  *    collide onto the same checkId. Now includes the line.
  */
-export function scanSemgrepControl(targetRoot: string): CheckResult[] {
+export function scanSemgrepControl(files: string[], targetRoot: string): CheckResult[] {
+  const hasJs = files.some((f) => /\.(js|jsx|ts|tsx)$/i.test(f));
+  const hasPy = files.some((f) => f.toLowerCase().endsWith(".py"));
+  function ruleApplicable(ruleId: string): boolean {
+    const lang = RULE_LANGUAGE[ruleId];
+    if (lang === "js") return hasJs;
+    if (lang === "py") return hasPy;
+    return true;
+  }
+
   let output: SemgrepOutput;
   try {
     const raw = runSemgrep(targetRoot);
     output = JSON.parse(raw);
   } catch (err) {
-    return Object.entries(RULE_MAP).map(([ruleId, mapping]) => ({
-      checkId: generateCheckId(mapping.category, `${mapping.controlKey}:ast-unavailable`, ruleId),
-      status: "NOT_VERIFIED",
-      category: mapping.category,
-      title: mapping.notVerifiedTitle,
-      detail: `Semgrep not available: ${(err as Error).message}`,
-      confidence: 0,
-      detectionMethod: "unknown",
-      controlKey: mapping.controlKey,
-    }));
+    return Object.entries(RULE_MAP)
+      .filter(([ruleId]) => ruleApplicable(ruleId))
+      .map(([ruleId, mapping]) => ({
+        checkId: generateCheckId(mapping.category, `${mapping.controlKey}:ast-unavailable`, ruleId),
+        status: "NOT_VERIFIED",
+        category: mapping.category,
+        title: mapping.notVerifiedTitle,
+        detail: `Semgrep not available: ${(err as Error).message}`,
+        confidence: 0,
+        detectionMethod: "unknown",
+        controlKey: mapping.controlKey,
+      }));
   }
 
   const failedRuleIds = new Set<string>();
@@ -208,6 +293,13 @@ export function scanSemgrepControl(targetRoot: string): CheckResult[] {
 
   for (const [ruleId, mapping] of Object.entries(RULE_MAP)) {
     if (failedRuleIds.has(ruleId)) continue;
+    // A rule for a language this codebase doesn't contain never ran
+    // meaningfully — claiming PASS ("no eval() usage") for Python against a
+    // pure-JS codebase would be exactly the fabricated-PASS-for-an-
+    // inapplicable-language this library's three-state model exists to
+    // prevent. A FAIL above is self-gating (Semgrep can only match a Python
+    // rule inside an actual .py file), so only PASS needs this check.
+    if (!ruleApplicable(ruleId)) continue;
     results.push({
       checkId: generateCheckId(mapping.category, `${mapping.controlKey}:ast-pass`, ruleId),
       status: "PASS",

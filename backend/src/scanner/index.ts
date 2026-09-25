@@ -32,6 +32,7 @@ import { scanLegalPolicyControl } from "./controls/checks/legalPolicyControl";
 import { scanAiContentDisclosureControl } from "./controls/checks/aiContentDisclosureControl";
 import { scanSemgrepControl } from "./controls/checks/semgrepControl";
 import { scanOsvVulnerabilityControl } from "./controls/checks/osvVulnerabilityControl";
+import { scanPypiVulnerabilityControl } from "./controls/checks/pypiVulnerabilityControl";
 import { scanCodeQualityControl } from "./controls/checks/codeQualityControl";
 import { scanFrontendSecurityControl } from "./controls/checks/frontendSecurityControl";
 import { scanPaymentSecurityControl } from "./controls/checks/paymentSecurityControl";
@@ -40,6 +41,7 @@ import { scanMultiTenantSecurityControl } from "./controls/checks/multiTenantSec
 import { scanCloudSecurityControl } from "./controls/checks/cloudSecurityControl";
 import { scanAiCodeReviewControl } from "./controls/checks/aiCodeReviewControl";
 import { scanSupplyChainControl } from "./controls/checks/supplyChainControl";
+import { scanAuthorizationControl } from "./controls/checks/authorizationControl";
 import { detectFrameworks } from "./frameworkDetection";
 import { mapFrameworkToTechnology } from "./controls/technologyMap";
 import "./controls"; // registers the control library (AUTH-001..008, SECRET-001..002, API-001..006, DB-001..003, BROWSER-001, CRYPTO-001, AI-001..005, INPUT-001..004, NET-001, DEPS-001, LEGAL-001..004, OSV-001, CQ-001..007, FE-001..004, PAY-001..004, CICD-001..003, MT-001..002, CLOUD-001..003, AICODE-001..002, SUPPLY-001..002, ...)
@@ -49,7 +51,7 @@ import { getSemgrepVersion } from "./initialization";
 import { SCORING_CONFIG, calculateScore, calculateConfidence } from "./scoringConfig";
 import { checkResultToFinding, checkResultToPass, findingToCheckResult, passToCheckResult, generateCheckId } from "./threeStateModel";
 
-const SCANNED_EXTENSIONS = [".js", ".ts", ".jsx", ".tsx", ".env", ".json", ".yml", ".yaml", ".tf", "dockerfile"];
+const SCANNED_EXTENSIONS = [".js", ".ts", ".jsx", ".tsx", ".py", ".env", ".json", ".yml", ".yaml", ".tf", "dockerfile"];
 
 /**
  * Every control below was written and tested against fixture repos, not the
@@ -123,8 +125,9 @@ export function runScan(targetPath: string): ScanReport {
     ...runControlSafely("DEPS-001 lockfile", () => scanDependencyLockfileControl(targetRoot)),
     ...runControlSafely("LEGAL-001..004", () => scanLegalPolicyControl(targetRoot)),
     ...runControlSafely("AI content disclosure", () => scanAiContentDisclosureControl(files, targetRoot)),
-    ...runControlSafely("Semgrep", () => scanSemgrepControl(targetRoot)),
+    ...runControlSafely("Semgrep", () => scanSemgrepControl(files, targetRoot)),
     ...runControlSafely("OSV-001", () => scanOsvVulnerabilityControl(targetRoot)),
+    ...runControlSafely("OSV-002", () => scanPypiVulnerabilityControl(targetRoot)),
     ...runControlSafely("CQ-001..007 code quality", () => scanCodeQualityControl(files, targetRoot)),
     ...runControlSafely("FE-001..004 frontend security", () => scanFrontendSecurityControl(files, targetRoot)),
     ...runControlSafely("PAY-001..004 payment security", () => scanPaymentSecurityControl(files, targetRoot)),
@@ -133,6 +136,7 @@ export function runScan(targetPath: string): ScanReport {
     ...runControlSafely("CLOUD-001..003", () => scanCloudSecurityControl(files, targetRoot)),
     ...runControlSafely("AICODE-001..002", () => scanAiCodeReviewControl(files, targetRoot)),
     ...runControlSafely("SUPPLY-001..002", () => scanSupplyChainControl(targetRoot)),
+    ...runControlSafely("AUTHZ-001 authorization", () => scanAuthorizationControl(files, targetRoot)),
   ];
 
   // Every legacy Finding/Pass-shaped scanner module (apiSecurity.ts,
@@ -187,7 +191,13 @@ export function runScan(targetPath: string): ScanReport {
   // whole scan down the way an unwrapped control call used to.
   let detectedTechnology: string | null = null;
   try {
-    detectedTechnology = mapFrameworkToTechnology(detectFrameworks(targetRoot).primaryFramework) ?? null;
+    // sourceFiles (the third arg) is what actually enables Flask/FastAPI
+    // detection — they have no distinguishing config file, only source
+    // patterns (@app.route, FastAPI()), so frameworkDetection.ts's pattern
+    // pass never ran without this. Django's own config files (settings.py
+    // etc.) were already detected either way, which is why this gap wasn't
+    // obvious from Django alone.
+    detectedTechnology = mapFrameworkToTechnology(detectFrameworks(targetRoot, undefined, files).primaryFramework) ?? null;
   } catch (err) {
     console.error(`[scanner] technology detection threw and was skipped: ${(err as Error).message}`);
   }

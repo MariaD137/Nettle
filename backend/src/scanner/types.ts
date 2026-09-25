@@ -4,6 +4,7 @@ export type FindingCategory =
   | "Security"
   | "Dependencies"
   | "Authentication"
+  | "Authorization"
   | "Legal & Policy"
   | "AI Disclosure"
   | "Configuration"
