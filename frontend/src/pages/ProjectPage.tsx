@@ -217,12 +217,17 @@ type ScanMethod = "upload" | "repo";
 /**
  * Project-tied scans run async now (backend/src/scanner/scanQueue.ts) — the
  * POST just returns a scanId + CREATED status, so the client polls the
- * scan list until it leaves CREATED/SCANNING. 2s between polls, up to 2
- * minutes: generous for Semgrep's own 30s subprocess timeout plus queueing
- * behind any other scan already running for this account.
+ * scan list until it leaves CREATED/SCANNING. 2s between polls, up to 7
+ * minutes: the isolated Fargate path itself budgets up to 5 minutes per
+ * scan (SCAN_ISOLATED_TIMEOUT_MS in isolatedExecution.ts's taskTimeoutMs())
+ * — on top of that, scans for one account are processed one at a time
+ * (scanQueue.ts), so this scan may also sit behind another already running.
+ * 7 minutes covers the full task budget plus queueing/launch overhead with
+ * room to spare; it must stay comfortably above 5 minutes or a scan the
+ * backend would have finished gets reported to the customer as failed.
  */
 async function pollScan(projectId: string, scanId: string): Promise<StoredScan> {
-  const maxAttempts = 60;
+  const maxAttempts = 210;
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
     const { scans } = await api.getScans(projectId);
     const found = scans.find((s) => s.id === scanId);
@@ -289,7 +294,11 @@ function ScanTab({ project, onScanned }: { project: Project; onScanned: (badge: 
       }
       onScanned(await api.getBadge(project.id));
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Scan failed");
+      // Not just ApiError: pollScan's own timeout throws a plain Error with
+      // a real, actionable message (e.g. "still running, check History") —
+      // collapsing that into a generic "Scan failed" would misreport a scan
+      // that's merely still in progress as a hard failure.
+      setError(err instanceof Error ? err.message : "Scan failed");
     } finally {
       setScanning(false);
       setScanStage("idle");
