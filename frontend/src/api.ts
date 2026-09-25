@@ -489,19 +489,25 @@ export const api = {
 
   badgeSvgUrl: (projectId: string) => `${API_BASE}/api/projects/${projectId}/badge.svg`,
 
-  // Scan upload
-  scanCodebase: async (file: File, apiKey?: string): Promise<ScanReport | ScanQueuedResponse> => {
+  // Scan upload. projectId ties the scan to a project the caller's own
+  // session already has access to (the dashboard's normal path) — apiKey is
+  // for external/CI callers with no session at all. The dashboard must use
+  // projectId, never apiKey: GET /api/projects(/:id) only ever returns the
+  // key masked (see backend's maskApiKey), so a value read back from a
+  // fetched Project can no longer resolve a project by key.
+  scanCodebase: async (file: File, opts?: { apiKey?: string; projectId?: string }): Promise<ScanReport | ScanQueuedResponse> => {
     const form = new FormData();
     form.append("codebase", file);
+    if (opts?.projectId) form.append("projectId", opts.projectId);
     const headers: Record<string, string> = {};
-    if (apiKey) headers["X-Nettle-Api-Key"] = apiKey;
+    if (opts?.apiKey) headers["X-Nettle-Api-Key"] = opts.apiKey;
     return request<ScanReport | ScanQueuedResponse>("/api/scans", { method: "POST", body: form, headers });
   },
 
-  scanRepo: (repoUrl: string, opts?: { branch?: string; apiKey?: string }) =>
+  scanRepo: (repoUrl: string, opts?: { branch?: string; apiKey?: string; projectId?: string }) =>
     request<ScanReport | ScanQueuedResponse>("/api/scans/repo", {
       method: "POST",
-      body: JSON.stringify({ repoUrl, branch: opts?.branch, apiKey: opts?.apiKey }),
+      body: JSON.stringify({ repoUrl, branch: opts?.branch, apiKey: opts?.apiKey, projectId: opts?.projectId }),
     }),
 
   // Billing

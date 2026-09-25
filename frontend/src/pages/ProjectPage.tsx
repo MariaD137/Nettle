@@ -161,21 +161,13 @@ function OverviewTab({ project, latestScan }: { project: Project; latestScan: St
       <div className="card">
         <h2>Continuous monitoring</h2>
         <p className="muted">
-          Drop this into your own Express app to start reporting live traffic — substitute your real API key from
-          below (Nettle only shows the full key once, right after it's created or rotated):
+          Drop this into your own Express app to start reporting live traffic — substitute your real API key,
+          available from the Settings tab (Nettle only ever shows the full key once, right after it's created or
+          rotated — it isn't displayed anywhere after that):
         </p>
         <div className="code-snippet">
-          {`import { nettleMonitor } from "./nettleMonitor";\napp.use(nettleMonitor({ apiKey: "${project.apiKey}" }));`}
+          {`import { nettleMonitor } from "./nettleMonitor";\napp.use(nettleMonitor({ apiKey: "<YOUR_API_KEY>" }));`}
         </div>
-      </div>
-
-      <div className="card">
-        <h2>API key</h2>
-        <p className="muted">
-          Used by the monitoring middleware and to associate scans with this project. For your security, only the
-          last 4 characters are shown here — go to Settings to rotate it if you've lost the full key.
-        </p>
-        <div className="code-snippet">{project.apiKey}</div>
       </div>
 
       {latestScan && (latestScan.status === "CREATED" || latestScan.status === "SCANNING") && (
@@ -275,17 +267,17 @@ function ScanTab({ project, onScanned }: { project: Project; onScanned: (badge: 
       let result: ScanReport | ScanQueuedResponse;
       if (method === "repo") {
         if (!repoUrl) { setError("Enter a repository URL"); setScanning(false); setScanStage("idle"); return; }
-        result = await api.scanRepo(repoUrl, { branch: branch || undefined, apiKey: project.apiKey });
+        result = await api.scanRepo(repoUrl, { branch: branch || undefined, projectId: project.id });
       } else {
         if (!file) { setError("Select a file"); setScanning(false); setScanStage("idle"); return; }
-        result = await api.scanCodebase(file, project.apiKey);
+        result = await api.scanCodebase(file, { projectId: project.id });
       }
 
       if ("scanId" in result) {
         // The queued path (always taken here — this tab always sends
-        // project.apiKey, so the request is always project-tied). Poll
-        // until the worker has actually persisted a real result; a FAILED
-        // scan surfaces as an error, never as a fabricated report.
+        // project.id, so the request is always project-tied). Poll until
+        // the worker has actually persisted a real result; a FAILED scan
+        // surfaces as an error, never as a fabricated report.
         setScanStage("queued");
         const finished = await pollScan(project.id, result.scanId);
         if (finished.status === "FAILED") {
@@ -1231,7 +1223,10 @@ function ProjectSettingsTab({
 
       <div className="card">
         <h2>API key</h2>
-        <div className="code-snippet" style={{ marginBottom: 12 }}>{project.apiKey}</div>
+        <p className="muted" style={{ marginBottom: 12 }}>
+          For your security, Nettle doesn't display your API key. If you don't have it saved, rotate it below to get
+          a new one — you'll see the full value once, right after rotating.
+        </p>
         <button className="secondary" onClick={handleRotateKey}>Rotate key</button>
         {rotatedKey && (
           <div style={{ marginTop: 12 }}>

@@ -6,7 +6,7 @@ import path from "path";
 import multer from "multer";
 import { runScan } from "../scanner";
 import { resolveScanRoot } from "../scanner/resolveScanRoot";
-import { findProjectByApiKey } from "../patrol/projects";
+import { findProjectByApiKey, getProject, canAccessProject } from "../patrol/projects";
 import { createQueuedScan } from "../patrol/scans";
 import { enqueueScan } from "../scanner/scanQueue";
 import { requireAuth, optionalAuth } from "../auth/middleware";
@@ -41,6 +41,29 @@ export const scansRouter = Router();
  * control library — see the scanner/controls/ gap report) comes back with
  * recommendation: null, not a fabricated one.
  */
+/**
+ * Resolves which project a scan is tied to. The dashboard's own Scan tab is
+ * always an authenticated session request for a project the caller already
+ * has open — it identifies that project by id, and must never need the
+ * project's actual API key just to trigger a scan on a project it already
+ * owns. This matters specifically because GET /api/projects(/:id) now masks
+ * that key in the response (see patrol/projects.ts's maskApiKey) — the
+ * dashboard literally no longer has the real value to send, and sending the
+ * masked one would silently fail to resolve a project at all (findProjectByApiKey
+ * never matches a masked key), turning every dashboard scan into an
+ * unassociated one. External/CI callers with no session — just a raw
+ * X-Nettle-Api-Key header or a posted apiKey — keep resolving via the real
+ * key exactly as before; that path is untouched.
+ */
+async function resolveScanProject(req: ExpressRequest, apiKey: string, projectId: string): Promise<Project | null> {
+  if (req.userId && projectId) {
+    const project = await getProject(projectId);
+    if (project && (await canAccessProject(req.userId, project))) return project;
+    return null;
+  }
+  return apiKey ? findProjectByApiKey(apiKey) : null;
+}
+
 function respondWithScan(res: Response, report: ScanReport, plan: string): void {
   const trimmed = applyScanAccess(report, plan);
   const hydrated = trimmed.checkResults
@@ -229,8 +252,9 @@ scansRouter.post("/api/scans", optionalAuth, scanUploadLimiter, upload.single("c
 
   // Resolve the billing account before doing any work — an over-quota
   // caller shouldn't get a scan run on their behalf and then be refused.
-  const upfrontKey = req.header("x-nettle-api-key");
-  const upfrontProject = upfrontKey ? await findProjectByApiKey(upfrontKey) : null;
+  const upfrontKey = req.header("x-nettle-api-key") ?? "";
+  const upfrontProjectId = typeof req.body?.projectId === "string" ? req.body.projectId.trim() : "";
+  const upfrontProject = await resolveScanProject(req, upfrontKey, upfrontProjectId);
   const billedUserId = req.userId ?? upfrontProject?.userId;
   const quota = await resolveScanQuota(billedUserId, upfrontProject, res);
   if (quota.blocked) {
@@ -329,6 +353,7 @@ scansRouter.post("/api/scans/repo", requireAuth, scanRepoLimiter, async (req: Re
   const repoUrl = typeof req.body?.repoUrl === "string" ? req.body.repoUrl.trim() : "";
   const branch = typeof req.body?.branch === "string" ? req.body.branch.trim() : "";
   const apiKey = typeof req.body?.apiKey === "string" ? req.body.apiKey.trim() : "";
+  const projectId = typeof req.body?.projectId === "string" ? req.body.projectId.trim() : "";
 
   if (!repoUrl) {
     return res.status(400).json({ error: "Provide a 'repoUrl' (e.g. https://github.com/owner/repo)" });
@@ -337,7 +362,7 @@ scansRouter.post("/api/scans/repo", requireAuth, scanRepoLimiter, async (req: Re
     return res.status(400).json({ error: "Only public GitHub, GitLab, and Bitbucket HTTPS URLs are supported" });
   }
 
-  const repoProject = apiKey ? await findProjectByApiKey(apiKey) : null;
+  const repoProject = await resolveScanProject(req, apiKey, projectId);
   const billedUserId = req.userId ?? repoProject?.userId;
   const quota = await resolveScanQuota(billedUserId, repoProject, res);
   if (quota.blocked) return;
